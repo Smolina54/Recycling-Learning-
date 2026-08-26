@@ -1,0 +1,22 @@
+{
+  "hosting": {
+    "public": "outputs",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "icon-audit.html",
+      "*.docx"
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "emulators": {
+    "firestore": {
+      "port": 8080
+    },
+    "ui": {
+      "enabled": false
+    }
+  }
+}

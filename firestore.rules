@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Accounts allowed to read, export, or delete submission data (the report tool).
+    function isAllowedReviewer() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          'smolina@tradeflex.com.au'
+        ];
+    }
+
+    // Building + tenant catalog: readable by anyone with a link (needed to
+    // populate the id-gate dropdowns), managed only by Sergio via the Console.
+    match /buildings/{buildingId} {
+      allow read: if true;
+      allow write: if false;
+
+      match /tenants/{tenantId} {
+        allow read: if true;
+        allow write: if false;
+      }
+    }
+
+    // Training results: anyone can create one (completing the game), nobody
+    // can create with a payload missing the required fields, nobody can ever
+    // edit a submission after the fact, and only an allowed reviewer can
+    // read or delete them.
+    match /submissions/{submissionId} {
+      allow create: if request.resource.data.buildingId is string
+        && request.resource.data.buildingId.size() > 0
+        && request.resource.data.tenantId is string
+        && request.resource.data.tenantId.size() > 0
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.email is string
+        && request.resource.data.email.size() > 0
+        && request.resource.data.score is number;
+      allow read, delete: if isAllowedReviewer();
+      allow update: if false;
+    }
+  }
+}
