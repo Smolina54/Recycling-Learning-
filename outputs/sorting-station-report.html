@@ -220,6 +220,8 @@ try {
   const streams = ['gw','mr','pc','og','ew'];
   const streamNames = {gw:'General Waste', mr:'Mixed Recycling', pc:'Paper & Cardboard', og:'Organics', ew:'E-Waste'};
 
+  // AUTO-GENERATED CATALOG START — do not edit by hand, run `npm run sync-catalog` after
+  // changing the `items` array in recycling-training.html (see tools/sync-catalog.js).
   const catalog = {
     'gw-pizza': {name:'Greasy pizza box', stream:'gw'},
     'gw-cup': {name:'Disposable coffee cup', stream:'gw'},
@@ -247,6 +249,7 @@ try {
     'ew-toner': {name:'Printer toner cartridge', stream:'ew'},
     'ew-mouse': {name:'Computer mouse', stream:'ew'}
   };
+  // AUTO-GENERATED CATALOG END
 
   // Converts one Firestore submission doc (nested breakdown/items) into the same
   // flat-row shape the rest of this file's rendering code was built around.
