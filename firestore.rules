@@ -40,5 +40,21 @@ service cloud.firestore {
       allow read, delete: if isAllowedReviewer();
       allow update: if false;
     }
+
+    // "Started the sort" pings, written the moment someone clicks Begin the sort —
+    // lets the report compute a completion rate (started vs. actually finished).
+    // Same shape/rules as submissions, minus the score field this doesn't have.
+    match /attempts/{attemptId} {
+      allow create: if request.resource.data.buildingId is string
+        && request.resource.data.buildingId.size() > 0
+        && request.resource.data.tenantId is string
+        && request.resource.data.tenantId.size() > 0
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.email is string
+        && request.resource.data.email.size() > 0;
+      allow read: if isAllowedReviewer();
+      allow update, delete: if false;
+    }
   }
 }

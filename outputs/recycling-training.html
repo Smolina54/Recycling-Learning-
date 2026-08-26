@@ -2177,9 +2177,27 @@ try {
   let gameStartTime = null;
   const deviceType = window.matchMedia('(pointer: coarse)').matches ? 'mobile-touch' : 'desktop';
 
+  // Fire-and-forget: lets the report compute a completion rate (started vs. finished).
+  // Not shown to the trainee if it fails — unlike a lost final result, a missed
+  // "started" ping isn't something they need to know about or retry.
+  async function recordAttemptStarted(){
+    if (!db) return;
+    try {
+      await addDoc(collection(db, 'attempts'), {
+        buildingId: siteContext.buildingId, buildingName: siteContext.buildingName,
+        tenantId: siteContext.tenantId, tenantName: siteContext.tenantName,
+        level: siteContext.level, name: siteContext.name, email: siteContext.email,
+        startedAt: serverTimestamp()
+      });
+    } catch (err){
+      console.error('Failed to record attempt start:', err);
+    }
+  }
+
   document.getElementById('startGameBtn').addEventListener('click', () => {
     gameStarted = true;
     gameStartTime = Date.now();
+    recordAttemptStarted();
     document.getElementById('gameIntro').style.display = 'none';
     document.getElementById('gameStage').style.display = 'block';
     startPhase(0);

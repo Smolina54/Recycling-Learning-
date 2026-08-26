@@ -19,6 +19,12 @@ const validSubmission = {
   name: 'Jane Doe', email: 'jane@example.com', score: 88,
 };
 
+const validAttempt = {
+  buildingId: 'building-1', buildingName: 'Test Tower',
+  tenantId: 'tenant-1', tenantName: 'Test Co', level: 'Level 4',
+  name: 'Jane Doe', email: 'jane@example.com',
+};
+
 const results = [];
 function record(label, fn){
   return fn().then(
@@ -66,6 +72,22 @@ async function main(){
     assertFails(getDocs(collection(otherUser, 'submissions'))));
   await record('allowlisted user CAN read submissions', () =>
     assertSucceeds(getDocs(collection(allowedUser, 'submissions'))));
+
+  await record('anon can create a valid attempt', () =>
+    assertSucceeds(addDoc(collection(anon, 'attempts'), validAttempt)));
+  await record('anon CANNOT create an attempt missing tenantId', () => {
+    const bad = { ...validAttempt }; delete bad.tenantId;
+    return assertFails(addDoc(collection(anon, 'attempts'), bad));
+  });
+  await record('non-allowlisted signed-in user CANNOT read attempts', () =>
+    assertFails(getDocs(collection(otherUser, 'attempts'))));
+  await record('allowlisted user CAN read attempts', () =>
+    assertSucceeds(getDocs(collection(allowedUser, 'attempts'))));
+  await record('nobody, not even the allowlisted user, can delete an attempt', () =>
+    testEnv.withSecurityRulesDisabled(async (context) => {
+      const ref = await addDoc(collection(context.firestore(), 'attempts'), validAttempt);
+      return assertFails(deleteDoc(doc(allowedUser, 'attempts', ref.id)));
+    }));
 
   let targetId;
   await testEnv.withSecurityRulesDisabled(async (context) => {

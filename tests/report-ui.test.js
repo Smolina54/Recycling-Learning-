@@ -38,6 +38,13 @@ async function main(){
   const passRateKpi = await page.$eval('#kpiRow .kpi-tile:nth-child(2) .kpi-value', el => el.textContent.trim());
   check('pass rate KPI looks like a percentage', /^\d+%$/.test(passRateKpi), passRateKpi);
 
+  const completionRateKpi = await page.$eval('#kpiRow .kpi-tile:nth-child(6) .kpi-value', el => el.textContent.trim());
+  check('completion rate KPI looks like a percentage (attempts tracked in sample data)',
+    /^\d+%$/.test(completionRateKpi), completionRateKpi);
+
+  const trendPoints = await page.$$eval('#trendChart .trend-svg circle', els => els.length);
+  check('trend chart rendered at least one day of data', trendPoints > 0, trendPoints);
+
   const missedRows = await page.$$eval('#missedList .missed-row', els => els.length);
   check('missed-items ranking rendered rows', missedRows > 0, missedRows);
 
@@ -90,15 +97,18 @@ async function main(){
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   await page.$eval('#filterDateFrom', (el, v) => { el.value = v; el.dispatchEvent(new Event('change')); }, tomorrow);
   await new Promise(r => setTimeout(r, 200));
-  const submissionsAfterFutureFrom = await page.$eval('#kpiRow .kpi-tile:nth-child(1) .kpi-value', el => el.textContent.trim()).catch(() => 'ERR');
-  check('a from-date in the future excludes all sample submissions',
-    submissionsAfterFutureFrom === '0', submissionsAfterFutureFrom);
+  check('a from-date in the future shows the empty-state message',
+    await page.$eval('#emptyState', el => getComputedStyle(el).display !== 'none'));
+  check('a from-date in the future hides the report body (no stale/NaN KPIs)',
+    await page.$eval('#reportBody', el => getComputedStyle(el).display === 'none'));
   const focusNoteWithDate = await page.$eval('#focusNote', el => el.textContent.trim());
   check('focus note mentions the date range once a date filter is set',
     focusNoteWithDate.includes(tomorrow), focusNoteWithDate);
 
   await page.$eval('#filterDateFrom', el => { el.value = ''; el.dispatchEvent(new Event('change')); });
   await new Promise(r => setTimeout(r, 200));
+  check('clearing the date filter hides the empty-state message again',
+    await page.$eval('#emptyState', el => getComputedStyle(el).display === 'none'));
   const groupRowsAfterClear = await page.$$eval('#groupTable tbody tr', els => els.length);
   check('clearing the date filter restores the full group table',
     groupRowsAfterClear === groupRowsBaseline, `${groupRowsAfterClear} == ${groupRowsBaseline}`);

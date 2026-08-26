@@ -109,6 +109,14 @@
   .filter-row{display:flex; gap:16px; flex-wrap:wrap;}
   .filter-field{display:flex; flex-direction:column; gap:6px; min-width:180px; flex:1;}
   .filter-field span{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft);}
+  #trendChart{position:relative;}
+  .trend-svg{width:100%; height:220px; display:block; cursor:crosshair;}
+  .trend-tooltip{
+    position:absolute; top:4px; transform:translateX(-50%);
+    background:var(--ink); color:var(--paper); font-family:var(--mono); font-size:11px;
+    padding:4px 8px; border-radius:var(--radius); white-space:nowrap; pointer-events:none;
+  }
+
   .filter-field select, .filter-field input[type=date]{
     font-family:var(--body); font-size:14px; padding:9px 12px; border:1.5px solid var(--line);
     background:var(--paper); border-radius:var(--radius); color:var(--ink); width:100%;
@@ -166,25 +174,38 @@
       <p class="block-sub" id="focusNote" style="margin:14px 0 0;"></p>
     </div>
 
-    <div class="kpi-row" id="kpiRow"></div>
-
-    <div class="report-block">
-      <h3>Accuracy by stream</h3>
-      <p class="block-sub">Average share of decoy items correctly left out of each bin, across all submissions. Lower bars point to where signage or a refresher would help most.</p>
-      <div id="streamBars"></div>
+    <div class="report-block" id="emptyState" style="display:none;">
+      <h3>No submissions match this filter</h3>
+      <p class="block-sub">Try widening the building/tenant/level or date range above.</p>
     </div>
 
-    <div class="report-block">
-      <h3>Most commonly missed items</h3>
-      <p class="block-sub">The specific objects people get wrong most often, ranked by miss rate across every submission.</p>
-      <div class="missed-list" id="missedList"></div>
-    </div>
+    <div id="reportBody">
+      <div class="kpi-row" id="kpiRow"></div>
 
-    <div class="report-block">
-      <h3>Breakdown by building / level / tenant</h3>
-      <p class="block-sub">Sorted worst-to-best average score, so the groups that need attention surface first.</p>
-      <div style="overflow-x:auto;">
-        <table class="group-table" id="groupTable"></table>
+      <div class="report-block">
+        <h3>Accuracy by stream</h3>
+        <p class="block-sub">Average share of decoy items correctly left out of each bin, across all submissions. Lower bars point to where signage or a refresher would help most.</p>
+        <div id="streamBars"></div>
+      </div>
+
+      <div class="report-block">
+        <h3>Score trend over time</h3>
+        <p class="block-sub">Average score per day across the current filter — use the date range above to zoom into a period.</p>
+        <div id="trendChart"></div>
+      </div>
+
+      <div class="report-block">
+        <h3>Most commonly missed items</h3>
+        <p class="block-sub">The specific objects people get wrong most often, ranked by miss rate across every submission.</p>
+        <div class="missed-list" id="missedList"></div>
+      </div>
+
+      <div class="report-block">
+        <h3>Breakdown by building / level / tenant</h3>
+        <p class="block-sub">Sorted worst-to-best average score, so the groups that need attention surface first.</p>
+        <div style="overflow-x:auto;">
+          <table class="group-table" id="groupTable"></table>
+        </div>
       </div>
     </div>
 
@@ -271,6 +292,16 @@ try {
     return row;
   }
 
+  // Same building/tenant/level/timestamp shape as submissionToRow, minus the score
+  // fields an attempt doesn't have — only used to compute a completion rate.
+  function attemptToRow(id, data){
+    return {
+      _id: id,
+      building: data.buildingName || '', tenant: data.tenantName || '', level: data.level || '',
+      timestamp: (data.startedAt && typeof data.startedAt.toDate === 'function') ? data.startedAt.toDate().toISOString() : (data.startedAt || null)
+    };
+  }
+
   function rowsToCSV(rows){
     if (!rows.length) return '';
     const cols = new Set();
@@ -301,6 +332,7 @@ try {
     // items with a built-in bias so the demo report has a realistic "commonly missed" pattern
     const missBias = {'gw-pizza':0.45, 'gw-cup':0.3, 'og-fish':0.4, 'pc-envelope':0.25, 'ew-toner':0.2};
     const rows = [];
+    const attempts = [];
     let n = 0;
     buildings.forEach(b => {
       b.tenants.forEach(t => {
@@ -324,21 +356,32 @@ try {
             breakdown[s+'_avoided'] = av;
             breakdown[s+'_total'] = ids.length;
           });
+          const timestamp = new Date(Date.now() - Math.floor(Math.random()*20)*86400000).toISOString();
           rows.push(Object.assign({
             building: b.building, level: t.level, tenant: t.tenant,
             score, avoided, total,
             duration_seconds: 90 + Math.floor(Math.random()*180),
             device_type: Math.random() > 0.4 ? 'mobile-touch' : 'desktop',
-            timestamp: new Date(Date.now() - Math.floor(Math.random()*20)*86400000).toISOString()
+            timestamp
           }, breakdown, itemFlags));
+          attempts.push({ building: b.building, level: t.level, tenant: t.tenant, timestamp });
+        }
+        // A few people who started but never finished, so the demo completion rate isn't 100%.
+        const dropped = Math.floor(Math.random()*3);
+        for (let i=0; i<dropped; i++){
+          attempts.push({
+            building: b.building, level: t.level, tenant: t.tenant,
+            timestamp: new Date(Date.now() - Math.floor(Math.random()*20)*86400000).toISOString()
+          });
         }
       });
     });
-    return rows;
+    return { rows, attempts };
   }
 
   let currentRows = [];
   let allRows = [];
+  let allAttempts = []; // "started the sort" pings — used only to compute a completion rate
   let isLiveData = false;
 
   // ---------------- Filters (building → tenant → level) ----------------
@@ -390,13 +433,13 @@ try {
       levels.map(l => `<option value="${l}">${l}</option>`).join('');
   }
 
-  function getFilteredRows(){
+  function filterByCurrentScope(rows){
     const b = document.getElementById('filterBuilding').value;
     const t = document.getElementById('filterTenant').value;
     const l = document.getElementById('filterLevel').value;
     const from = document.getElementById('filterDateFrom').value; // 'YYYY-MM-DD' or ''
     const to = document.getElementById('filterDateTo').value;
-    return allRows.filter(r => {
+    return rows.filter(r => {
       if (b && r.building !== b) return false;
       if (t && r.tenant !== t) return false;
       if (l && r.level !== l) return false;
@@ -406,6 +449,8 @@ try {
       return true;
     });
   }
+
+  function getFilteredRows(){ return filterByCurrentScope(allRows); }
 
   function renderFiltered(sourceLabel){
     const b = document.getElementById('filterBuilding').value;
@@ -419,11 +464,13 @@ try {
     if (from || to) scopeParts.push(`${from || '…'} to ${to || '…'}`);
     document.getElementById('focusNote').textContent = focused ? `Focused on: ${scopeParts.join(' — ')}` : '';
     document.getElementById('deleteBtn').style.display = isLiveData ? 'inline-flex' : 'none';
-    renderReport(getFilteredRows(), sourceLabel);
+    const attemptsInScope = filterByCurrentScope(allAttempts).length;
+    renderReport(getFilteredRows(), sourceLabel, attemptsInScope);
   }
 
-  function loadRows(rows, sourceLabel, live){
+  function loadRows(rows, attempts, sourceLabel, live){
     allRows = rows;
+    allAttempts = attempts;
     isLiveData = live;
     document.getElementById('filterBlock').style.display = 'block';
     populateFilterOptions();
@@ -438,13 +485,90 @@ try {
     });
   });
 
-  function renderReport(rows, sourceLabel){
+  function buildTrendChart(rows){
+    const container = document.getElementById('trendChart');
+    const daily = {};
+    rows.forEach(r => {
+      if (!r.timestamp) return;
+      const day = r.timestamp.slice(0, 10);
+      if (!daily[day]) daily[day] = { sum: 0, count: 0 };
+      daily[day].sum += (r.score || 0);
+      daily[day].count += 1;
+    });
+    const days = Object.keys(daily).sort();
+    if (days.length === 0){
+      container.innerHTML = '<p class="block-sub">No dated submissions to plot yet.</p>';
+      return;
+    }
+    const points = days.map(d => ({ day: d, avg: Math.round(daily[d].sum / daily[d].count) }));
+
+    const W = 760, H = 220, padL = 40, padR = 16, padT = 16, padB = 28;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const xStep = points.length > 1 ? plotW / (points.length - 1) : 0;
+    const xAt = i => padL + i * xStep;
+    const yAt = v => padT + plotH - (v / 100) * plotH;
+
+    const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${yAt(p.avg).toFixed(1)}`).join(' ');
+    const areaPath = `${linePath} L ${xAt(points.length - 1).toFixed(1)} ${(padT + plotH).toFixed(1)} L ${xAt(0).toFixed(1)} ${(padT + plotH).toFixed(1)} Z`;
+
+    const gridLines = [0, 25, 50, 75, 100].map(v => `
+      <line x1="${padL}" x2="${W - padR}" y1="${yAt(v).toFixed(1)}" y2="${yAt(v).toFixed(1)}" stroke="var(--line)" stroke-width="1"/>
+      <text x="${padL - 8}" y="${yAt(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle" font-family="var(--mono)" font-size="10" fill="var(--ink-soft)">${v}</text>
+    `).join('');
+
+    const labelEvery = Math.max(1, Math.ceil(points.length / 6));
+    const xLabels = points.map((p, i) => (i % labelEvery === 0 || i === points.length - 1)
+      ? `<text x="${xAt(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ink-soft)">${p.day.slice(5)}</text>`
+      : '').join('');
+
+    const dots = points.map((p, i) => `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(p.avg).toFixed(1)}" r="3.5" fill="var(--forest)"/>`).join('');
+
+    container.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" class="trend-svg" role="img" aria-label="Average score by day">
+        ${gridLines}
+        <path d="${areaPath}" fill="var(--forest)" opacity="0.08" stroke="none"/>
+        <path d="${linePath}" fill="none" stroke="var(--forest)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        ${dots}
+        ${xLabels}
+        <line id="trendCrosshair" x1="0" x2="0" y1="${padT}" y2="${padT + plotH}" stroke="var(--ink-soft)" stroke-width="1" opacity="0"/>
+      </svg>
+      <div class="trend-tooltip" id="trendTooltip" style="display:none;"></div>
+    `;
+
+    const svg = container.querySelector('.trend-svg');
+    const tooltip = document.getElementById('trendTooltip');
+    const crosshair = document.getElementById('trendCrosshair');
+
+    svg.addEventListener('mousemove', (e) => {
+      const rect = svg.getBoundingClientRect();
+      const scale = W / rect.width;
+      const localX = (e.clientX - rect.left) * scale;
+      let nearest = 0, best = Infinity;
+      points.forEach((p, i) => { const d = Math.abs(xAt(i) - localX); if (d < best){ best = d; nearest = i; } });
+      const p = points[nearest];
+      crosshair.setAttribute('x1', xAt(nearest)); crosshair.setAttribute('x2', xAt(nearest)); crosshair.setAttribute('opacity', '1');
+      tooltip.style.display = 'block';
+      tooltip.style.left = `${(xAt(nearest) / W) * 100}%`;
+      tooltip.textContent = `${p.day} — ${p.avg}% avg`;
+    });
+    svg.addEventListener('mouseleave', () => { crosshair.setAttribute('opacity', '0'); tooltip.style.display = 'none'; });
+  }
+
+  function renderReport(rows, sourceLabel, attemptsInScope){
     currentRows = rows;
     document.getElementById('reportSection').style.display = 'block';
     document.getElementById('sourceNote').textContent = sourceLabel;
 
-    // KPIs
     const totalSubs = rows.length;
+    if (totalSubs === 0){
+      document.getElementById('emptyState').style.display = 'block';
+      document.getElementById('reportBody').style.display = 'none';
+      return;
+    }
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('reportBody').style.display = 'block';
+
+    // KPIs
     const avgScore = Math.round(rows.reduce((a,r) => a + (r.score||0), 0) / totalSubs);
     const passCount = rows.filter(r => (r.score||0) >= 75).length;
     const passRate = Math.round((passCount/totalSubs)*100);
@@ -452,6 +576,7 @@ try {
     const avgDuration = durations.length ? Math.round(durations.reduce((a,b)=>a+b,0)/durations.length) : null;
     const mobileCount = rows.filter(r => r.device_type === 'mobile-touch').length;
     const mobilePct = Math.round((mobileCount/totalSubs)*100);
+    const completionRate = attemptsInScope > 0 ? Math.round((totalSubs/attemptsInScope)*100) : null;
 
     const kpiRow = document.getElementById('kpiRow');
     kpiRow.innerHTML = `
@@ -460,7 +585,10 @@ try {
       <div class="kpi-tile"><div class="kpi-label">Average score</div><div class="kpi-value">${avgScore}%</div></div>
       <div class="kpi-tile"><div class="kpi-label">Avg. time to complete</div><div class="kpi-value">${avgDuration!=null ? Math.floor(avgDuration/60)+'m '+(avgDuration%60)+'s' : '—'}</div></div>
       <div class="kpi-tile"><div class="kpi-label">Completed on mobile</div><div class="kpi-value">${mobilePct}%</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Completion rate</div><div class="kpi-value">${completionRate!=null ? completionRate+'%' : '—'}</div></div>
     `;
+
+    buildTrendChart(rows);
 
     // Stream accuracy bars
     const streamBars = document.getElementById('streamBars');
@@ -534,10 +662,14 @@ try {
     }
     document.getElementById('authStatus').textContent = 'Loading results…';
     try {
-      const snap = await getDocs(collection(db, 'submissions'));
-      const rows = snap.docs.map(d => submissionToRow(d.id, d.data()));
+      const [submissionsSnap, attemptsSnap] = await Promise.all([
+        getDocs(collection(db, 'submissions')),
+        getDocs(collection(db, 'attempts'))
+      ]);
+      const rows = submissionsSnap.docs.map(d => submissionToRow(d.id, d.data()));
+      const attempts = attemptsSnap.docs.map(d => attemptToRow(d.id, d.data()));
       document.getElementById('authStatus').textContent = `Signed in as ${auth.currentUser.email}`;
-      loadRows(rows, `Live data from Firestore · ${rows.length} submissions`, true);
+      loadRows(rows, attempts, `Live data from Firestore · ${rows.length} submissions`, true);
       document.getElementById('reportSection').scrollIntoView({behavior:'smooth', block:'start'});
     } catch (err){
       console.error('Failed to load submissions:', err);
@@ -569,7 +701,8 @@ try {
   }
 
   document.getElementById('loadSampleBtn').addEventListener('click', () => {
-    loadRows(generateSampleData(), 'Sample / preview data — not real submissions', false);
+    const { rows, attempts } = generateSampleData();
+    loadRows(rows, attempts, 'Sample / preview data — not real submissions', false);
     document.getElementById('reportSection').scrollIntoView({behavior:'smooth', block:'start'});
   });
 
