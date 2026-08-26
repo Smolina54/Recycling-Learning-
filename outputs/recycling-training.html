@@ -282,6 +282,14 @@
   .verdict{font-size:17px; font-weight:600; margin:22px 0 6px;}
   .verdict-sub{color:var(--ink-soft); font-size:14.5px; margin-bottom:26px;}
 
+  .save-warning{
+    display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    background:var(--gw-tint); border:1.5px solid var(--gw); color:var(--gw);
+    padding:14px 18px; margin-bottom:20px; font-size:14px; font-weight:600;
+  }
+  .save-warning .btn.secondary{border-color:var(--gw); color:var(--gw); padding:8px 16px; font-size:13px; white-space:nowrap;}
+  .save-warning .btn.secondary:hover{background:var(--gw); color:var(--paper);}
+
   .stream-breakdown{display:flex; flex-direction:column; gap:10px; margin-bottom:30px;}
   .breakdown-row{display:grid; grid-template-columns:130px 1fr 50px; align-items:center; gap:12px;}
   .breakdown-label{font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft);}
@@ -599,6 +607,10 @@
   <div class="results" id="results">
     <p class="eyebrow">Results</p>
     <h2>Your sorting accuracy</h2>
+    <div class="save-warning" id="saveWarning" style="display:none;">
+      <span>We couldn't save your results — check your connection and try again.</span>
+      <button class="btn secondary" id="retrySaveBtn">Retry</button>
+    </div>
     <div class="score-row">
       <div class="score-big" id="scorePct">0%</div>
       <div class="score-of" id="scoreOf">0 / 25 correctly avoided</div>
@@ -2176,10 +2188,24 @@ try {
   async function submitResults(payload){
     try {
       await addDoc(collection(db, 'submissions'), payload);
+      return true;
     } catch (err){
       console.error('Failed to submit Sorting Station results:', err);
+      return false;
     }
   }
+
+  let lastResultsPayload = null;
+
+  async function trySubmitResults(payload){
+    lastResultsPayload = payload;
+    const saved = await submitResults(payload);
+    document.getElementById('saveWarning').style.display = saved ? 'none' : 'flex';
+  }
+
+  document.getElementById('retrySaveBtn').addEventListener('click', () => {
+    if (lastResultsPayload) trySubmitResults(lastResultsPayload);
+  });
 
   function showResults(){
     document.getElementById('gameStage').style.display = 'none';
@@ -2238,7 +2264,7 @@ try {
 
     const durationSeconds = gameStartTime ? Math.round((Date.now() - gameStartTime) / 1000) : null;
 
-    submitResults({
+    trySubmitResults({
       buildingId: siteContext.buildingId,
       buildingName: siteContext.buildingName,
       tenantId: siteContext.tenantId,

@@ -78,6 +78,19 @@ async function main(){
   const reviewRows = await page.$$eval('#reviewList .review-item', els => els.length).catch(() => 0);
   check('review list rendered 25 item rows', reviewRows === 25, reviewRows);
 
+  // db is null (empty firebaseConfig in this environment) so the save is expected to fail —
+  // confirms the trainee is actually told, instead of silently losing their result.
+  await new Promise(r => setTimeout(r, 200));
+  check('save-failure warning is shown when the Firestore write fails',
+    await page.$eval('#saveWarning', el => getComputedStyle(el).display !== 'none'));
+
+  const errorsBeforeRetry = consoleErrors.length;
+  await page.click('#retrySaveBtn');
+  await new Promise(r => setTimeout(r, 200));
+  check('retry button re-attempts the save without throwing', consoleErrors.length > errorsBeforeRetry);
+  check('save-failure warning is still shown after a retry that also fails (no real backend yet)',
+    await page.$eval('#saveWarning', el => getComputedStyle(el).display !== 'none'));
+
   const unexpectedErrors = consoleErrors.filter(e => !EXPECTED_MESSAGES.some(m => e.includes(m)));
   check('no UNEXPECTED console/page errors across the full run', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
