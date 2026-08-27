@@ -385,6 +385,15 @@ try {
             device_type: Math.random() > 0.4 ? 'mobile-touch' : 'desktop',
             timestamp
           }, breakdown, itemFlags));
+          // A retry or two before their eventual completion, some of the time — so a
+          // "person" isn't always a clean 1 attempt : 1 submission ratio in the demo data.
+          const retries = Math.random() < 0.3 ? 1 + Math.floor(Math.random()*2) : 0;
+          for (let r=0; r<retries; r++){
+            attempts.push({
+              building: b.building, level: t.level, tenant: t.tenant, name: person.name, email: person.email,
+              timestamp: new Date(new Date(timestamp).getTime() - (r+1)*3600000).toISOString()
+            });
+          }
           attempts.push({ building: b.building, level: t.level, tenant: t.tenant, name: person.name, email: person.email, timestamp });
         }
         // A few people who started but never finished, so the demo completion rate isn't 100%
@@ -629,7 +638,11 @@ try {
     const avgDuration = durations.length ? Math.round(durations.reduce((a,b)=>a+b,0)/durations.length) : null;
     const mobileCount = rows.filter(r => r.device_type === 'mobile-touch').length;
     const mobilePct = Math.round((mobileCount/totalSubs)*100);
-    const completionRate = attempts.length > 0 ? Math.round((totalSubs/attempts.length)*100) : null;
+    // Counted by unique person (email), not raw doc counts — someone who tries 3 times before
+    // succeeding should count as 1 completed person, not drag the rate down as 2 failed attempts.
+    const uniqueAttemptEmails = new Set(attempts.map(a => a.email).filter(Boolean));
+    const uniqueCompletedEmails = new Set(rows.map(r => r.email).filter(Boolean).filter(e => uniqueAttemptEmails.has(e)));
+    const completionRate = uniqueAttemptEmails.size > 0 ? Math.round((uniqueCompletedEmails.size/uniqueAttemptEmails.size)*100) : null;
 
     const kpiRow = document.getElementById('kpiRow');
     kpiRow.innerHTML = `

@@ -41,6 +41,8 @@ async function main(){
   const completionRateKpi = await page.$eval('#kpiRow .kpi-tile:nth-child(6) .kpi-value', el => el.textContent.trim());
   check('completion rate KPI looks like a percentage (attempts tracked in sample data)',
     /^\d+%$/.test(completionRateKpi), completionRateKpi);
+  check('completion rate never exceeds 100% (counted by unique person, not raw attempt docs — sample data includes retries)',
+    /^\d+%$/.test(completionRateKpi) && parseInt(completionRateKpi, 10) <= 100, completionRateKpi);
 
   const trendPoints = await page.$$eval('#trendChart .trend-svg circle', els => els.length);
   check('trend chart rendered at least one day of data', trendPoints > 0, trendPoints);
