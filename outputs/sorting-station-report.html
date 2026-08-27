@@ -195,6 +195,15 @@
       </div>
 
       <div class="report-block">
+        <h3>Pending completion</h3>
+        <p class="block-sub">Started the sort but haven't finished yet, within the current filter — useful for following up when training is mandatory.</p>
+        <p class="block-sub" id="pendingEmpty" style="display:none;">Nobody in this filter has started without finishing — everyone who began also completed it.</p>
+        <div style="overflow-x:auto;">
+          <table class="group-table" id="pendingTable"></table>
+        </div>
+      </div>
+
+      <div class="report-block">
         <h3>Most commonly missed items</h3>
         <p class="block-sub">The specific objects people get wrong most often, ranked by miss rate across every submission.</p>
         <div class="missed-list" id="missedList"></div>
@@ -298,6 +307,7 @@ try {
     return {
       _id: id,
       building: data.buildingName || '', tenant: data.tenantName || '', level: data.level || '',
+      name: data.name || '', email: data.email || '',
       timestamp: (data.startedAt && typeof data.startedAt.toDate === 'function') ? data.startedAt.toDate().toISOString() : (data.startedAt || null)
     };
   }
@@ -331,6 +341,15 @@ try {
     ];
     // items with a built-in bias so the demo report has a realistic "commonly missed" pattern
     const missBias = {'gw-pizza':0.45, 'gw-cup':0.3, 'og-fish':0.4, 'pc-envelope':0.25, 'ew-toner':0.2};
+    const firstNames = ['Alex','Jordan','Sam','Taylor','Morgan','Casey','Riley','Jamie','Drew','Quinn','Avery','Reese'];
+    const lastNames = ['Nguyen','Smith','Garcia','Patel','Kim','Brown','Diaz','Chen','Johnson','Lopez','Singh','Walsh'];
+    let personSeq = 0;
+    function samplePerson(){
+      personSeq++;
+      const name = `${firstNames[personSeq % firstNames.length]} ${lastNames[(personSeq * 3) % lastNames.length]}`;
+      const email = `${name.toLowerCase().replace(' ', '.')}${personSeq}@example.com`;
+      return { name, email };
+    }
     const rows = [];
     const attempts = [];
     let n = 0;
@@ -339,6 +358,7 @@ try {
         const submissions = 4 + Math.floor(Math.random()*5);
         for (let i=0; i<submissions; i++){
           n++;
+          const person = samplePerson();
           const itemFlags = {};
           let avoided = 0;
           Object.keys(catalog).forEach(id => {
@@ -359,18 +379,22 @@ try {
           const timestamp = new Date(Date.now() - Math.floor(Math.random()*20)*86400000).toISOString();
           rows.push(Object.assign({
             building: b.building, level: t.level, tenant: t.tenant,
+            name: person.name, email: person.email,
             score, avoided, total,
             duration_seconds: 90 + Math.floor(Math.random()*180),
             device_type: Math.random() > 0.4 ? 'mobile-touch' : 'desktop',
             timestamp
           }, breakdown, itemFlags));
-          attempts.push({ building: b.building, level: t.level, tenant: t.tenant, timestamp });
+          attempts.push({ building: b.building, level: t.level, tenant: t.tenant, name: person.name, email: person.email, timestamp });
         }
-        // A few people who started but never finished, so the demo completion rate isn't 100%.
+        // A few people who started but never finished, so the demo completion rate isn't 100%
+        // and the "pending completion" list has something to show.
         const dropped = Math.floor(Math.random()*3);
         for (let i=0; i<dropped; i++){
+          const person = samplePerson();
           attempts.push({
             building: b.building, level: t.level, tenant: t.tenant,
+            name: person.name, email: person.email,
             timestamp: new Date(Date.now() - Math.floor(Math.random()*20)*86400000).toISOString()
           });
         }
@@ -464,8 +488,7 @@ try {
     if (from || to) scopeParts.push(`${from || '…'} to ${to || '…'}`);
     document.getElementById('focusNote').textContent = focused ? `Focused on: ${scopeParts.join(' — ')}` : '';
     document.getElementById('deleteBtn').style.display = isLiveData ? 'inline-flex' : 'none';
-    const attemptsInScope = filterByCurrentScope(allAttempts).length;
-    renderReport(getFilteredRows(), sourceLabel, attemptsInScope);
+    renderReport(getFilteredRows(), sourceLabel, filterByCurrentScope(allAttempts));
   }
 
   function loadRows(rows, attempts, sourceLabel, live){
@@ -554,7 +577,37 @@ try {
     svg.addEventListener('mouseleave', () => { crosshair.setAttribute('opacity', '0'); tooltip.style.display = 'none'; });
   }
 
-  function renderReport(rows, sourceLabel, attemptsInScope){
+  function renderPendingList(rows, attempts){
+    const completedEmails = new Set(rows.map(r => r.email).filter(Boolean));
+    const pendingByEmail = {};
+    attempts.forEach(a => {
+      if (!a.email || completedEmails.has(a.email)) return;
+      if (!pendingByEmail[a.email] || a.timestamp > pendingByEmail[a.email].timestamp){
+        pendingByEmail[a.email] = a; // keep their most recent attempt
+      }
+    });
+    const pending = Object.values(pendingByEmail).sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+
+    const table = document.getElementById('pendingTable');
+    document.getElementById('pendingEmpty').style.display = pending.length === 0 ? 'block' : 'none';
+    table.style.display = pending.length === 0 ? 'none' : 'table';
+    if (pending.length === 0){ table.innerHTML = ''; return; }
+
+    table.innerHTML = `
+      <thead><tr><th>Name</th><th>Email</th><th>Building</th><th>Tenant</th><th>Level</th><th>Last attempt</th></tr></thead>
+      <tbody>
+        ${pending.map(p => `
+          <tr>
+            <td>${p.name || '—'}</td><td>${p.email}</td><td>${p.building || '—'}</td>
+            <td>${p.tenant || '—'}</td><td>${p.level || '—'}</td>
+            <td>${p.timestamp ? p.timestamp.slice(0,10) : '—'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    `;
+  }
+
+  function renderReport(rows, sourceLabel, attempts){
     currentRows = rows;
     document.getElementById('reportSection').style.display = 'block';
     document.getElementById('sourceNote').textContent = sourceLabel;
@@ -576,7 +629,7 @@ try {
     const avgDuration = durations.length ? Math.round(durations.reduce((a,b)=>a+b,0)/durations.length) : null;
     const mobileCount = rows.filter(r => r.device_type === 'mobile-touch').length;
     const mobilePct = Math.round((mobileCount/totalSubs)*100);
-    const completionRate = attemptsInScope > 0 ? Math.round((totalSubs/attemptsInScope)*100) : null;
+    const completionRate = attempts.length > 0 ? Math.round((totalSubs/attempts.length)*100) : null;
 
     const kpiRow = document.getElementById('kpiRow');
     kpiRow.innerHTML = `
@@ -589,6 +642,7 @@ try {
     `;
 
     buildTrendChart(rows);
+    renderPendingList(rows, attempts);
 
     // Stream accuracy bars
     const streamBars = document.getElementById('streamBars');

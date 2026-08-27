@@ -45,6 +45,14 @@ async function main(){
   const trendPoints = await page.$$eval('#trendChart .trend-svg circle', els => els.length);
   check('trend chart rendered at least one day of data', trendPoints > 0, trendPoints);
 
+  const pendingRows = await page.$$eval('#pendingTable tbody tr', els => els.length);
+  check('pending-completion list rendered at least one row (sample data has dropped attempts)',
+    pendingRows > 0, pendingRows);
+  const pendingHasEmail = await page.$eval('#pendingTable tbody tr td:nth-child(2)', el => el.textContent.includes('@')).catch(() => false);
+  check('pending-completion rows show a real email, not blank', pendingHasEmail);
+  check('pending-empty message is hidden when there are pending rows',
+    await page.$eval('#pendingEmpty', el => getComputedStyle(el).display === 'none'));
+
   const missedRows = await page.$$eval('#missedList .missed-row', els => els.length);
   check('missed-items ranking rendered rows', missedRows > 0, missedRows);
 
