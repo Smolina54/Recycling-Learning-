@@ -2292,7 +2292,8 @@ try {
 
     const reviewList = document.getElementById('reviewList');
     reviewList.innerHTML = '';
-    allResults.forEach(r => {
+    const reviewOrder = [...allResults].sort((a, b) => Number(a.avoided) - Number(b.avoided)); // mistakes first, then correct
+    reviewOrder.forEach(r => {
       const item = itemById(r.itemId);
       const row = document.createElement('div');
       row.className = 'review-item ' + (r.avoided ? 'right' : 'wrong');

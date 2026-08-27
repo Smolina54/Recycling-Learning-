@@ -193,6 +193,13 @@ async function runFlow(page){
   const reviewRows = await page.$$eval('#reviewList .review-item', els => els.length).catch(() => 0);
   check('review list rendered 25 item rows', reviewRows === 25, reviewRows);
 
+  const reviewOrderClasses = await page.$$eval('#reviewList .review-item', els => els.map(el => (el.classList.contains('wrong') ? 'wrong' : 'right')));
+  const lastWrongIdx = reviewOrderClasses.lastIndexOf('wrong');
+  const firstRightIdx = reviewOrderClasses.indexOf('right');
+  check('review list shows mistakes before correct answers',
+    lastWrongIdx === -1 || firstRightIdx === -1 || lastWrongIdx < firstRightIdx,
+    reviewOrderClasses.join(','));
+
   // Real, valid data + real emulator + real rules -> the save should actually succeed this time.
   await new Promise(r => setTimeout(r, 500));
   check('save SUCCEEDS against the emulator with valid gate data (no warning banner shown)',
