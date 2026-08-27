@@ -57,6 +57,32 @@
   }
   .upload-zone p{color:var(--ink-soft); font-size:14.5px; margin:0 0 18px;}
   .upload-actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap;}
+
+  .admin-tabs{display:flex; gap:4px; border-bottom:1.5px solid var(--line); margin-bottom:28px;}
+  .tab-btn{
+    font-family:var(--body); font-weight:600; font-size:14.5px; color:var(--ink-soft);
+    background:none; border:none; border-bottom:2.5px solid transparent; padding:10px 4px; margin-bottom:-1.5px;
+    cursor:pointer;
+  }
+  .tab-btn.active{color:var(--ink); border-bottom-color:var(--forest);}
+  .tab-btn:hover{color:var(--ink);}
+
+  .import-xlsx-label{cursor:pointer;}
+  .import-candidates{max-height:280px; overflow-y:auto; border:1px solid var(--line); padding:10px; margin-top:10px; background:var(--paper);}
+  .import-row{display:grid; grid-template-columns:24px 1fr 1fr; gap:8px; align-items:center; padding:6px 0;}
+  .import-row input[type=text]{
+    font-family:var(--body); font-size:13px; padding:6px 8px; border:1px solid var(--line);
+    border-radius:var(--radius); background:var(--panel); color:var(--ink); width:100%;
+  }
+  @media (max-width:640px){.import-row{grid-template-columns:20px 1fr;} .import-row .import-levels{grid-column:2;}}
+
+  .building-row{margin-bottom:20px;}
+  .building-row h3{margin-bottom:14px;}
+  .tenant-list{list-style:none; margin:0 0 16px; padding:0; font-size:13.5px;}
+  .tenant-list li{padding:8px 0; border-bottom:1px solid var(--line);}
+  .tenant-list li:last-child{border-bottom:none;}
+  .tenant-list .tenant-name{font-weight:600;}
+  .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px; margin-left:8px;}
   input[type=file]{display:none;}
   .file-name{font-family:var(--mono); font-size:12px; color:var(--ink-soft); margin-top:14px;}
 
@@ -155,6 +181,30 @@
     </div>
   </div>
 
+  <div class="admin-tabs" id="adminTabs" style="display:none;">
+    <button class="tab-btn active" id="tabReportsBtn">Reports</button>
+    <button class="tab-btn" id="tabBuildingsBtn">Buildings</button>
+  </div>
+
+  <section id="buildingsSection" style="display:none;">
+    <div class="report-header-row">
+      <h2>Buildings</h2>
+    </div>
+
+    <div class="report-block">
+      <h3>Add a building</h3>
+      <div class="filter-row">
+        <label class="filter-field"><span>Building name</span><input type="text" id="newBuildingName" placeholder="e.g. 123 Example Tower"></label>
+      </div>
+      <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
+        <button class="btn" id="addBuildingBtn">+ Add building</button>
+      </div>
+      <p class="block-sub" id="buildingsStatus" style="margin-top:10px;"></p>
+    </div>
+
+    <div id="buildingsList"></div>
+  </section>
+
   <section id="reportSection">
     <div class="report-header-row">
       <h2 id="reportTitle">Overview</h2>
@@ -229,11 +279,13 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, collection, getDocs, deleteDoc, doc, connectFirestoreEmulator
+  getFirestore, collection, getDocs, deleteDoc, doc, setDoc, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
+  createUserWithEmailAndPassword, signInWithEmailAndPassword
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { read as readWorkbook, utils as xlsxUtils } from "https://cdn.sheetjs.com/xlsx-latest/package/xlsx.mjs";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAoWSx9FYa6UJa-6EZezgBYiDMuVVs9BBo",
@@ -253,6 +305,13 @@ try {
   if (new URLSearchParams(window.location.search).get('emulator') === '1'){
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
     connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    // Test-only sign-in hook (no real Google popup against the emulator) — never runs
+    // outside ?emulator=1, so it never exists on the real deployed page.
+    window.__testSignIn = async (email, password) => {
+      try { await createUserWithEmailAndPassword(auth, email, password); }
+      catch (err) { /* user already exists from a previous test run — fine */ }
+      await signInWithEmailAndPassword(auth, email, password);
+    };
   }
 } catch (err) {
   console.error('Firebase is not configured yet — sign-in and live data will stay unavailable until firebaseConfig is filled in.', err);
@@ -749,12 +808,206 @@ try {
       const attempts = attemptsSnap.docs.map(d => attemptToRow(d.id, d.data()));
       document.getElementById('authStatus').textContent = `Signed in as ${auth.currentUser.email}`;
       loadRows(rows, attempts, `Live data from Firestore · ${rows.length} submissions`, true);
+      document.getElementById('adminTabs').style.display = 'flex';
+      await loadBuildings();
       document.getElementById('reportSection').scrollIntoView({behavior:'smooth', block:'start'});
     } catch (err){
       console.error('Failed to load submissions:', err);
       document.getElementById('authStatus').textContent = "Your account isn't authorized to view this report, or something went wrong loading it.";
     }
   }
+
+  // ---------------- Buildings tab (admin: create buildings/tenants) ----------------
+  async function loadBuildings(){
+    const buildingsSnap = await getDocs(collection(db, 'buildings'));
+    const buildings = await Promise.all(buildingsSnap.docs.map(async (d) => {
+      const tenantsSnap = await getDocs(collection(db, 'buildings', d.id, 'tenants'));
+      return {
+        id: d.id,
+        name: d.data().name || '(untitled)',
+        tenants: tenantsSnap.docs.map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [] })),
+      };
+    }));
+    renderBuildingsList(buildings);
+  }
+
+  function renderBuildingsList(buildings){
+    const container = document.getElementById('buildingsList');
+    if (buildings.length === 0){
+      container.innerHTML = '<p class="block-sub">No buildings yet — add one above.</p>';
+      return;
+    }
+    container.innerHTML = buildings.map(b => `
+      <div class="report-block building-row" data-building-id="${b.id}">
+        <h3>${b.name}</h3>
+        <ul class="tenant-list">
+          ${b.tenants.length
+            ? b.tenants.map(t => `<li><span class="tenant-name">${t.name}</span><span class="tenant-levels">${t.levels.join(', ')}</span></li>`).join('')
+            : '<li class="block-sub">No tenants yet.</li>'}
+        </ul>
+        <div class="filter-row">
+          <label class="filter-field"><span>Tenant name</span><input type="text" class="new-tenant-name"></label>
+          <label class="filter-field"><span>Levels (one per line)</span><textarea class="new-tenant-levels" rows="2" placeholder="Level 1\nLevel 2"></textarea></label>
+        </div>
+        <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+          <button class="btn secondary add-tenant-btn">+ Add tenant</button>
+          <label class="btn secondary import-xlsx-label">
+            Import from Excel →
+            <input type="file" class="import-xlsx-input" accept=".xlsx" style="display:none;">
+          </label>
+        </div>
+        <div class="import-review" style="display:none;"></div>
+      </div>
+    `).join('');
+  }
+
+  // Building-name column value from a "collection point" style export (e.g. "KPMG - Level 36 - Office")
+  // combined with its own "Primary Location" column (e.g. "Level 36") — groups by the part of Name
+  // before that level, deduping levels, so multiple rows/sub-areas for one tenant collapse into one.
+  function groupTenantsFromRows(rows){
+    const header = (rows[0] || []).map(h => String(h || '').trim().toLowerCase());
+    let nameIdx = header.indexOf('name');
+    let locationIdx = header.findIndex(h => h.includes('location'));
+    if (nameIdx === -1) nameIdx = 0;
+    if (locationIdx === -1) locationIdx = 1;
+
+    const groups = new Map();
+    rows.slice(1).forEach(row => {
+      const rawName = String(row[nameIdx] ?? '').trim();
+      const level = String(row[locationIdx] ?? '').trim();
+      if (!rawName) return;
+      let tenantName = rawName;
+      if (level && rawName.includes(level)){
+        tenantName = rawName.slice(0, rawName.indexOf(level)).replace(/[-–]\s*$/, '').trim() || rawName;
+      }
+      if (!groups.has(tenantName)) groups.set(tenantName, new Set());
+      if (level) groups.get(tenantName).add(level);
+    });
+    return [...groups.entries()].map(([name, levelSet]) => ({ name, levels: [...levelSet] }));
+  }
+
+  function renderImportReview(row, candidates){
+    const reviewEl = row.querySelector('.import-review');
+    reviewEl.style.display = 'block';
+    reviewEl.innerHTML = `
+      <p class="block-sub" style="margin-top:14px;">Review before importing — untick anything that isn't a real tenant (e.g. "Vacant", "Go Zero", "Base Building"), and fix names/levels if needed.</p>
+      <div class="import-candidates">
+        ${candidates.map((c, i) => `
+          <div class="import-row">
+            <input type="checkbox" class="import-check" data-i="${i}" checked>
+            <input type="text" class="import-name" data-i="${i}" value="${c.name.replace(/"/g, '&quot;')}">
+            <input type="text" class="import-levels" data-i="${i}" value="${c.levels.join(', ').replace(/"/g, '&quot;')}">
+          </div>
+        `).join('')}
+      </div>
+      <div class="print-row" style="justify-content:flex-start; margin-top:12px;">
+        <button class="btn import-confirm-btn">Import selected →</button>
+        <button class="btn secondary import-cancel-btn">Cancel</button>
+      </div>
+    `;
+  }
+
+  document.getElementById('addBuildingBtn').addEventListener('click', async () => {
+    const nameInput = document.getElementById('newBuildingName');
+    const status = document.getElementById('buildingsStatus');
+    const name = nameInput.value.trim();
+    if (!name){ status.textContent = 'Enter a building name first.'; return; }
+    status.textContent = 'Adding…';
+    try {
+      await setDoc(doc(db, 'buildings', crypto.randomUUID()), { name });
+      nameInput.value = '';
+      status.textContent = `Added "${name}".`;
+      await loadBuildings();
+    } catch (err){
+      console.error('Failed to add building:', err);
+      status.textContent = 'Failed to add building — check the console for details.';
+    }
+  });
+
+  document.getElementById('buildingsList').addEventListener('click', async (e) => {
+    const addBtn = e.target.closest('.add-tenant-btn');
+    if (addBtn){
+      const row = addBtn.closest('.building-row');
+      const buildingId = row.dataset.buildingId;
+      const tenantName = row.querySelector('.new-tenant-name').value.trim();
+      const levels = row.querySelector('.new-tenant-levels').value.split('\n').map(l => l.trim()).filter(Boolean);
+      if (!tenantName || levels.length === 0){ alert('Enter a tenant name and at least one level.'); return; }
+      try {
+        await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: tenantName, levels });
+        await loadBuildings();
+      } catch (err){
+        console.error('Failed to add tenant:', err);
+        alert('Failed to add tenant — check the console for details.');
+      }
+      return;
+    }
+
+    const cancelBtn = e.target.closest('.import-cancel-btn');
+    if (cancelBtn){
+      cancelBtn.closest('.import-review').style.display = 'none';
+      return;
+    }
+
+    const confirmBtn = e.target.closest('.import-confirm-btn');
+    if (confirmBtn){
+      const row = confirmBtn.closest('.building-row');
+      const buildingId = row.dataset.buildingId;
+      const toImport = [...row.querySelectorAll('.import-check')]
+        .filter(c => c.checked)
+        .map(c => {
+          const i = c.dataset.i;
+          const name = row.querySelector(`.import-name[data-i="${i}"]`).value.trim();
+          const levels = row.querySelector(`.import-levels[data-i="${i}"]`).value.split(',').map(l => l.trim()).filter(Boolean);
+          return { name, levels };
+        })
+        .filter(t => t.name && t.levels.length);
+      if (toImport.length === 0){ alert('Nothing selected to import.'); return; }
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Importing…';
+      try {
+        for (const t of toImport){
+          await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: t.name, levels: t.levels });
+        }
+        await loadBuildings();
+      } catch (err){
+        console.error('Bulk import failed:', err);
+        alert('Import failed partway through — check the console for which tenants already got added before retrying.');
+      }
+      return;
+    }
+  });
+
+  document.getElementById('buildingsList').addEventListener('change', async (e) => {
+    const input = e.target.closest('.import-xlsx-input');
+    if (!input || !input.files[0]) return;
+    const row = input.closest('.building-row');
+    const file = input.files[0];
+    try {
+      const buf = await file.arrayBuffer();
+      const workbook = readWorkbook(buf);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = xlsxUtils.sheet_to_json(sheet, { header: 1 });
+      const candidates = groupTenantsFromRows(rows);
+      renderImportReview(row, candidates);
+    } catch (err){
+      console.error('Failed to read Excel file:', err);
+      alert("Could not read that file — make sure it's a valid .xlsx export.");
+    }
+    input.value = '';
+  });
+
+  document.getElementById('tabReportsBtn').addEventListener('click', () => {
+    document.getElementById('tabReportsBtn').classList.add('active');
+    document.getElementById('tabBuildingsBtn').classList.remove('active');
+    document.getElementById('reportSection').style.display = 'block';
+    document.getElementById('buildingsSection').style.display = 'none';
+  });
+  document.getElementById('tabBuildingsBtn').addEventListener('click', () => {
+    document.getElementById('tabBuildingsBtn').classList.add('active');
+    document.getElementById('tabReportsBtn').classList.remove('active');
+    document.getElementById('buildingsSection').style.display = 'block';
+    document.getElementById('reportSection').style.display = 'none';
+  });
 
   document.getElementById('signInBtn').addEventListener('click', async () => {
     if (!auth){ document.getElementById('authStatus').textContent = 'Firebase is not configured yet.'; return; }
@@ -775,6 +1028,10 @@ try {
       else {
         isLiveData = false;
         document.getElementById('authStatus').textContent = 'Sign in with an authorized Google account to load live results.';
+        document.getElementById('adminTabs').style.display = 'none';
+        document.getElementById('buildingsSection').style.display = 'none';
+        document.getElementById('tabReportsBtn').classList.add('active');
+        document.getElementById('tabBuildingsBtn').classList.remove('active');
       }
     });
   }

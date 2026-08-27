@@ -55,6 +55,14 @@ async function main(){
     assertSucceeds(getDocs(collection(anon, 'buildings', 'building-1', 'tenants'))));
   await record('anon CANNOT write to buildings', () =>
     assertFails(setDoc(doc(anon, 'buildings', 'building-2'), { name: 'Hacked' })));
+  await record('non-allowlisted signed-in user CANNOT write to buildings', () =>
+    assertFails(setDoc(doc(otherUser, 'buildings', 'building-3'), { name: 'Nope' })));
+  await record('allowlisted user CAN create a building', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'buildings', 'building-new'), { name: 'New Tower' })));
+  await record('allowlisted user CAN create a tenant under a building', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'buildings', 'building-new', 'tenants', 'tenant-new'), { name: 'New Co', levels: ['Level 1'] })));
+  await record('anon CANNOT create a tenant under a building', () =>
+    assertFails(setDoc(doc(anon, 'buildings', 'building-new', 'tenants', 'tenant-hacked'), { name: 'Hacked', levels: [] })));
 
   await record('anon can create a valid submission', () =>
     assertSucceeds(addDoc(collection(anon, 'submissions'), validSubmission)));
