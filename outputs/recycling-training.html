@@ -217,6 +217,15 @@
   .bin-drop-target.bin-flash-correct{background:var(--og-tint); border-color:var(--forest);}
   .bin-drop-target.bin-flash-wrong{background:var(--gw-tint); border-color:var(--gw);}
 
+  .bin-collected{display:flex; flex-wrap:wrap; justify-content:center; gap:4px; max-width:180px;}
+  .bin-collected:empty{display:none;}
+  .bin-collected .collected-icon{
+    width:26px; height:26px; display:flex; align-items:center; justify-content:center;
+    opacity:0; transform:scale(.5); animation:collected-pop .3s ease forwards;
+  }
+  .bin-collected .collected-icon svg, .bin-collected .collected-icon img{width:100%; height:100%; object-fit:contain;}
+  @keyframes collected-pop{ to{ opacity:1; transform:scale(1); } }
+
   .item-board{
     display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:12px;
     margin-bottom:8px; min-height:130px;
@@ -236,12 +245,14 @@
   .board-item.drop-wrong{animation:item-shake .5s ease; border-color:var(--gw);}
   .board-item.locked{cursor:default;}
   .board-item.locked .item-icon, .board-item.locked .item-name{opacity:0.45;}
+  .board-item.resolved-wrong{cursor:default;}
+  .board-item.resolved-wrong .item-icon, .board-item.resolved-wrong .item-name{opacity:0.45;}
 
   .reveal-badge{
     display:none; font-family:var(--mono); font-size:10.5px; letter-spacing:0.03em;
     font-weight:700; margin-top:2px;
   }
-  .board-item.locked .reveal-badge{display:block;}
+  .board-item.locked .reveal-badge, .board-item.resolved-wrong .reveal-badge{display:block;}
 
   @keyframes item-shake{
     10%,90%{transform:translate(-3px,0);}
@@ -595,6 +606,7 @@
       <div class="bin-drop-target" id="phaseBin" data-stream="gw">
         <span class="bin-icon-lg" id="phaseBinIcon"></span>
         <span class="bin-label" id="phaseBinLabel">General Waste</span>
+        <div class="bin-collected" id="binCollected"></div>
       </div>
     </div>
 
@@ -2018,7 +2030,7 @@ try {
     gameFeedback.innerHTML = iconHtml + text;
   }
 
-  function animateIntoBin(card){
+  function collectIntoBin(card, item){
     const cardRect = card.getBoundingClientRect();
     const binRect = phaseBin.getBoundingClientRect();
     const dx = (binRect.left + binRect.width/2) - (cardRect.left + cardRect.width/2);
@@ -2028,6 +2040,13 @@ try {
     card.style.transition = 'transform .4s cubic-bezier(.3,.6,.4,1), opacity .4s ease';
     card.style.transform = `translate(${dx}px, ${dy}px) scale(.2)`;
     card.style.opacity = '0';
+    setTimeout(() => {
+      card.remove();
+      const mini = document.createElement('span');
+      mini.className = 'collected-icon';
+      mini.innerHTML = item.icon;
+      document.getElementById('binCollected').appendChild(mini);
+    }, 420);
   }
 
   function recordMiss(item, wrongStream){
@@ -2043,7 +2062,7 @@ try {
   }
 
   function handleDrop(card, item){
-    if (phaseLocked) return;
+    if (phaseLocked || card.dataset.resolved) return;
     const targetStream = streams[phaseIndex];
     const correct = item.stream === targetStream;
 
@@ -2053,24 +2072,22 @@ try {
 
     if (correct){
       flashBin(true);
-      animateIntoBin(card);
+      collectIntoBin(card, item);
       sortedCount++;
       document.getElementById('phaseCounter').textContent = `Sorted ${sortedCount} of 5`;
       showFeedback(item, true);
       updateProgress();
-      setTimeout(() => card.remove(), 420);
       if (sortedCount === 5) completePhase();
     } else {
+      card.dataset.resolved = 'wrong'; // stop this card from responding to further drops/keys
       flashBin(false);
       card.classList.add('drop-wrong');
       setTimeout(() => card.classList.remove('drop-wrong'), 550);
       recordMiss(item, targetStream);
       showFeedback(item, false);
       setTimeout(() => {
-        card.style.transition = 'opacity .4s ease, transform .4s ease';
-        card.style.opacity = '0';
-        card.style.transform = 'translateY(8px) scale(.9)';
-        setTimeout(() => card.remove(), 420);
+        card.classList.add('resolved-wrong');
+        card.style.borderColor = `var(--${item.stream})`;
       }, 1400);
     }
   }
@@ -2087,7 +2104,7 @@ try {
     }
 
     function onDown(e){
-      if (phaseLocked) return;
+      if (phaseLocked || card.dataset.resolved) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       card.setPointerCapture(e.pointerId);
       dragState = {pointerId:e.pointerId, startX:e.clientX, startY:e.clientY, moved:false};
@@ -2134,7 +2151,7 @@ try {
     card.addEventListener('pointerup', onUp);
     card.addEventListener('pointercancel', onCancel);
     card.addEventListener('keydown', (e) => {
-      if (phaseLocked) return;
+      if (phaseLocked || card.dataset.resolved) return;
       if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); handleDrop(card, item); }
     });
   }
@@ -2175,6 +2192,7 @@ try {
     nextPhaseBtn.style.display = 'none';
     gameFeedback.classList.remove('show','correct','wrong');
     gameFeedback.innerHTML = '';
+    document.getElementById('binCollected').innerHTML = '';
 
     renderBoard(buildBoard(stream));
     updateProgress();

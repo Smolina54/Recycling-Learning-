@@ -38,6 +38,21 @@ async function resolvePhase(page){
   return await page.$eval('#nextPhaseBtn', el => getComputedStyle(el).display !== 'none').catch(() => false);
 }
 
+// Deliberately presses Enter on every one of the 10 board items (not just until 5/5),
+// so both a real "correct, collected into the bin" and a real "wrong, stays on the
+// board" case are guaranteed to happen at least once — used only for phase 0.
+async function resolveAllTenItems(page){
+  for (let i = 0; i < 10; i++){
+    const card = await page.$('.board-item:not([data-test-clicked])');
+    if (!card) break;
+    await card.evaluate(el => el.setAttribute('data-test-clicked', '1'));
+    await card.focus();
+    await page.keyboard.press('Enter');
+    await new Promise(r => setTimeout(r, 120));
+  }
+  await new Promise(r => setTimeout(r, 1600)); // let the 1400ms wrong-item settle timer fire
+}
+
 async function seedTestBuilding(){
   // NOTE: don't call testEnv.cleanup() here — it wipes the emulator's Firestore data as
   // part of its teardown, which would erase the building we just seeded before the browser
@@ -125,8 +140,41 @@ async function runFlow(page){
   check('game stage visible after clicking Begin the sort',
     await page.$eval('#gameStage', el => getComputedStyle(el).display !== 'none'));
 
-  let phasesCompleted = 0;
-  for (let phase = 0; phase < 5; phase++){
+  // Phase 0: press every card (not just until 5/5) so both outcomes are exercised,
+  // then check the new "collected tray" + "wrong items stay on the board" behavior
+  // before moving on.
+  await resolveAllTenItems(page);
+  const collectedCount = await page.$$eval('#binCollected .collected-icon', els => els.length);
+  check('collected tray shows 5 mini-icons for the 5 correctly-sorted items', collectedCount === 5, collectedCount);
+
+  const resolvedWrongCount = await page.$$eval('.board-item.resolved-wrong', els => els.length);
+  check('at least one wrongly-dropped item stays on the board (does not disappear)', resolvedWrongCount > 0, resolvedWrongCount);
+
+  if (resolvedWrongCount > 0){
+    const wrongCardChecks = await page.$eval('.board-item.resolved-wrong', el => ({
+      badgeVisible: getComputedStyle(el.querySelector('.reveal-badge')).display !== 'none',
+      hasBorderColor: el.style.borderColor !== '',
+      dimmed: parseFloat(getComputedStyle(el.querySelector('.item-icon')).opacity) < 1,
+    }));
+    check('resolved-wrong card shows its reveal badge (which stream it belongs to)', wrongCardChecks.badgeVisible);
+    check('resolved-wrong card has a stream-colored border set', wrongCardChecks.hasBorderColor);
+    check('resolved-wrong card icon is visually dimmed, not full-strength', wrongCardChecks.dimmed);
+
+    const stillClickable = await page.evaluate(() => {
+      const card = document.querySelector('.board-item.resolved-wrong');
+      const before = document.getElementById('phaseCounter').textContent;
+      card.focus();
+      card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      return document.getElementById('phaseCounter').textContent === before;
+    });
+    check('a resolved-wrong card ignores further interaction (no double-processing)', stillClickable);
+  }
+
+  await page.click('#nextPhaseBtn');
+  await new Promise(r => setTimeout(r, 300));
+
+  let phasesCompleted = 1;
+  for (let phase = 1; phase < 5; phase++){
     const reachedFive = await resolvePhase(page);
     if (!reachedFive) break;
     phasesCompleted++;
