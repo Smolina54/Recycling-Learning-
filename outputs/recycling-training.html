@@ -357,6 +357,7 @@
       </label>
       <button class="btn" type="submit">Continue →</button>
     </form>
+    <p class="hero-sub" style="font-size:12px; opacity:.7; margin-top:16px;">Your name and email are recorded against this building/tenant/level only to confirm training completion, and are visible to your building's training coordinator. They aren't used for anything else.</p>
   </div>
 </section>
 
@@ -652,6 +653,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
   getFirestore, doc, getDoc, collection, getDocs, addDoc, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
 
 // Safe to be visible in client code — it's not a secret, protection comes from firestore.rules.
 const firebaseConfig = {
@@ -662,10 +664,21 @@ const firebaseConfig = {
   messagingSenderId: "196747023122",
   appId: "1:196747023122:web:3fbcc23c1532bed847d9cb"
 };
+
+// Anti-spam/anti-bot for the public write path (anyone with a building link can create
+// submissions/attempts with no login at all). Left blank on purpose: activating this needs
+// a one-time Firebase Console step (App Check → register a reCAPTCHA v3 site key → set
+// Firestore enforcement to "Enforced") that hasn't been done yet. Until RECAPTCHA_SITE_KEY
+// is filled in below, this block is a no-op and nothing about normal use changes.
+const RECAPTCHA_SITE_KEY = '';
+
 let db = null;
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
+  if (RECAPTCHA_SITE_KEY){
+    initializeAppCheck(firebaseApp, { provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+  }
   // ?emulator=1 routes to the local Firestore emulator instead of the real project —
   // used only by the automated tests in tests/, so they never write real test data live.
   if (new URLSearchParams(window.location.search).get('emulator') === '1'){
@@ -676,6 +689,14 @@ try {
 }
 
 (function(){
+  // Tenant/level names ultimately come from a bulk Excel import into the admin panel,
+  // not just hand-typed there — escape before they ever go into innerHTML, same reasoning
+  // as the report tool's esc() helper.
+  const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
+  function esc(str){
+    return String(str ?? '').replace(/[&<>"']/g, (c) => ESC_MAP[c]);
+  }
+
   // ---------------- Identification gate ----------------
   const siteContext = {buildingId:'', buildingName:'', tenantId:'', tenantName:'', level:'', name:'', email:''};
   let tenantsCache = [];
@@ -696,7 +717,7 @@ try {
   function populateLevelsForTenant(tenantId){
     const tenant = tenantsCache.find(t => t.id === tenantId);
     const levels = (tenant && tenant.levels) || [];
-    idLevelSelect.innerHTML = levels.map(l => `<option value="${l}">${l}</option>`).join('');
+    idLevelSelect.innerHTML = levels.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
     if (levels.length <= 1){
       idLevelField.style.display = 'none';
       idLevelSelect.value = levels[0] || '';
@@ -723,7 +744,7 @@ try {
       if (tenantsCache.length === 0){ showInvalidLink(); return; }
 
       idTenantSelect.innerHTML = '<option value="" disabled selected>Select your company…</option>' +
-        tenantsCache.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+        tenantsCache.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
       idTenantSelect.addEventListener('change', () => populateLevelsForTenant(idTenantSelect.value));
 
       idCardLoading.style.display = 'none';
