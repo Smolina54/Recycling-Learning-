@@ -3,17 +3,45 @@
 // add a tenant, confirm both render. Run: npm run test:admin
 const path = require('path');
 const url = require('url');
+const fs = require('fs');
 const puppeteer = require('puppeteer-core');
+const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
+const { doc, setDoc } = require('firebase/firestore');
 
 // Known limitation: hardcoded to Sergio's installed Edge path — single-machine internal tool, not solved with OS-detection.
 const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const REPORT_URL = `${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'sorting-station-report.html')).href}?emulator=1`;
+const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
 const ALLOWED_EMAIL = 'smolina@tradeflex.com.au';
+const XSS_PAYLOAD = '<img src=x onerror="window.__xssFired = true">';
 
 const results = [];
 function check(label, cond, extra){ results.push({label, ok: Boolean(cond), extra: extra || ''}); }
 
+// Seeds one attempt with no matching submission — an anonymous, unauthenticated trainee
+// could write exactly this (name/tenantName are free text, only bounded/shape-checked by
+// firestore.rules) — with a "name" that's a real XSS payload, not just a suspicious string.
+// It should show up in the report's "Pending completion" table as inert text, never execute.
+// projectId MUST match the real esg-1-98f35 used in firebaseConfig — see game-regression.test.js.
+async function seedMaliciousAttempt(){
+  const testEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'attempts', 'xss-test-attempt'), {
+      buildingId: 'xss-test-building', buildingName: 'XSS Test Tower',
+      tenantId: 'xss-test-tenant', tenantName: XSS_PAYLOAD,
+      level: 'Level 1', name: XSS_PAYLOAD, email: 'xss-test@example.com',
+      startedAt: new Date().toISOString(),
+    });
+  });
+  return testEnv; // not cleaned up here — same reasoning as game-regression.test.js
+}
+
 async function main(){
+  const seedEnv = await seedMaliciousAttempt();
   const browser = await puppeteer.launch({ executablePath: EDGE_PATH, headless: true });
   const page = await browser.newPage();
   const consoleErrors = [];
@@ -30,7 +58,7 @@ async function main(){
     process.exit(1);
   }
 
-  await finishAndReport(page, browser, consoleErrors);
+  await finishAndReport(page, browser, consoleErrors, seedEnv);
 }
 
 async function runFlow(page){
@@ -48,6 +76,16 @@ async function runFlow(page){
   check('admin tabs appear after signing in',
     await page.$eval('#adminTabs', el => getComputedStyle(el).display !== 'none'), authStatusText);
   check('Reports tab is active by default', await page.$eval('#tabReportsBtn', el => el.classList.contains('active')));
+
+  // --- XSS check: a malicious trainee-submitted name must render as inert text, never run ---
+  const xssFired = await page.evaluate(() => window.__xssFired === true);
+  check('a malicious attempt "name" in the Pending completion table does NOT execute as script', !xssFired);
+  const pendingText = await page.$eval('#pendingTable', el => el.textContent);
+  const pendingEmptyVisible = await page.$eval('#pendingEmpty', el => getComputedStyle(el).display !== 'none');
+  check('...and shows up as literal escaped text instead (proves it rendered, not silently dropped)',
+    pendingText.includes('<img src=x'), `emptyVisible=${pendingEmptyVisible} text="${pendingText.slice(0, 300)}"`);
+  const pendingHasRealImgTag = await page.$$eval('#pendingTable img', els => els.length > 0);
+  check('...and no real <img> element was created from it', !pendingHasRealImgTag);
 
   await page.click('#tabBuildingsBtn');
   await new Promise(r => setTimeout(r, 200));
@@ -158,9 +196,32 @@ async function runFlow(page){
   check('unticked junk rows (Vacant, Base Building) were NOT imported',
     !tenantEntriesAfterImport.some(t => t.includes('Vacant')) && !tenantEntriesAfterImport.some(t => t.includes('Base Building')),
     tenantEntriesAfterImport.join(' || '));
+
+  // --- Admins panel: grant/revoke a second reviewer without touching firestore.rules ---
+  check('owner email note is shown', (await page.$eval('#ownerEmailNote', el => el.textContent)) === ALLOWED_EMAIL);
+  check('no additional admins yet', (await page.$eval('#adminsList', el => el.textContent)).includes('just you'));
+
+  const newAdminEmail = 'second.admin@example.com';
+  await page.type('#newAdminEmail', newAdminEmail);
+  await page.click('#addAdminBtn');
+  await new Promise(r => setTimeout(r, 600));
+
+  const adminsStatus = await page.$eval('#adminsStatus', el => el.textContent);
+  check('adding an admin confirms via status text', adminsStatus.includes(newAdminEmail), adminsStatus);
+  const adminEmails = await page.$$eval('#adminsList .tenant-name', els => els.map(el => el.textContent));
+  check('the new admin appears in the list', adminEmails.includes(newAdminEmail), adminEmails.join('|'));
+
+  // Bypass the native confirm() dialog for the remove step (the harness's blanket
+  // page.on('dialog') handler dismisses everything, which would cancel this on purpose).
+  await page.evaluate(() => { window.confirm = () => true; });
+  await page.click('.remove-admin-btn');
+  await new Promise(r => setTimeout(r, 600));
+
+  const adminEmailsAfterRemove = await page.$$eval('#adminsList .tenant-name', els => els.map(el => el.textContent));
+  check('the removed admin no longer appears in the list', !adminEmailsAfterRemove.includes(newAdminEmail), adminEmailsAfterRemove.join('|') || '(empty)');
 }
 
-async function finishAndReport(page, browser, consoleErrors){
+async function finishAndReport(page, browser, consoleErrors, seedEnv){
   // Both are harmless side-effects of re-running this test against a still-warm emulator with
   // the same fixed test email each time: the SDK-level error, and the browser's own raw network
   // log line for the failed create-user request underneath it (can't be suppressed from app code).
@@ -170,6 +231,7 @@ async function finishAndReport(page, browser, consoleErrors){
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
   await browser.close();
+  if (seedEnv) await seedEnv.cleanup();
 
   console.log('\n--- RESULTS ---');
   let allOk = true;
