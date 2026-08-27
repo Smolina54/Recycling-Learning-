@@ -2395,6 +2395,8 @@ var qrcode = function() {
   .tenant-list li:last-child{border-bottom:none;}
   .tenant-list .tenant-name{font-weight:600;}
   .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px; margin-left:8px;}
+  .admin-list li{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+  .admin-list .btn.secondary{padding:6px 14px; font-size:12.5px;}
   input[type=file]{display:none;}
   .file-name{font-family:var(--mono); font-size:12px; color:var(--ink-soft); margin-top:14px;}
 
@@ -2515,6 +2517,19 @@ var qrcode = function() {
     </div>
 
     <div id="buildingsList"></div>
+
+    <div class="report-block">
+      <h3>Admins</h3>
+      <p class="block-sub">Google accounts allowed to sign in here and view/export/delete results or manage buildings. <span id="ownerEmailNote"></span> always has access. Adding someone here takes effect immediately — no code change or deploy needed.</p>
+      <div class="filter-row">
+        <label class="filter-field"><span>Google account email</span><input type="email" id="newAdminEmail" placeholder="name@company.com"></label>
+      </div>
+      <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
+        <button class="btn" id="addAdminBtn">+ Add admin</button>
+      </div>
+      <p class="block-sub" id="adminsStatus" style="margin-top:10px;"></p>
+      <ul class="tenant-list admin-list" id="adminsList"></ul>
+    </div>
   </section>
 
   <section id="reportSection">
@@ -2591,12 +2606,13 @@ var qrcode = function() {
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, collection, getDocs, deleteDoc, doc, setDoc, connectFirestoreEmulator
+  getFirestore, collection, getDocs, deleteDoc, doc, setDoc, query, orderBy, limit, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
   createUserWithEmailAndPassword, signInWithEmailAndPassword
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
 import { read as readWorkbook, utils as xlsxUtils } from "https://cdn.sheetjs.com/xlsx-latest/package/xlsx.mjs";
 
 const firebaseConfig = {
@@ -2607,11 +2623,19 @@ const firebaseConfig = {
   messagingSenderId: "196747023122",
   appId: "1:196747023122:web:3fbcc23c1532bed847d9cb"
 };
+
+// Same RECAPTCHA_SITE_KEY story as recycling-training.html — blank until the one-time
+// Firebase Console App Check setup is done; a no-op until then.
+const RECAPTCHA_SITE_KEY = '';
+
 let db = null, auth = null;
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
   auth = getAuth(firebaseApp);
+  if (RECAPTCHA_SITE_KEY){
+    initializeAppCheck(firebaseApp, { provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+  }
   // ?emulator=1 routes to the local Firestore/Auth emulators instead of the real project —
   // used only by the automated tests in tests/, so they never touch real data live.
   if (new URLSearchParams(window.location.search).get('emulator') === '1'){
@@ -2632,6 +2656,16 @@ try {
 (function(){
   const streams = ['gw','mr','pc','og','ew'];
   const streamNames = {gw:'General Waste', mr:'Mixed Recycling', pc:'Paper & Cardboard', og:'Organics', ew:'E-Waste'};
+
+  // Every string rendered below can originate from an anonymous, unauthenticated trainee
+  // (name/email/building/tenant/level on a submission or attempt) or from an imported Excel
+  // file (tenant/level names) — never from something only Sergio typed. All of it gets spliced
+  // into innerHTML, so it must be escaped before that, or a crafted "name" runs as script inside
+  // this signed-in admin session. Use for every such value, even ones that look harmless today.
+  const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
+  function esc(str){
+    return String(str ?? '').replace(/[&<>"']/g, (c) => ESC_MAP[c]);
+  }
 
   // AUTO-GENERATED CATALOG START — do not edit by hand, run `npm run sync-catalog` after
   // changing the `items` array in recycling-training.html (see tools/sync-catalog.js).
@@ -2990,9 +3024,9 @@ try {
       <tbody>
         ${pending.map(p => `
           <tr>
-            <td>${p.name || '—'}</td><td>${p.email}</td><td>${p.building || '—'}</td>
-            <td>${p.tenant || '—'}</td><td>${p.level || '—'}</td>
-            <td>${p.timestamp ? p.timestamp.slice(0,10) : '—'}</td>
+            <td>${esc(p.name) || '—'}</td><td>${esc(p.email)}</td><td>${esc(p.building) || '—'}</td>
+            <td>${esc(p.tenant) || '—'}</td><td>${esc(p.level) || '—'}</td>
+            <td>${p.timestamp ? esc(p.timestamp.slice(0,10)) : '—'}</td>
           </tr>
         `).join('')}
       </tbody>
@@ -3005,7 +3039,11 @@ try {
     document.getElementById('sourceNote').textContent = sourceLabel;
 
     const totalSubs = rows.length;
-    if (totalSubs === 0){
+    // Gate on submissions OR attempts, not submissions alone — a building that just went live
+    // (people have started the sort but nobody has finished yet) has zero submissions but real,
+    // useful attempts data; the old submissions-only check hid the whole report, including the
+    // Pending completion list, at exactly the moment it matters most.
+    if (totalSubs === 0 && attempts.length === 0){
       document.getElementById('emptyState').style.display = 'block';
       document.getElementById('reportBody').style.display = 'none';
       return;
@@ -3013,14 +3051,15 @@ try {
     document.getElementById('emptyState').style.display = 'none';
     document.getElementById('reportBody').style.display = 'block';
 
-    // KPIs
-    const avgScore = Math.round(rows.reduce((a,r) => a + (r.score||0), 0) / totalSubs);
+    // KPIs — each one that divides by totalSubs is null (rendered as "—") rather than NaN
+    // when there are zero submissions yet.
+    const avgScore = totalSubs ? Math.round(rows.reduce((a,r) => a + (r.score||0), 0) / totalSubs) : null;
     const passCount = rows.filter(r => (r.score||0) >= 75).length;
-    const passRate = Math.round((passCount/totalSubs)*100);
+    const passRate = totalSubs ? Math.round((passCount/totalSubs)*100) : null;
     const durations = rows.map(r => r.duration_seconds).filter(v => typeof v === 'number' && !isNaN(v));
     const avgDuration = durations.length ? Math.round(durations.reduce((a,b)=>a+b,0)/durations.length) : null;
     const mobileCount = rows.filter(r => r.device_type === 'mobile-touch').length;
-    const mobilePct = Math.round((mobileCount/totalSubs)*100);
+    const mobilePct = totalSubs ? Math.round((mobileCount/totalSubs)*100) : null;
     // Counted by unique person (email), not raw doc counts — someone who tries 3 times before
     // succeeding should count as 1 completed person, not drag the rate down as 2 failed attempts.
     const uniqueAttemptEmails = new Set(attempts.map(a => a.email).filter(Boolean));
@@ -3030,10 +3069,10 @@ try {
     const kpiRow = document.getElementById('kpiRow');
     kpiRow.innerHTML = `
       <div class="kpi-tile"><div class="kpi-label">Submissions</div><div class="kpi-value">${totalSubs}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Pass rate</div><div class="kpi-value ${passRate>=75?'good':'bad'}">${passRate}%</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Average score</div><div class="kpi-value">${avgScore}%</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Pass rate</div><div class="kpi-value ${passRate>=75?'good':'bad'}">${passRate!=null ? passRate+'%' : '—'}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Average score</div><div class="kpi-value">${avgScore!=null ? avgScore+'%' : '—'}</div></div>
       <div class="kpi-tile"><div class="kpi-label">Avg. time to complete</div><div class="kpi-value">${avgDuration!=null ? Math.floor(avgDuration/60)+'m '+(avgDuration%60)+'s' : '—'}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Completed on mobile</div><div class="kpi-value">${mobilePct}%</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Completed on mobile</div><div class="kpi-value">${mobilePct!=null ? mobilePct+'%' : '—'}</div></div>
       <div class="kpi-tile"><div class="kpi-label">Completion rate</div><div class="kpi-value">${completionRate!=null ? completionRate+'%' : '—'}</div></div>
     `;
 
@@ -3095,7 +3134,7 @@ try {
       <tbody>
         ${groupRows.map(g => `
           <tr>
-            <td>${g.building}</td><td>${g.tenant}</td><td>${g.level}</td><td>${g.n}</td>
+            <td>${esc(g.building)}</td><td>${esc(g.tenant)}</td><td>${esc(g.level)}</td><td>${g.n}</td>
             <td>${g.avg}%</td>
             <td><span class="pass-pill ${g.pass>=75?'pass':'fail'}">${g.pass}% pass</span></td>
           </tr>
@@ -3105,6 +3144,12 @@ try {
   }
 
   // ---------------- Loading data: live Firestore (signed in) or sample ----------------
+  // Bounded + ordered rather than a plain getDocs(collection(...)) — an unbounded fetch
+  // gets slower and costs more Firestore reads every single time this page opens as real
+  // submission history grows across many buildings over years. MAX_ROWS is generous for
+  // near-term volume; once real usage approaches it, narrow with the date filter (which
+  // still operates on this fetched set) or raise the limit.
+  const MAX_ROWS = 3000;
   async function loadLiveData(){
     if (!db){
       document.getElementById('authStatus').textContent = 'Firebase is not configured yet — check back once the project is connected.';
@@ -3113,15 +3158,19 @@ try {
     document.getElementById('authStatus').textContent = 'Loading results…';
     try {
       const [submissionsSnap, attemptsSnap] = await Promise.all([
-        getDocs(collection(db, 'submissions')),
-        getDocs(collection(db, 'attempts'))
+        getDocs(query(collection(db, 'submissions'), orderBy('timestamp', 'desc'), limit(MAX_ROWS))),
+        getDocs(query(collection(db, 'attempts'), orderBy('startedAt', 'desc'), limit(MAX_ROWS)))
       ]);
       const rows = submissionsSnap.docs.map(d => submissionToRow(d.id, d.data()));
       const attempts = attemptsSnap.docs.map(d => attemptToRow(d.id, d.data()));
       document.getElementById('authStatus').textContent = `Signed in as ${auth.currentUser.email}`;
-      loadRows(rows, attempts, `Live data from Firestore · ${rows.length} submissions`, true);
+      const truncated = rows.length >= MAX_ROWS || attempts.length >= MAX_ROWS;
+      const sourceLabel = `Live data from Firestore · ${rows.length} submissions` +
+        (truncated ? ` (most recent ${MAX_ROWS} — narrow with the date filter to see an older period)` : '');
+      loadRows(rows, attempts, sourceLabel, true);
       document.getElementById('adminTabs').style.display = 'flex';
       await loadBuildings();
+      await loadAdmins();
       document.getElementById('reportSection').scrollIntoView({behavior:'smooth', block:'start'});
     } catch (err){
       console.error('Failed to load submissions:', err);
@@ -3153,7 +3202,7 @@ try {
       const link = `${window.location.origin}/recycling-training.html?b=${b.id}`;
       return `
       <div class="report-block building-row" data-building-id="${b.id}">
-        <h3>${b.name}</h3>
+        <h3>${esc(b.name)}</h3>
         <div class="building-link-row">
           <code class="building-link-text">${link}</code>
           <button class="btn secondary copy-link-btn" data-link="${link}">Copy link →</button>
@@ -3161,7 +3210,7 @@ try {
         <div class="building-qr" data-link="${link}"></div>
         <ul class="tenant-list">
           ${b.tenants.length
-            ? b.tenants.map(t => `<li><span class="tenant-name">${t.name}</span><span class="tenant-levels">${t.levels.join(', ')}</span></li>`).join('')
+            ? b.tenants.map(t => `<li><span class="tenant-name">${esc(t.name)}</span><span class="tenant-levels">${esc(t.levels.join(', '))}</span></li>`).join('')
             : '<li class="block-sub">No tenants yet.</li>'}
         </ul>
         <div class="filter-row">
@@ -3226,8 +3275,8 @@ try {
         ${candidates.map((c, i) => `
           <div class="import-row">
             <input type="checkbox" class="import-check" data-i="${i}" checked>
-            <input type="text" class="import-name" data-i="${i}" value="${c.name.replace(/"/g, '&quot;')}">
-            <input type="text" class="import-levels" data-i="${i}" value="${c.levels.join(', ').replace(/"/g, '&quot;')}">
+            <input type="text" class="import-name" data-i="${i}" value="${esc(c.name)}">
+            <input type="text" class="import-levels" data-i="${i}" value="${esc(c.levels.join(', '))}">
           </div>
         `).join('')}
       </div>
@@ -3252,6 +3301,62 @@ try {
     } catch (err){
       console.error('Failed to add building:', err);
       status.textContent = 'Failed to add building — check the console for details.';
+    }
+  });
+
+  // ---------------- Admins tab: who else can sign in here ----------------
+  // The owner email below is a permanent fallback baked into firestore.rules too (see
+  // isAllowedReviewer) — it always has access regardless of what's in /admins, so it's
+  // excluded from this list and can't be removed by mistake.
+  const OWNER_EMAIL = 'smolina@tradeflex.com.au';
+
+  async function loadAdmins(){
+    document.getElementById('ownerEmailNote').textContent = OWNER_EMAIL;
+    const snap = await getDocs(collection(db, 'admins'));
+    const admins = snap.docs.map(d => d.id).filter(email => email !== OWNER_EMAIL);
+    renderAdminsList(admins);
+  }
+
+  function renderAdminsList(admins){
+    const list = document.getElementById('adminsList');
+    if (!admins.length){
+      list.innerHTML = '<li class="block-sub">No additional admins yet — just you.</li>';
+      return;
+    }
+    list.innerHTML = admins.map(email => `
+      <li><span class="tenant-name">${esc(email)}</span><button class="btn secondary remove-admin-btn" data-email="${esc(email)}">Remove</button></li>
+    `).join('');
+  }
+
+  document.getElementById('addAdminBtn').addEventListener('click', async () => {
+    const input = document.getElementById('newAdminEmail');
+    const status = document.getElementById('adminsStatus');
+    const email = input.value.trim().toLowerCase();
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ status.textContent = 'Enter a valid email first.'; return; }
+    if (email === OWNER_EMAIL){ status.textContent = `${OWNER_EMAIL} already always has access.`; return; }
+    status.textContent = 'Adding…';
+    try {
+      await setDoc(doc(db, 'admins', email), { addedAt: serverTimestamp(), addedBy: auth.currentUser.email });
+      input.value = '';
+      status.textContent = `${email} can now sign in here as an admin.`;
+      await loadAdmins();
+    } catch (err){
+      console.error('Failed to add admin:', err);
+      status.textContent = 'Failed to add — check the console for details.';
+    }
+  });
+
+  document.getElementById('adminsList').addEventListener('click', async (e) => {
+    const removeBtn = e.target.closest('.remove-admin-btn');
+    if (!removeBtn) return;
+    const email = removeBtn.dataset.email;
+    if (!confirm(`Remove admin access for ${email}?`)) return;
+    try {
+      await deleteDoc(doc(db, 'admins', email));
+      await loadAdmins();
+    } catch (err){
+      console.error('Failed to remove admin:', err);
+      alert('Could not remove — check the console for details.');
     }
   });
 
