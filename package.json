@@ -4,7 +4,7 @@
   "description": "Dev-only test tooling for the Sorting Station app. The app itself (outputs/*.html) has no build step and no runtime dependencies — this package.json exists only to verify it.",
   "scripts": {
     "test:rules": "firebase emulators:exec --only firestore \"node tests/firestore-rules.test.js\"",
-    "test:game": "node tests/game-regression.test.js",
+    "test:game": "firebase emulators:exec --only firestore \"node tests/game-regression.test.js\"",
     "test:report": "node tests/report-ui.test.js",
     "test:catalog": "node tests/catalog-sync.test.js",
     "sync-catalog": "node tools/sync-catalog.js"

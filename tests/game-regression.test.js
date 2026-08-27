@@ -1,13 +1,25 @@
 // Full 5-phase click-through of the training game, via puppeteer-core driving
 // the locally-installed Edge (no Chromium download needed). Run: npm run test:game
+// (wraps this in `firebase emulators:exec` so Firestore is live but local, not real).
+//
+// Seeds a test building/tenant via the emulator, then goes through the REAL
+// id-gate (not a bypass) — building/tenant/level dropdowns, name+email, submit —
+// so this exercises the actual production code path end-to-end, including a
+// real successful Firestore write, not just the game mechanics in isolation.
 const path = require('path');
 const url = require('url');
+const fs = require('fs');
 const puppeteer = require('puppeteer-core');
+const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
+const { doc, setDoc } = require('firebase/firestore');
 
 // Known limitation: hardcoded to Sergio's installed Edge path — single-machine internal tool, not solved with OS-detection.
 const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const GAME_URL = url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'recycling-training.html')).href;
-const EXPECTED_MESSAGES = ['Firebase is not configured yet', 'Failed to submit Sorting Station results'];
+const GAME_PATH = path.join(__dirname, '..', 'outputs', 'recycling-training.html');
+const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
+const TEST_BUILDING_ID = 'test-building-1';
+const TEST_TENANT_ID = 'test-tenant-1';
+const GAME_URL = `${url.pathToFileURL(GAME_PATH).href}?b=${TEST_BUILDING_ID}&emulator=1`;
 
 const results = [];
 function check(label, cond, extra){ results.push({label, ok: Boolean(cond), extra: extra || ''}); }
@@ -26,25 +38,80 @@ async function resolvePhase(page){
   return await page.$eval('#nextPhaseBtn', el => getComputedStyle(el).display !== 'none').catch(() => false);
 }
 
+async function seedTestBuilding(){
+  // NOTE: don't call testEnv.cleanup() here — it wipes the emulator's Firestore data as
+  // part of its teardown, which would erase the building we just seeded before the browser
+  // ever reads it. Cleanup happens once at the very end, after the browser is done with it.
+  //
+  // projectId MUST match the real project ID from firebaseConfig in the HTML files — the
+  // emulator treats different project IDs as completely separate databases even though
+  // they're all running locally, so seeding under a different id would be invisible to the app.
+  const testEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'buildings', TEST_BUILDING_ID), { name: 'Test Tower' });
+    await setDoc(doc(db, 'buildings', TEST_BUILDING_ID, 'tenants', TEST_TENANT_ID), { name: 'Test Co', levels: ['Level 4', 'Level 5'] });
+  });
+  return testEnv;
+}
+
 async function main(){
+  const seedEnv = await seedTestBuilding();
+
   const browser = await puppeteer.launch({ executablePath: EDGE_PATH, headless: true });
   const page = await browser.newPage();
   const consoleErrors = [];
   page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
   page.on('pageerror', (err) => consoleErrors.push('pageerror: ' + err.message));
 
-  await page.goto(GAME_URL, { waitUntil: 'networkidle0' });
-  await new Promise(r => setTimeout(r, 300));
-  check('id-gate shows invalid-link fallback with no ?b= param',
-    await page.$eval('#idCardInvalid', el => getComputedStyle(el).display !== 'none'));
-  check('id-gate form is NOT shown with no ?b= param',
-    await page.$eval('#idCardForm', el => getComputedStyle(el).display === 'none'));
+  try {
+    await runFlow(page);
+  } catch (err) {
+    console.error('CRASHED — dumping diagnostics:', err.message);
+    console.error('Console errors so far:', JSON.stringify(consoleErrors, null, 2));
+    await page.screenshot({ path: path.join(__dirname, '..', 'debug-crash.png') }).catch(() => {});
+    await browser.close();
+    process.exit(1);
+  }
 
-  // Bypass the gate (simulating a completed sign-in) to test the untouched game logic.
-  await page.evaluate(() => {
-    document.getElementById('idGate').style.display = 'none';
-    document.getElementById('mainApp').style.display = 'block';
-  });
+  // No explicit seedEnv.cleanup() — `firebase emulators:exec` tears down the whole
+  // emulator process (and its in-memory data) once this script exits either way.
+  await finishAndReport(page, browser, consoleErrors);
+}
+
+async function runFlow(page){
+
+  // --- Invalid-link fallback still works with a bogus buildingId ---
+  await page.goto(`${url.pathToFileURL(GAME_PATH).href}?b=no-such-building&emulator=1`, { waitUntil: 'domcontentloaded' });
+  await new Promise(r => setTimeout(r, 400));
+  check('id-gate shows invalid-link fallback for a buildingId that does not exist',
+    await page.$eval('#idCardInvalid', el => getComputedStyle(el).display !== 'none'));
+
+  // --- Real gate flow with a seeded, valid building ---
+  await page.goto(GAME_URL, { waitUntil: 'domcontentloaded' });
+  await new Promise(r => setTimeout(r, 500));
+  check('id-gate form is shown for a valid, seeded building',
+    await page.$eval('#idCardForm', el => getComputedStyle(el).display !== 'none'));
+  const buildingNameShown = await page.$eval('#idBuildingNameInline', el => el.textContent.trim());
+  check('building name fetched from Firestore is shown in the gate', buildingNameShown === 'Test Tower', buildingNameShown);
+
+  const tenantOptions = await page.$$eval('#idTenant option', opts => opts.map(o => o.value).filter(Boolean));
+  check('tenant dropdown populated from the seeded tenant', tenantOptions.includes(TEST_TENANT_ID), tenantOptions.join('|'));
+
+  await page.type('#idName', 'Jane Doe');
+  await page.type('#idEmail', 'jane@example.com');
+  await page.select('#idTenant', TEST_TENANT_ID);
+  await new Promise(r => setTimeout(r, 200));
+  const levelOptions = await page.$$eval('#idLevel option', opts => opts.map(o => o.value).filter(Boolean));
+  check('level dropdown populated for the selected tenant (2 levels -> picker shown)', levelOptions.length === 2, levelOptions.join('|'));
+  await page.select('#idLevel', 'Level 5');
+  await page.click('#idForm button[type=submit]');
+  await new Promise(r => setTimeout(r, 300));
+  check('mainApp is shown after a valid gate submit',
+    await page.$eval('#mainApp', el => getComputedStyle(el).display !== 'none'));
 
   const tabs = await page.$$('.bin-tab');
   check('found 5 stream tabs', tabs.length === 5, tabs.length);
@@ -78,21 +145,14 @@ async function main(){
   const reviewRows = await page.$$eval('#reviewList .review-item', els => els.length).catch(() => 0);
   check('review list rendered 25 item rows', reviewRows === 25, reviewRows);
 
-  // db is null (empty firebaseConfig in this environment) so the save is expected to fail —
-  // confirms the trainee is actually told, instead of silently losing their result.
-  await new Promise(r => setTimeout(r, 200));
-  check('save-failure warning is shown when the Firestore write fails',
-    await page.$eval('#saveWarning', el => getComputedStyle(el).display !== 'none'));
+  // Real, valid data + real emulator + real rules -> the save should actually succeed this time.
+  await new Promise(r => setTimeout(r, 500));
+  check('save SUCCEEDS against the emulator with valid gate data (no warning banner shown)',
+    await page.$eval('#saveWarning', el => getComputedStyle(el).display === 'none'));
+}
 
-  const errorsBeforeRetry = consoleErrors.length;
-  await page.click('#retrySaveBtn');
-  await new Promise(r => setTimeout(r, 200));
-  check('retry button re-attempts the save without throwing', consoleErrors.length > errorsBeforeRetry);
-  check('save-failure warning is still shown after a retry that also fails (no real backend yet)',
-    await page.$eval('#saveWarning', el => getComputedStyle(el).display !== 'none'));
-
-  const unexpectedErrors = consoleErrors.filter(e => !EXPECTED_MESSAGES.some(m => e.includes(m)));
-  check('no UNEXPECTED console/page errors across the full run', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
+async function finishAndReport(page, browser, consoleErrors){
+  check('no unexpected console/page errors across the full run', consoleErrors.length === 0, consoleErrors.join(' || '));
 
   await browser.close();
 

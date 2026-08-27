@@ -229,19 +229,31 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, collection, getDocs, deleteDoc, doc
+  getFirestore, collection, getDocs, deleteDoc, doc, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
-// TODO: paste the Firebase project config here — same config used in recycling-training.html.
-const firebaseConfig = {};
+const firebaseConfig = {
+  apiKey: "AIzaSyAoWSx9FYa6UJa-6EZezgBYiDMuVVs9BBo",
+  authDomain: "esg-1-98f35.firebaseapp.com",
+  projectId: "esg-1-98f35",
+  storageBucket: "esg-1-98f35.firebasestorage.app",
+  messagingSenderId: "196747023122",
+  appId: "1:196747023122:web:3fbcc23c1532bed847d9cb"
+};
 let db = null, auth = null;
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
   auth = getAuth(firebaseApp);
+  // ?emulator=1 routes to the local Firestore/Auth emulators instead of the real project —
+  // used only by the automated tests in tests/, so they never touch real data live.
+  if (new URLSearchParams(window.location.search).get('emulator') === '1'){
+    connectFirestoreEmulator(db, '127.0.0.1', 8080);
+    connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  }
 } catch (err) {
   console.error('Firebase is not configured yet — sign-in and live data will stay unavailable until firebaseConfig is filled in.', err);
 }
