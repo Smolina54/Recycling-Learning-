@@ -74,6 +74,14 @@ async function main(){
   });
   await record('anon CANNOT create a submission with non-numeric score', () =>
     assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, score: '88' })));
+  await record('anon CANNOT create a submission with score above 100 (a forged/tampered write)', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, score: 150 })));
+  await record('anon CANNOT create a submission with a negative score', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, score: -5 })));
+  await record('anon CANNOT create a submission with a malformed email', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, email: 'not-an-email' })));
+  await record('anon CANNOT create a submission with an oversized name (storage/rendering abuse)', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, name: 'x'.repeat(201) })));
   await record('anon CANNOT read submissions', () =>
     assertFails(getDocs(collection(anon, 'submissions'))));
   await record('non-allowlisted signed-in user CANNOT read submissions', () =>
@@ -87,6 +95,8 @@ async function main(){
     const bad = { ...validAttempt }; delete bad.tenantId;
     return assertFails(addDoc(collection(anon, 'attempts'), bad));
   });
+  await record('anon CANNOT create an attempt with a malformed email', () =>
+    assertFails(addDoc(collection(anon, 'attempts'), { ...validAttempt, email: 'not-an-email' })));
   await record('non-allowlisted signed-in user CANNOT read attempts', () =>
     assertFails(getDocs(collection(otherUser, 'attempts'))));
   await record('allowlisted user CAN read attempts', () =>
@@ -114,6 +124,26 @@ async function main(){
     assertFails(deleteDoc(doc(otherUser, 'submissions', targetId2))));
   await record('allowlisted user CANNOT update a submission (updates always denied)', () =>
     assertFails(updateDoc(doc(allowedUser, 'submissions', targetId2), { score: 100 })));
+
+  // ---- Dynamic admins: granting/revoking access via the /admins collection ----
+  // (mirrors what the report's Admins panel does — no rules edit/redeploy for this)
+  const NEW_ADMIN_EMAIL = 'newadmin@example.com';
+  const newAdminUser = testEnv.authenticatedContext('u3', { email: NEW_ADMIN_EMAIL }).firestore();
+
+  await record('a not-yet-added user CANNOT read submissions', () =>
+    assertFails(getDocs(collection(newAdminUser, 'submissions'))));
+  await record('a non-admin user CANNOT self-grant admin access by writing to /admins', () =>
+    assertFails(setDoc(doc(newAdminUser, 'admins', NEW_ADMIN_EMAIL), { addedAt: 'now' })));
+  await record('the owner CAN grant another admin via /admins', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'admins', NEW_ADMIN_EMAIL), { addedAt: 'now', addedBy: ALLOWED_EMAIL })));
+  await record('once granted, that user CAN read submissions', () =>
+    assertSucceeds(getDocs(collection(newAdminUser, 'submissions'))));
+  await record('once granted, that user CAN also create a building (full reviewer rights)', () =>
+    assertSucceeds(setDoc(doc(newAdminUser, 'buildings', 'building-by-new-admin'), { name: 'Granted Tower' })));
+  await record('the owner CAN revoke that admin via /admins', () =>
+    assertSucceeds(deleteDoc(doc(allowedUser, 'admins', NEW_ADMIN_EMAIL))));
+  await record('after revocation, that user CANNOT read submissions anymore', () =>
+    assertFails(getDocs(collection(newAdminUser, 'submissions'))));
 
   await testEnv.cleanup();
 

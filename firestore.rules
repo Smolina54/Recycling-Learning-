@@ -4,11 +4,33 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Accounts allowed to read, export, or delete submission data (the report tool).
+    // The owner email is a permanent fallback (can never be locked out); anyone else
+    // is granted access by having a doc in /admins, managed from the report's Admins
+    // panel — no rules edit/redeploy needed to add or remove a reviewer.
     function isAllowedReviewer() {
       return request.auth != null &&
-        request.auth.token.email in [
-          'smolina@tradeflex.com.au'
-        ];
+        (request.auth.token.email == 'smolina@tradeflex.com.au' ||
+         exists(/databases/$(database)/documents/admins/$(request.auth.token.email)));
+    }
+
+    // Bounds + a loose shape check on the person-identifying fields shared by
+    // submissions and attempts — both are created by anonymous, unauthenticated
+    // trainees, so this is the only server-side defense against garbage/oversized/
+    // spoofed data (the client UI only ever sends well-formed values, but nothing
+    // stops a direct API call from sending anything else).
+    function isValidPersonFields(data) {
+      return data.buildingId is string && data.buildingId.size() > 0 && data.buildingId.size() <= 200
+        && data.tenantId is string && data.tenantId.size() > 0 && data.tenantId.size() <= 200
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 320
+        && data.email.matches('^[^@ ]+@[^@ ]+[.][^@ ]+$');
+    }
+
+    // Reviewer accounts beyond the permanent owner fallback above. Only an existing
+    // reviewer can grant or revoke another one (the report's Admins panel is only
+    // reachable once signed in as an allowed reviewer in the first place).
+    match /admins/{email} {
+      allow read, write: if isAllowedReviewer();
     }
 
     // Building + tenant catalog: readable by anyone with a link (needed to
@@ -29,15 +51,9 @@ service cloud.firestore {
     // edit a submission after the fact, and only an allowed reviewer can
     // read or delete them.
     match /submissions/{submissionId} {
-      allow create: if request.resource.data.buildingId is string
-        && request.resource.data.buildingId.size() > 0
-        && request.resource.data.tenantId is string
-        && request.resource.data.tenantId.size() > 0
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.email is string
-        && request.resource.data.email.size() > 0
-        && request.resource.data.score is number;
+      allow create: if isValidPersonFields(request.resource.data)
+        && request.resource.data.score is number
+        && request.resource.data.score >= 0 && request.resource.data.score <= 100;
       allow read, delete: if isAllowedReviewer();
       allow update: if false;
     }
@@ -46,14 +62,7 @@ service cloud.firestore {
     // lets the report compute a completion rate (started vs. actually finished).
     // Same shape/rules as submissions, minus the score field this doesn't have.
     match /attempts/{attemptId} {
-      allow create: if request.resource.data.buildingId is string
-        && request.resource.data.buildingId.size() > 0
-        && request.resource.data.tenantId is string
-        && request.resource.data.tenantId.size() > 0
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.email is string
-        && request.resource.data.email.size() > 0;
+      allow create: if isValidPersonFields(request.resource.data);
       allow read: if isAllowedReviewer();
       allow update, delete: if false;
     }
