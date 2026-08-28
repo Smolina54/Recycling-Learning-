@@ -654,7 +654,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
   getFirestore, doc, getDoc, collection, getDocs, addDoc, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
 
 // Safe to be visible in client code — it's not a secret, protection comes from firestore.rules.
 const firebaseConfig = {
@@ -667,22 +667,29 @@ const firebaseConfig = {
 };
 
 // Anti-spam/anti-bot for the public write path (anyone with a building link can create
-// submissions/attempts with no login at all). Left blank on purpose: activating this needs
-// a one-time Firebase Console step (App Check → register a reCAPTCHA v3 site key → set
-// Firestore enforcement to "Enforced") that hasn't been done yet. Until RECAPTCHA_SITE_KEY
-// is filled in below, this block is a no-op and nothing about normal use changes.
-const RECAPTCHA_SITE_KEY = '';
+// submissions/attempts with no login at all). Uses reCAPTCHA Enterprise, not classic v3 —
+// Google stopped letting new App Check apps register with the free classic reCAPTCHA
+// (its registration field is simply non-editable now), so Enterprise's free tier is the
+// only real option today. Key ID from Google Cloud Console → Security → reCAPTCHA Enterprise.
+const RECAPTCHA_SITE_KEY = '6LcynpwtAAAAAJ5IdNxKtqXRmtXTHrXdGZehA6Vw';
 
 let db = null;
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
-  if (RECAPTCHA_SITE_KEY){
-    initializeAppCheck(firebaseApp, { provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+  const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
+  // App Check's reCAPTCHA Enterprise call needs a real round-trip to Google's servers from
+  // one of the key's registered domains (the real esg-1-98f35.web.app/.firebaseapp.com) — it
+  // can never work from file:// (every automated test, or Sergio double-clicking the file
+  // locally), so skip it there entirely rather than let every Firestore call fail waiting on
+  // a token that can never be issued. Checking the protocol directly (not just ?emulator=1)
+  // covers file:// tests that don't set that param too (e.g. report-ui.test.js).
+  if (RECAPTCHA_SITE_KEY && !isEmulatorMode && window.location.protocol !== 'file:'){
+    initializeAppCheck(firebaseApp, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
   }
   // ?emulator=1 routes to the local Firestore emulator instead of the real project —
   // used only by the automated tests in tests/, so they never write real test data live.
-  if (new URLSearchParams(window.location.search).get('emulator') === '1'){
+  if (isEmulatorMode){
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
   }
 } catch (err) {

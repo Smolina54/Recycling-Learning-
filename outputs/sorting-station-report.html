@@ -2657,7 +2657,7 @@ import {
   getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
   createUserWithEmailAndPassword, signInWithEmailAndPassword
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
 import { read as readWorkbook, utils as xlsxUtils } from "https://cdn.sheetjs.com/xlsx-latest/package/xlsx.mjs";
 
 const firebaseConfig = {
@@ -2669,21 +2669,27 @@ const firebaseConfig = {
   appId: "1:196747023122:web:3fbcc23c1532bed847d9cb"
 };
 
-// Same RECAPTCHA_SITE_KEY story as recycling-training.html — blank until the one-time
-// Firebase Console App Check setup is done; a no-op until then.
-const RECAPTCHA_SITE_KEY = '';
+// Same RECAPTCHA_SITE_KEY story as recycling-training.html — reCAPTCHA Enterprise, since
+// Google no longer allows registering new App Check apps with the free classic reCAPTCHA.
+const RECAPTCHA_SITE_KEY = '6LcynpwtAAAAAJ5IdNxKtqXRmtXTHrXdGZehA6Vw';
 
 let db = null, auth = null;
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
   auth = getAuth(firebaseApp);
-  if (RECAPTCHA_SITE_KEY){
-    initializeAppCheck(firebaseApp, { provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+  const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
+  // Same reasoning as recycling-training.html: App Check's reCAPTCHA Enterprise call needs a
+  // real round-trip from one of the key's registered domains, which file:// (what every
+  // automated test loads, with or without ?emulator=1 — e.g. report-ui.test.js never sets it)
+  // can never satisfy — skip it there rather than let every Firestore/Auth call fail waiting
+  // on a token that can never be issued.
+  if (RECAPTCHA_SITE_KEY && !isEmulatorMode && window.location.protocol !== 'file:'){
+    initializeAppCheck(firebaseApp, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
   }
   // ?emulator=1 routes to the local Firestore/Auth emulators instead of the real project —
   // used only by the automated tests in tests/, so they never touch real data live.
-  if (new URLSearchParams(window.location.search).get('emulator') === '1'){
+  if (isEmulatorMode){
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
     connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
     // Test-only sign-in hook (no real Google popup against the emulator) — never runs
