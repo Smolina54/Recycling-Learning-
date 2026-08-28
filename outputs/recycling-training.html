@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sorting Station — Office Recycling Training</title>
+<title>Recycling Training</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232F6F4E'/%3E%3Cpath d='M16 6 L26 16 L16 26 L6 16 Z' fill='%23EEEBE1'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -366,7 +366,7 @@
 
 <div class="topbar">
   <div class="topbar-inner">
-    <div class="brand">◆ <b>Sorting Station</b> — Office Recycling Training</div>
+    <div class="brand">◆ <b>Recycling Training</b></div>
     <div class="progress-rail"><div class="progress-fill" id="progressFill"></div></div>
     <div class="progress-label" id="progressLabel">0% complete</div>
   </div>
@@ -645,7 +645,7 @@
 
 </section>
 
-<footer class="wrap">SORTING STATION — INTERNAL TRAINING TOOL · CHECK YOUR BUILDING'S SIGNAGE FOR LOCAL COLLECTION POINTS</footer>
+<footer class="wrap">RECYCLING TRAINING · CHECK YOUR BUILDING'S SIGNAGE FOR LOCAL COLLECTION POINTS</footer>
 
 </div>
 
@@ -2261,7 +2261,7 @@ try {
       await addDoc(collection(db, 'submissions'), payload);
       return true;
     } catch (err){
-      console.error('Failed to submit Sorting Station results:', err);
+      console.error('Failed to submit Recycling Training results:', err);
       return false;
     }
   }
