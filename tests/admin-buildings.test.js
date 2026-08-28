@@ -18,6 +18,21 @@ const XSS_PAYLOAD = '<img src=x onerror="window.__xssFired = true">';
 const results = [];
 function check(label, cond, extra){ results.push({label, ok: Boolean(cond), extra: extra || ''}); }
 
+async function findTenantLi(row, textFragment){
+  const lis = await row.$$('.tenant-list li');
+  for (const li of lis){
+    const text = await li.evaluate(el => el.textContent);
+    if (text.includes(textFragment)) return li;
+  }
+  return null;
+}
+
+async function findBuildingRow(page, buildingName){
+  return page.evaluateHandle((name) => {
+    return [...document.querySelectorAll('.building-row')].find(r => r.querySelector('h3') && r.querySelector('h3').textContent === name);
+  }, buildingName).then(h => h.asElement());
+}
+
 // Seeds one attempt with no matching submission — an anonymous, unauthenticated trainee
 // could write exactly this (name/tenantName are free text, only bounded/shape-checked by
 // firestore.rules) — with a "name" that's a real XSS payload, not just a suspicious string.
@@ -196,6 +211,64 @@ async function runFlow(page){
   check('unticked junk rows (Vacant, Base Building) were NOT imported',
     !tenantEntriesAfterImport.some(t => t.includes('Vacant')) && !tenantEntriesAfterImport.some(t => t.includes('Base Building')),
     tenantEntriesAfterImport.join(' || '));
+
+  // --- Edit and delete a tenant ---
+  await page.evaluate(() => { window.confirm = () => true; }); // needed for the delete steps below
+
+  let row = await findBuildingRow(page, buildingName);
+  let testTenantLi = await findTenantLi(row, 'Test Tenant');
+  await testTenantLi.$eval('.edit-tenant-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+
+  // renderBuildingsList() fully replaces #buildingsList's innerHTML on every state change
+  // (edit/cancel/save all re-render from buildingsCache), so `row`/`testTenantLi` — captured
+  // before the click — are now detached from the live document. Query fresh from `page`.
+  const editRowVisible = await page.$('.tenant-edit-row');
+  check('editing a tenant shows inline name/levels inputs', Boolean(editRowVisible));
+  await editRowVisible.$eval('.edit-tenant-name-input', el => { el.value = 'Test Tenant Renamed'; });
+  await editRowVisible.$eval('.edit-tenant-levels-input', el => { el.value = 'Level 5, Level 6'; });
+  await editRowVisible.$eval('.save-tenant-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  let tenantEntriesLive = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
+  check('tenant rename + level change saved correctly',
+    tenantEntriesLive.some(t => t.includes('Test Tenant Renamed') && t.includes('Level 5') && t.includes('Level 6')),
+    tenantEntriesLive.join(' || '));
+
+  row = await findBuildingRow(page, buildingName);
+  const renamedTenantLi = await findTenantLi(row, 'Test Tenant Renamed');
+  await renamedTenantLi.$eval('.delete-tenant-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  tenantEntriesLive = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
+  check('deleted tenant no longer appears', !tenantEntriesLive.some(t => t.includes('Test Tenant Renamed')), tenantEntriesLive.join(' || '));
+  check('other tenants in the same building survive an unrelated tenant delete',
+    tenantEntriesLive.some(t => t.includes('Widgetco')), tenantEntriesLive.join(' || '));
+
+  // --- Edit and delete the building itself ---
+  row = await findBuildingRow(page, buildingName);
+  const buildingIdForEdit = await row.evaluate(el => el.dataset.buildingId);
+  const buildingSelector = `.building-row[data-building-id="${buildingIdForEdit}"]`;
+  await row.$eval('.edit-building-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+
+  // The <h3> is gone while editing (replaced by the inline form), so look up by the stable
+  // data-building-id instead of the name — same reason the earlier name-based lookups won't
+  // work here.
+  const renamedBuildingName = buildingName + ' Renamed';
+  await page.$eval(`${buildingSelector} .edit-building-name-input`, (el, v) => { el.value = v; }, renamedBuildingName);
+  await page.$eval(`${buildingSelector} .save-building-name-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  let buildingNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
+  check('building rename saved correctly', buildingNames.includes(renamedBuildingName), buildingNames.join('|'));
+
+  row = await findBuildingRow(page, renamedBuildingName);
+  await row.$eval('.delete-building-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  buildingNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
+  check('deleted building no longer appears in the list', !buildingNames.includes(renamedBuildingName), buildingNames.join('|') || '(none left)');
 
   // --- Admins panel: grant/revoke a second reviewer without touching firestore.rules ---
   check('owner email note is shown', (await page.$eval('#ownerEmailNote', el => el.textContent)) === ALLOWED_EMAIL);
