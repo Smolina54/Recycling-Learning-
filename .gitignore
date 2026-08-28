@@ -2,6 +2,7 @@ firebase-debug.log
 firestore-debug.log
 .firebase/
 node_modules/
+debug-crash.png
 
 # Real client data dropped in uploads/ for reference (e.g. real building/tenant
 # exports) — never goes into git, even in a private repo.
