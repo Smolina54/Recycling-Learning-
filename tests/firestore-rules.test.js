@@ -16,13 +16,13 @@ const OTHER_EMAIL = 'someone.else@gmail.com';
 const validSubmission = {
   buildingId: 'building-1', buildingName: 'Test Tower',
   tenantId: 'tenant-1', tenantName: 'Test Co', level: 'Level 4',
-  name: 'Jane Doe', email: 'jane@example.com', score: 88,
+  name: 'Jane Doe', email: 'jane@example.com', programId: 'recycling-sorting', score: 88,
 };
 
 const validAttempt = {
   buildingId: 'building-1', buildingName: 'Test Tower',
   tenantId: 'tenant-1', tenantName: 'Test Co', level: 'Level 4',
-  name: 'Jane Doe', email: 'jane@example.com',
+  name: 'Jane Doe', email: 'jane@example.com', programId: 'recycling-sorting',
 };
 
 const results = [];
@@ -82,6 +82,10 @@ async function main(){
     assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, email: 'not-an-email' })));
   await record('anon CANNOT create a submission with an oversized name (storage/rendering abuse)', () =>
     assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, name: 'x'.repeat(201) })));
+  await record('anon CANNOT create a submission missing programId', () => {
+    const bad = { ...validSubmission }; delete bad.programId;
+    return assertFails(addDoc(collection(anon, 'submissions'), bad));
+  });
   await record('anon CANNOT read submissions', () =>
     assertFails(getDocs(collection(anon, 'submissions'))));
   await record('non-allowlisted signed-in user CANNOT read submissions', () =>
@@ -97,6 +101,10 @@ async function main(){
   });
   await record('anon CANNOT create an attempt with a malformed email', () =>
     assertFails(addDoc(collection(anon, 'attempts'), { ...validAttempt, email: 'not-an-email' })));
+  await record('anon CANNOT create an attempt missing programId', () => {
+    const bad = { ...validAttempt }; delete bad.programId;
+    return assertFails(addDoc(collection(anon, 'attempts'), bad));
+  });
   await record('non-allowlisted signed-in user CANNOT read attempts', () =>
     assertFails(getDocs(collection(otherUser, 'attempts'))));
   await record('allowlisted user CAN read attempts', () =>

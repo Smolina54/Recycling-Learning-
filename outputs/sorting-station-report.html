@@ -2801,7 +2801,7 @@ try {
     const row = {
       _id: id,
       building: data.buildingName || '', tenant: data.tenantName || '', level: data.level || '',
-      name: data.name || '', email: data.email || '',
+      name: data.name || '', email: data.email || '', programId: data.programId || '',
       score: data.score, avoided: data.avoided, total: data.total,
       duration_seconds: data.duration_seconds, device_type: data.device_type,
       timestamp: (data.timestamp && typeof data.timestamp.toDate === 'function') ? data.timestamp.toDate().toISOString() : (data.timestamp || null)
@@ -2819,7 +2819,7 @@ try {
     return {
       _id: id,
       building: data.buildingName || '', tenant: data.tenantName || '', level: data.level || '',
-      name: data.name || '', email: data.email || '',
+      name: data.name || '', email: data.email || '', programId: data.programId || '',
       timestamp: (data.startedAt && typeof data.startedAt.toDate === 'function') ? data.startedAt.toDate().toISOString() : (data.startedAt || null)
     };
   }

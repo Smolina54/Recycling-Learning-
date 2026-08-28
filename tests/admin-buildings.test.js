@@ -70,7 +70,7 @@ async function seedMaliciousAttempt(){
       buildingId: 'xss-test-building', buildingName: 'XSS Test Tower',
       tenantId: 'xss-test-tenant', tenantName: XSS_PAYLOAD,
       level: 'Level 1', name: XSS_PAYLOAD, email: 'xss-test@example.com',
-      startedAt: new Date().toISOString(),
+      programId: 'recycling-sorting', startedAt: new Date().toISOString(),
     });
   });
   return testEnv; // not cleaned up here — same reasoning as game-regression.test.js

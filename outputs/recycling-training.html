@@ -698,6 +698,12 @@ try {
     return String(str ?? '').replace(/[&<>"']/g, (c) => ESC_MAP[c]);
   }
 
+  // Tags every submission/attempt with which training course it belongs to. Only one course
+  // exists today, but this is required by firestore.rules from day one — adding it now (before
+  // any real data exists) means a future second course never needs an awkward backfill/guess
+  // on old untagged docs.
+  const PROGRAM_ID = 'recycling-sorting';
+
   // ---------------- Identification gate ----------------
   const siteContext = {buildingId:'', buildingName:'', tenantId:'', tenantName:'', level:'', name:'', email:''};
   let tenantsCache = [];
@@ -2240,6 +2246,7 @@ try {
         buildingId: siteContext.buildingId, buildingName: siteContext.buildingName,
         tenantId: siteContext.tenantId, tenantName: siteContext.tenantName,
         level: siteContext.level, name: siteContext.name, email: siteContext.email,
+        programId: PROGRAM_ID,
         startedAt: serverTimestamp()
       });
     } catch (err){
@@ -2344,6 +2351,7 @@ try {
       level: siteContext.level,
       name: siteContext.name,
       email: siteContext.email,
+      programId: PROGRAM_ID,
       score: pct,
       avoided: avoidedCount,
       total,

@@ -13,17 +13,21 @@ service cloud.firestore {
          exists(/databases/$(database)/documents/admins/$(request.auth.token.email)));
     }
 
-    // Bounds + a loose shape check on the person-identifying fields shared by
+    // Bounds + a loose shape check on the person-identifying + program fields shared by
     // submissions and attempts — both are created by anonymous, unauthenticated
     // trainees, so this is the only server-side defense against garbage/oversized/
     // spoofed data (the client UI only ever sends well-formed values, but nothing
     // stops a direct API call from sending anything else).
+    // programId tags which training course a doc belongs to (only "recycling-sorting"
+    // exists today) — required now, before any real data exists, so a future second
+    // training course never has to backfill/guess it on old docs.
     function isValidPersonFields(data) {
       return data.buildingId is string && data.buildingId.size() > 0 && data.buildingId.size() <= 200
         && data.tenantId is string && data.tenantId.size() > 0 && data.tenantId.size() <= 200
         && data.name is string && data.name.size() > 0 && data.name.size() <= 200
         && data.email is string && data.email.size() > 0 && data.email.size() <= 320
-        && data.email.matches('^[^@ ]+@[^@ ]+[.][^@ ]+$');
+        && data.email.matches('^[^@ ]+@[^@ ]+[.][^@ ]+$')
+        && data.programId is string && data.programId.size() > 0 && data.programId.size() <= 100;
     }
 
     // Reviewer accounts beyond the permanent owner fallback above. Only an existing
