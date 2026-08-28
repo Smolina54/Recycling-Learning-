@@ -100,8 +100,11 @@ async function main(){
 async function runFlow(page){
 
   // --- Invalid-link fallback still works with a bogus buildingId ---
+  // This is the very first Firestore call of the whole test run, right after a fresh emulator
+  // start — cold-start connection setup made 400ms an unreliable margin (started failing
+  // intermittently later in this project's life without any change to the gate logic itself).
   await page.goto(`${url.pathToFileURL(GAME_PATH).href}?b=no-such-building&emulator=1`, { waitUntil: 'domcontentloaded' });
-  await new Promise(r => setTimeout(r, 400));
+  await new Promise(r => setTimeout(r, 1200));
   check('id-gate shows invalid-link fallback for a buildingId that does not exist',
     await page.$eval('#idCardInvalid', el => getComputedStyle(el).display !== 'none'));
 

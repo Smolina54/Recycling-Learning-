@@ -2389,9 +2389,19 @@ var qrcode = function() {
   }
   .building-qr{width:120px; height:120px; margin-bottom:16px;}
   .building-qr svg{width:100%; height:100%;}
-  .building-header-row{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
+  .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
+  .building-row:has(> .building-header-row:only-child) .building-header-row{margin-bottom:0;}
   .building-header-row h3{margin-bottom:0;}
-  .building-header-actions{display:flex; gap:8px; flex-wrap:wrap;}
+  .building-toggle-btn{
+    background:transparent; border:none; cursor:pointer; font-size:16px; color:var(--ink-soft);
+    padding:2px 4px; flex-shrink:0;
+  }
+  .building-tenant-count{
+    font-family:var(--mono); font-size:11.5px; color:var(--ink-soft);
+    background:var(--line); padding:3px 9px; border-radius:20px; flex-shrink:0;
+  }
+  .building-header-actions{display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;}
+  .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
   .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
   .building-edit-row input{flex:1; min-width:160px;}
   .tenant-list{list-style:none; margin:0 0 16px; padding:0; font-size:13.5px;}
@@ -2401,8 +2411,24 @@ var qrcode = function() {
   .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
   .tenant-row-actions{display:flex; gap:8px; flex-shrink:0; margin-left:auto;}
   .remove-admin-btn{margin-left:auto;}
-  .tenant-edit-row{gap:8px;}
-  .tenant-edit-row input{flex:1; min-width:120px;}
+  .tenant-edit-row{gap:8px; align-items:flex-start;}
+  .tenant-edit-row > .edit-tenant-name-input{flex:1; min-width:120px;}
+  .levels-editor{display:flex; flex-direction:column; gap:8px; flex:1; min-width:220px;}
+  .level-row{display:flex; align-items:center; gap:6px;}
+  .level-row select{
+    font-family:var(--body); font-size:13px; padding:6px 8px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink);
+  }
+  .level-row input{
+    font-family:var(--body); font-size:13px; padding:6px 10px; border:1.5px solid var(--line);
+    border-radius:var(--radius); color:var(--ink); width:110px;
+  }
+  .remove-level-row-btn{
+    background:transparent; border:none; color:var(--ink-soft); font-size:18px; line-height:1;
+    cursor:pointer; padding:2px 6px;
+  }
+  .remove-level-row-btn:hover{color:var(--gw);}
+  .add-level-row-btn{align-self:flex-start; padding:6px 14px; font-size:12.5px;}
   .tenant-list .btn.secondary, .building-header-actions .btn, .building-edit-row .btn{padding:6px 14px; font-size:12.5px;}
   .danger-btn{border-color:var(--gw) !important; color:var(--gw) !important;}
   .danger-btn:hover{background:var(--gw) !important; color:var(--paper) !important;}
@@ -2457,6 +2483,10 @@ var qrcode = function() {
 
   .filter-row{display:flex; gap:16px; flex-wrap:wrap;}
   .filter-field{display:flex; flex-direction:column; gap:6px; min-width:180px; flex:1;}
+  /* Native date inputs don't stretch gracefully — filling the flex row's leftover space (like
+     the <select> fields do) just leaves visible dead space around the small date control. Cap
+     their growth instead of letting them inherit .filter-field's flex:1. */
+  .filter-field-date{flex:0 1 170px; min-width:150px;}
   .filter-field span{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft);}
   #trendChart{position:relative;}
   .trend-svg{width:100%; height:220px; display:block; cursor:crosshair;}
@@ -2499,6 +2529,7 @@ var qrcode = function() {
     <p id="authStatus">Sign in with an authorized Google account to load live results.</p>
     <div class="upload-actions">
       <button class="btn" id="signInBtn">Sign in with Google →</button>
+      <button class="btn secondary" id="signInMicrosoftBtn">Sign in with Microsoft →</button>
       <button class="btn secondary" id="signOutBtn" style="display:none;">Sign out</button>
       <button class="btn secondary" id="loadSampleBtn">Load sample data (preview)</button>
     </div>
@@ -2523,6 +2554,10 @@ var qrcode = function() {
         <button class="btn" id="addBuildingBtn">+ Add building</button>
       </div>
       <p class="block-sub" id="buildingsStatus" style="margin-top:10px;"></p>
+    </div>
+
+    <div class="filter-row" style="margin-bottom:16px;">
+      <label class="filter-field"><span>Search</span><input type="text" id="buildingSearchInput" placeholder="Search buildings by name…"></label>
     </div>
 
     <div id="buildingsList"></div>
@@ -2554,8 +2589,8 @@ var qrcode = function() {
         <label class="filter-field"><span>Building</span><select id="filterBuilding"><option value="">All buildings</option></select></label>
         <label class="filter-field"><span>Tenant</span><select id="filterTenant" disabled><option value="">All tenants</option></select></label>
         <label class="filter-field"><span>Level</span><select id="filterLevel" disabled><option value="">All levels</option></select></label>
-        <label class="filter-field"><span>From date</span><input type="date" id="filterDateFrom"></label>
-        <label class="filter-field"><span>To date</span><input type="date" id="filterDateTo"></label>
+        <label class="filter-field filter-field-date"><span>From date</span><input type="date" id="filterDateFrom"></label>
+        <label class="filter-field filter-field-date"><span>To date</span><input type="date" id="filterDateTo"></label>
       </div>
       <p class="block-sub" id="focusNote" style="margin:14px 0 0;"></p>
     </div>
@@ -2618,7 +2653,7 @@ import {
   getFirestore, collection, getDocs, deleteDoc, doc, setDoc, query, orderBy, limit, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
+  getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
   createUserWithEmailAndPassword, signInWithEmailAndPassword
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
@@ -2674,6 +2709,56 @@ try {
   const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
   function esc(str){
     return String(str ?? '').replace(/[&<>"']/g, (c) => ESC_MAP[c]);
+  }
+
+  // ---- Levels editor: one row per level, "Level <number>" / "Ground" / free-text "Other" ----
+  // Replaces free-text "one per line" / comma-separated levels entry, which was too easy to
+  // get wrong (forget the separator, typo "Level", etc.) — used for both the "add tenant" form
+  // and the inline "edit tenant" form, sharing the same markup/handlers.
+  function parseLevelString(level){
+    const trimmed = String(level || '').trim();
+    const m = /^level\s+(.+)$/i.exec(trimmed);
+    if (m) return { type: 'Level', value: m[1] };
+    if (trimmed.toLowerCase() === 'ground') return { type: 'Ground', value: '' };
+    return { type: 'Other', value: trimmed };
+  }
+
+  function levelRowHtml(type, value){
+    const t = type || 'Level';
+    return `
+      <div class="level-row">
+        <select class="level-type-select">
+          <option value="Level"${t === 'Level' ? ' selected' : ''}>Level</option>
+          <option value="Ground"${t === 'Ground' ? ' selected' : ''}>Ground</option>
+          <option value="Other"${t === 'Other' ? ' selected' : ''}>Other</option>
+        </select>
+        <input type="text" class="level-number-input" placeholder="4" value="${t === 'Level' ? esc(value) : ''}" style="${t === 'Level' ? '' : 'display:none;'}">
+        <input type="text" class="level-other-input" placeholder="e.g. Basement" value="${t === 'Other' ? esc(value) : ''}" style="${t === 'Other' ? '' : 'display:none;'}">
+        <button type="button" class="remove-level-row-btn" title="Remove this level">×</button>
+      </div>`;
+  }
+
+  // `extraClass` distinguishes the "add tenant" editor from an "edit tenant" editor when both
+  // exist in the same building row at once (e.g. adding a tenant while another is mid-edit).
+  function renderLevelsEditorHtml(existingLevels, extraClass){
+    const rows = (existingLevels && existingLevels.length) ? existingLevels.map(parseLevelString) : [{ type: 'Level', value: '' }];
+    return `
+      <div class="levels-editor ${extraClass}">
+        ${rows.map(r => levelRowHtml(r.type, r.value)).join('')}
+        <button type="button" class="btn secondary add-level-row-btn">+ Add another level</button>
+      </div>`;
+  }
+
+  function readLevelsFromEditor(editorEl){
+    return [...editorEl.querySelectorAll('.level-row')].map(row => {
+      const type = row.querySelector('.level-type-select').value;
+      if (type === 'Level'){
+        const num = row.querySelector('.level-number-input').value.trim();
+        return num ? `Level ${num}` : null;
+      }
+      if (type === 'Ground') return 'Ground';
+      return row.querySelector('.level-other-input').value.trim() || null;
+    }).filter(Boolean);
   }
 
   // AUTO-GENERATED CATALOG START — do not edit by hand, run `npm run sync-catalog` after
@@ -3195,6 +3280,20 @@ try {
   let buildingsCache = [];
   let editingBuildingId = null;
   let editingTenant = null; // {buildingId, tenantId}
+  let buildingSearchTerm = '';
+  // Collapsed by default — with dozens of real buildings (some with 20+ tenants each) showing
+  // every tenant/link/QR for every building at once made the tab unusably long. A building
+  // auto-expands while one of its tenants is being edited, so that form is never hidden away.
+  const expandedBuildingIds = new Set();
+
+  // Re-renders from the in-memory cache with the current search term applied — used for every
+  // pure UI-state change (toggle expand, enter/cancel edit mode) so those stay instant and keep
+  // whatever search filter is active; loadBuildings() is only for after a real Firestore write.
+  function refreshBuildingsView(){
+    const term = buildingSearchTerm.trim().toLowerCase();
+    const filtered = term ? buildingsCache.filter(b => b.name.toLowerCase().includes(term)) : buildingsCache;
+    renderBuildingsList(filtered);
+  }
 
   async function loadBuildings(){
     const buildingsSnap = await getDocs(collection(db, 'buildings'));
@@ -3207,17 +3306,20 @@ try {
       };
     }));
     buildingsCache = buildings;
-    renderBuildingsList(buildings);
+    refreshBuildingsView();
   }
 
   function renderBuildingsList(buildings){
     const container = document.getElementById('buildingsList');
     if (buildings.length === 0){
-      container.innerHTML = '<p class="block-sub">No buildings yet — add one above.</p>';
+      container.innerHTML = buildingSearchTerm.trim()
+        ? '<p class="block-sub">No buildings match your search.</p>'
+        : '<p class="block-sub">No buildings yet — add one above.</p>';
       return;
     }
     container.innerHTML = buildings.map(b => {
       const link = `${window.location.origin}/recycling-training.html?b=${b.id}`;
+      const isExpanded = expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id);
       const headerHtml = editingBuildingId === b.id
         ? `<div class="building-edit-row">
             <input type="text" class="edit-building-name-input" value="${esc(b.name)}">
@@ -3225,19 +3327,24 @@ try {
             <button class="btn secondary cancel-building-name-btn">Cancel</button>
           </div>`
         : `<div class="building-header-row">
+            <button type="button" class="building-toggle-btn" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
             <h3>${esc(b.name)}</h3>
+            <span class="building-tenant-count">${b.tenants.length} tenant${b.tenants.length === 1 ? '' : 's'}</span>
             <div class="building-header-actions">
               <button class="btn secondary edit-building-btn">Edit name</button>
               <button class="btn secondary delete-building-btn danger-btn">Delete building</button>
             </div>
           </div>`;
+      if (!isExpanded){
+        return `<div class="report-block building-row" data-building-id="${b.id}">${headerHtml}</div>`;
+      }
       const tenantsHtml = b.tenants.length
         ? b.tenants.map(t => {
             const isEditing = editingTenant && editingTenant.buildingId === b.id && editingTenant.tenantId === t.id;
             if (isEditing){
               return `<li class="tenant-edit-row" data-tenant-id="${t.id}">
                 <input type="text" class="edit-tenant-name-input" value="${esc(t.name)}">
-                <input type="text" class="edit-tenant-levels-input" value="${esc(t.levels.join(', '))}">
+                ${renderLevelsEditorHtml(t.levels, 'edit-tenant-levels-editor')}
                 <button class="btn save-tenant-btn">Save</button>
                 <button class="btn secondary cancel-tenant-btn">Cancel</button>
               </li>`;
@@ -3263,7 +3370,7 @@ try {
         <ul class="tenant-list">${tenantsHtml}</ul>
         <div class="filter-row">
           <label class="filter-field"><span>Tenant name</span><input type="text" class="new-tenant-name"></label>
-          <label class="filter-field"><span>Levels (one per line)</span><textarea class="new-tenant-levels" rows="2" placeholder="Level 1\nLevel 2"></textarea></label>
+          <label class="filter-field"><span>Levels</span>${renderLevelsEditorHtml([], 'new-tenant-levels-editor')}</label>
         </div>
         <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
           <button class="btn secondary add-tenant-btn">+ Add tenant</button>
@@ -3277,7 +3384,11 @@ try {
     `;
     }).join('');
 
-    buildings.forEach(b => renderQrCode(b.id, `${window.location.origin}/recycling-training.html?b=${b.id}`));
+    buildings.forEach(b => {
+      if (expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id)){
+        renderQrCode(b.id, `${window.location.origin}/recycling-training.html?b=${b.id}`);
+      }
+    });
   }
 
   function renderQrCode(buildingId, link){
@@ -3342,14 +3453,21 @@ try {
     if (!name){ status.textContent = 'Enter a building name first.'; return; }
     status.textContent = 'Adding…';
     try {
-      await setDoc(doc(db, 'buildings', crypto.randomUUID()), { name });
+      const newBuildingId = crypto.randomUUID();
+      await setDoc(doc(db, 'buildings', newBuildingId), { name });
       nameInput.value = '';
       status.textContent = `Added "${name}".`;
+      expandedBuildingIds.add(newBuildingId); // open it up right away — you almost always want to add tenants next
       await loadBuildings();
     } catch (err){
       console.error('Failed to add building:', err);
       status.textContent = 'Failed to add building — check the console for details.';
     }
+  });
+
+  document.getElementById('buildingSearchInput').addEventListener('input', (e) => {
+    buildingSearchTerm = e.target.value;
+    refreshBuildingsView();
   });
 
   // ---------------- Admins tab: who else can sign in here ----------------
@@ -3409,17 +3527,39 @@ try {
   });
 
   document.getElementById('buildingsList').addEventListener('click', async (e) => {
+    const addLevelRowBtn = e.target.closest('.add-level-row-btn');
+    if (addLevelRowBtn){
+      addLevelRowBtn.insertAdjacentHTML('beforebegin', levelRowHtml('Level', ''));
+      return;
+    }
+
+    const removeLevelRowBtn = e.target.closest('.remove-level-row-btn');
+    if (removeLevelRowBtn){
+      const editor = removeLevelRowBtn.closest('.levels-editor');
+      if (editor.querySelectorAll('.level-row').length > 1) removeLevelRowBtn.closest('.level-row').remove();
+      return;
+    }
+
+    const toggleBtn = e.target.closest('.building-toggle-btn');
+    if (toggleBtn){
+      const buildingId = toggleBtn.closest('.building-row').dataset.buildingId;
+      if (expandedBuildingIds.has(buildingId)) expandedBuildingIds.delete(buildingId);
+      else expandedBuildingIds.add(buildingId);
+      refreshBuildingsView();
+      return;
+    }
+
     const editBuildingBtn = e.target.closest('.edit-building-btn');
     if (editBuildingBtn){
       editingBuildingId = editBuildingBtn.closest('.building-row').dataset.buildingId;
-      renderBuildingsList(buildingsCache);
+      refreshBuildingsView();
       return;
     }
 
     const cancelBuildingNameBtn = e.target.closest('.cancel-building-name-btn');
     if (cancelBuildingNameBtn){
       editingBuildingId = null;
-      renderBuildingsList(buildingsCache);
+      refreshBuildingsView();
       return;
     }
 
@@ -3471,14 +3611,14 @@ try {
       const buildingId = editTenantBtn.closest('.building-row').dataset.buildingId;
       const tenantId = editTenantBtn.closest('li').dataset.tenantId;
       editingTenant = { buildingId, tenantId };
-      renderBuildingsList(buildingsCache);
+      refreshBuildingsView();
       return;
     }
 
     const cancelTenantBtn = e.target.closest('.cancel-tenant-btn');
     if (cancelTenantBtn){
       editingTenant = null;
-      renderBuildingsList(buildingsCache);
+      refreshBuildingsView();
       return;
     }
 
@@ -3488,7 +3628,7 @@ try {
       const li = saveTenantBtn.closest('li');
       const tenantId = li.dataset.tenantId;
       const newName = li.querySelector('.edit-tenant-name-input').value.trim();
-      const newLevels = li.querySelector('.edit-tenant-levels-input').value.split(',').map(l => l.trim()).filter(Boolean);
+      const newLevels = readLevelsFromEditor(li.querySelector('.edit-tenant-levels-editor'));
       if (!newName || newLevels.length === 0){ alert('Enter a tenant name and at least one level.'); return; }
       try {
         await setDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: newName, levels: newLevels });
@@ -3536,11 +3676,11 @@ try {
       const row = addBtn.closest('.building-row');
       const buildingId = row.dataset.buildingId;
       const tenantName = row.querySelector('.new-tenant-name').value.trim();
-      const levels = row.querySelector('.new-tenant-levels').value.split('\n').map(l => l.trim()).filter(Boolean);
+      const levels = readLevelsFromEditor(row.querySelector('.new-tenant-levels-editor'));
       if (!tenantName || levels.length === 0){ alert('Enter a tenant name and at least one level.'); return; }
       try {
         await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: tenantName, levels });
-        await loadBuildings();
+        await loadBuildings(); // re-renders the whole tab, including a fresh blank "add tenant" form
       } catch (err){
         console.error('Failed to add tenant:', err);
         alert('Failed to add tenant — check the console for details.');
@@ -3584,6 +3724,14 @@ try {
   });
 
   document.getElementById('buildingsList').addEventListener('change', async (e) => {
+    const levelTypeSelect = e.target.closest('.level-type-select');
+    if (levelTypeSelect){
+      const row = levelTypeSelect.closest('.level-row');
+      row.querySelector('.level-number-input').style.display = levelTypeSelect.value === 'Level' ? '' : 'none';
+      row.querySelector('.level-other-input').style.display = levelTypeSelect.value === 'Other' ? '' : 'none';
+      return;
+    }
+
     const input = e.target.closest('.import-xlsx-input');
     if (!input || !input.files[0]) return;
     const row = input.closest('.building-row');
@@ -3620,6 +3768,21 @@ try {
     try { await signInWithPopup(auth, new GoogleAuthProvider()); }
     catch (err){
       console.error('Sign-in failed:', err);
+      document.getElementById('authStatus').textContent = 'Sign-in failed or was cancelled.';
+    }
+  });
+
+  // Requires a one-time setup in Firebase Console (Authentication → Sign-in method → Microsoft)
+  // using an App Registration from Tradeflex's Microsoft Entra ID (Azure AD) tenant — someone
+  // with admin rights there needs to create it and hand over the Application ID + secret. Until
+  // that's done, this button will show a normal-looking Microsoft account picker but fail at the
+  // final step with an "operation not allowed" style error from Firebase, same as the Google
+  // button would have before its provider was enabled earlier this session.
+  document.getElementById('signInMicrosoftBtn').addEventListener('click', async () => {
+    if (!auth){ document.getElementById('authStatus').textContent = 'Firebase is not configured yet.'; return; }
+    try { await signInWithPopup(auth, new OAuthProvider('microsoft.com')); }
+    catch (err){
+      console.error('Microsoft sign-in failed:', err);
       document.getElementById('authStatus').textContent = 'Sign-in failed or was cancelled.';
     }
   });

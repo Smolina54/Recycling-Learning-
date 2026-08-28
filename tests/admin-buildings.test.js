@@ -33,6 +33,27 @@ async function findBuildingRow(page, buildingName){
   }, buildingName).then(h => h.asElement());
 }
 
+// Fills a `.levels-editor` (which starts with exactly one blank "Level" row) with the given
+// level strings — clicking "+ Add another level" for every level past the first, then setting
+// each row to the right type ("Level 4" -> Level/4, "Ground" -> Ground, anything else -> Other).
+async function fillLevelsEditor(editorHandle, levels){
+  for (let i = 0; i < levels.length; i++){
+    if (i > 0) await editorHandle.$eval('.add-level-row-btn', el => el.click());
+    const rows = await editorHandle.$$('.level-row');
+    const row = rows[i];
+    const level = levels[i];
+    const levelMatch = /^level\s+(.+)$/i.exec(level);
+    if (levelMatch){
+      await row.$eval('.level-number-input', (el, v) => { el.value = v; }, levelMatch[1]);
+    } else if (level.toLowerCase() === 'ground'){
+      await row.$eval('.level-type-select', el => { el.value = 'Ground'; el.dispatchEvent(new Event('change', { bubbles: true })); });
+    } else {
+      await row.$eval('.level-type-select', el => { el.value = 'Other'; el.dispatchEvent(new Event('change', { bubbles: true })); });
+      await row.$eval('.level-other-input', (el, v) => { el.value = v; }, level);
+    }
+  }
+}
+
 // Seeds one attempt with no matching submission — an anonymous, unauthenticated trainee
 // could write exactly this (name/tenantName are free text, only bounded/shape-checked by
 // firestore.rules) — with a "name" that's a real XSS payload, not just a suspicious string.
@@ -79,6 +100,9 @@ async function main(){
 async function runFlow(page){
   await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded' });
   await new Promise(r => setTimeout(r, 300));
+
+  check('a "Sign in with Microsoft" button is present alongside Google',
+    Boolean(await page.$('#signInMicrosoftBtn')));
 
   const signInResult = await page.evaluate(async (email) => {
     try { await window.__testSignIn(email, 'test-password-123'); return 'ok'; }
@@ -131,11 +155,41 @@ async function runFlow(page){
   const qrSvg = await newRowHandle.asElement().$eval('.building-qr svg', el => el.outerHTML).catch(() => null);
   check('QR code renders as a real SVG with content', Boolean(qrSvg) && qrSvg.length > 100, qrSvg ? qrSvg.length : 'none');
 
+  // --- Collapse/expand: a just-created building auto-expands; confirm the toggle actually works ---
+  await newRowHandle.asElement().$eval('.building-toggle-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  let rowAfterCollapse = await findBuildingRow(page, buildingName);
+  check('collapsing a building hides its link/QR/tenant list',
+    !(await rowAfterCollapse.$('.building-link-row')));
+
+  await rowAfterCollapse.$eval('.building-toggle-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  let rowAfterExpand = await findBuildingRow(page, buildingName);
+  check('expanding it again shows the link/QR/tenant list once more',
+    Boolean(await rowAfterExpand.$('.building-link-row')));
+
+  // --- Search box: narrows the list by name, restores it when cleared ---
+  await page.type('#buildingSearchInput', 'zzz-does-not-match-anything');
+  await new Promise(r => setTimeout(r, 200));
+  const namesWhenSearchMisses = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
+  const noMatchMessageShown = await page.$eval('#buildingsList', el => el.textContent.includes('No buildings match your search'));
+  check('a non-matching search hides the building and shows a "no match" message',
+    !namesWhenSearchMisses.includes(buildingName) && noMatchMessageShown);
+
+  await page.$eval('#buildingSearchInput', el => { el.value = ''; });
+  await page.$eval('#buildingSearchInput', el => el.dispatchEvent(new Event('input', { bubbles: true })));
+  await new Promise(r => setTimeout(r, 200));
+  const namesAfterClearingSearch = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
+  check('clearing the search restores the building to the list', namesAfterClearingSearch.includes(buildingName));
+
   let clipboardGrantable = true;
   try { await page.browserContext().overridePermissions(REPORT_URL, ['clipboard-write', 'clipboard-read']); }
   catch (err) { clipboardGrantable = false; }
 
-  const copyBtn = await newRowHandle.asElement().$('.copy-link-btn');
+  // Every toggle/search step above fully re-rendered #buildingsList, so the original
+  // newRowHandle is now a detached, stale reference — re-fetch a live one.
+  const freshNewRowHandle = await findBuildingRow(page, buildingName);
+  const copyBtn = await freshNewRowHandle.$('.copy-link-btn');
   await copyBtn.click();
   await new Promise(r => setTimeout(r, 300));
 
@@ -155,13 +209,12 @@ async function runFlow(page){
   }
 
   // Add a tenant to whichever row is the one we just created.
-  const rowHandle = await page.evaluateHandle((name) => {
-    return [...document.querySelectorAll('.building-row')].find(r => r.querySelector('h3').textContent === name);
-  }, buildingName);
+  const rowHandle = await findBuildingRow(page, buildingName);
   const tenantName = 'Test Tenant';
-  await rowHandle.asElement().$eval('.new-tenant-name', (el, v) => { el.value = v; }, tenantName);
-  await rowHandle.asElement().$eval('.new-tenant-levels', (el, v) => { el.value = v; }, 'Level 1\nLevel 2');
-  await rowHandle.asElement().$eval('.add-tenant-btn', el => el.click());
+  await rowHandle.$eval('.new-tenant-name', (el, v) => { el.value = v; }, tenantName);
+  const newTenantLevelsEditor = await rowHandle.$('.new-tenant-levels-editor');
+  await fillLevelsEditor(newTenantLevelsEditor, ['Level 1', 'Level 2']);
+  await rowHandle.$eval('.add-tenant-btn', el => el.click());
   await new Promise(r => setTimeout(r, 600));
 
   const tenantEntries = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
@@ -226,7 +279,12 @@ async function runFlow(page){
   const editRowVisible = await page.$('.tenant-edit-row');
   check('editing a tenant shows inline name/levels inputs', Boolean(editRowVisible));
   await editRowVisible.$eval('.edit-tenant-name-input', el => { el.value = 'Test Tenant Renamed'; });
-  await editRowVisible.$eval('.edit-tenant-levels-input', el => { el.value = 'Level 5, Level 6'; });
+  // Test Tenant already has exactly 2 levels (Level 1, Level 2), so the levels editor pre-renders
+  // exactly 2 rows here — no need to add/remove rows, just overwrite both numbers in place.
+  const editLevelsEditor = await editRowVisible.$('.edit-tenant-levels-editor');
+  const editLevelNumberInputs = await editLevelsEditor.$$('.level-number-input');
+  await editLevelNumberInputs[0].evaluate(el => { el.value = '5'; });
+  await editLevelNumberInputs[1].evaluate(el => { el.value = '6'; });
   await editRowVisible.$eval('.save-tenant-btn', el => el.click());
   await new Promise(r => setTimeout(r, 600));
 
