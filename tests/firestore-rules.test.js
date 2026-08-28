@@ -10,7 +10,7 @@ const {
 const { doc, setDoc, getDoc, getDocs, collection, addDoc, deleteDoc, updateDoc } = require('firebase/firestore');
 
 const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
-const ALLOWED_EMAIL = 'smolina@tradeflex.com.au';
+const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
 const OTHER_EMAIL = 'someone.else@gmail.com';
 
 const validSubmission = {

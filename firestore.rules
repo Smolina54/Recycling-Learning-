@@ -9,7 +9,7 @@ service cloud.firestore {
     // panel — no rules edit/redeploy needed to add or remove a reviewer.
     function isAllowedReviewer() {
       return request.auth != null &&
-        (request.auth.token.email == 'smolina@tradeflex.com.au' ||
+        (request.auth.token.email == 'esgtradeflex@gmail.com' ||
          exists(/databases/$(database)/documents/admins/$(request.auth.token.email)));
     }
 

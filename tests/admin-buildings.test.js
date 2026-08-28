@@ -12,7 +12,7 @@ const { doc, setDoc } = require('firebase/firestore');
 const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const REPORT_URL = `${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'sorting-station-report.html')).href}?emulator=1`;
 const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
-const ALLOWED_EMAIL = 'smolina@tradeflex.com.au';
+const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
 const XSS_PAYLOAD = '<img src=x onerror="window.__xssFired = true">';
 
 const results = [];
