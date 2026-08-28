@@ -667,11 +667,15 @@ const firebaseConfig = {
 };
 
 // Anti-spam/anti-bot for the public write path (anyone with a building link can create
-// submissions/attempts with no login at all). Uses reCAPTCHA Enterprise, not classic v3 —
-// Google stopped letting new App Check apps register with the free classic reCAPTCHA
-// (its registration field is simply non-editable now), so Enterprise's free tier is the
-// only real option today. Key ID from Google Cloud Console → Security → reCAPTCHA Enterprise.
-const RECAPTCHA_SITE_KEY = '6LcynpwtAAAAAJ5IdNxKtqXRmtXTHrXdGZehA6Vw';
+// submissions/attempts with no login at all). DISABLED 2026-08-28: a real trainee on an
+// iPhone in Safari Private Browsing got a save failure — reCAPTCHA Enterprise's token
+// fetch needs browser storage that Private Browsing restricts, and a failed token fetch
+// breaks the Firestore write outright, even with Firestore's App Check enforcement set to
+// "Unenforced" (confirmed earlier the same way over file://, now confirmed for real too).
+// Since enforcement was never turned on, App Check was providing zero actual protection
+// yet while already able to break a real person's submission — not an acceptable trade.
+// Key ID (kept for whenever this gets revisited): 6LcynpwtAAAAAJ5IdNxKtqXRmtXTHrXdGZehA6Vw
+const RECAPTCHA_SITE_KEY = '';
 
 let db = null;
 try {

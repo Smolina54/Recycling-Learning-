@@ -2678,9 +2678,11 @@ const firebaseConfig = {
   appId: "1:196747023122:web:3fbcc23c1532bed847d9cb"
 };
 
-// Same RECAPTCHA_SITE_KEY story as recycling-training.html — reCAPTCHA Enterprise, since
-// Google no longer allows registering new App Check apps with the free classic reCAPTCHA.
-const RECAPTCHA_SITE_KEY = '6LcynpwtAAAAAJ5IdNxKtqXRmtXTHrXdGZehA6Vw';
+// Same story as recycling-training.html — DISABLED 2026-08-28, see that file's comment for
+// why (a real trainee's save failed in Safari Private Browsing; App Check was providing zero
+// enforcement benefit yet while already able to break a real submission).
+// Key ID (kept for whenever this gets revisited): 6LcynpwtAAAAAJ5IdNxKtqXRmtXTHrXdGZehA6Vw
+const RECAPTCHA_SITE_KEY = '';
 
 let db = null, auth = null;
 try {
