@@ -54,10 +54,11 @@ async function fillLevelsEditor(editorHandle, levels){
   }
 }
 
-// Seeds one attempt with no matching submission — an anonymous, unauthenticated trainee
-// could write exactly this (name/tenantName are free text, only bounded/shape-checked by
-// firestore.rules) — with a "name" that's a real XSS payload, not just a suspicious string.
-// It should show up in the report's "Pending completion" table as inert text, never execute.
+// Seeds one attempt (no matching submission -> shows in "Pending completion") and one
+// submission (-> shows in "Completed") — an anonymous, unauthenticated trainee could write
+// exactly either of these (name/tenantName are free text, only bounded/shape-checked by
+// firestore.rules) — both with a "name" that's a real XSS payload, not just a suspicious
+// string. Both should render as inert text, never execute.
 // projectId MUST match the real esg-1-98f35 used in firebaseConfig — see game-regression.test.js.
 async function seedMaliciousAttempt(){
   const testEnv = await initializeTestEnvironment({
@@ -71,6 +72,13 @@ async function seedMaliciousAttempt(){
       tenantId: 'xss-test-tenant', tenantName: XSS_PAYLOAD,
       level: 'Level 1', name: XSS_PAYLOAD, email: 'xss-test@example.com',
       programId: 'recycling-sorting', startedAt: new Date().toISOString(),
+    });
+    await setDoc(doc(db, 'submissions', 'xss-test-submission'), {
+      buildingId: 'xss-test-building-2', buildingName: XSS_PAYLOAD,
+      tenantId: 'xss-test-tenant-2', tenantName: 'XSS Test Co',
+      level: 'Level 1', name: XSS_PAYLOAD, email: 'xss-test-2@example.com',
+      programId: 'recycling-sorting', score: 80, avoided: 20, total: 25,
+      timestamp: new Date().toISOString(),
     });
   });
   return testEnv; // not cleaned up here — same reasoning as game-regression.test.js
@@ -117,14 +125,23 @@ async function runFlow(page){
   check('Reports tab is active by default', await page.$eval('#tabReportsBtn', el => el.classList.contains('active')));
 
   // --- XSS check: a malicious trainee-submitted name must render as inert text, never run ---
+  // (covers both seeded docs — the attempt in Pending completion, the submission in Completed —
+  // window.__xssFired is a single shared flag either payload would set if it ever executed)
   const xssFired = await page.evaluate(() => window.__xssFired === true);
-  check('a malicious attempt "name" in the Pending completion table does NOT execute as script', !xssFired);
+  check('a malicious attempt/submission "name" does NOT execute as script anywhere in the report', !xssFired);
+
   const pendingText = await page.$eval('#pendingTable', el => el.textContent);
   const pendingEmptyVisible = await page.$eval('#pendingEmpty', el => getComputedStyle(el).display !== 'none');
-  check('...and shows up as literal escaped text instead (proves it rendered, not silently dropped)',
+  check('...and shows up as literal escaped text in Pending completion (proves it rendered, not silently dropped)',
     pendingText.includes('<img src=x'), `emptyVisible=${pendingEmptyVisible} text="${pendingText.slice(0, 300)}"`);
   const pendingHasRealImgTag = await page.$$eval('#pendingTable img', els => els.length > 0);
-  check('...and no real <img> element was created from it', !pendingHasRealImgTag);
+  check('...and no real <img> element was created from it in Pending completion', !pendingHasRealImgTag);
+
+  const completedText = await page.$eval('#completedTable', el => el.textContent);
+  check('...and shows up as literal escaped text in Completed too',
+    completedText.includes('<img src=x'), completedText.slice(0, 300));
+  const completedHasRealImgTag = await page.$$eval('#completedTable img', els => els.length > 0);
+  check('...and no real <img> element was created from it in Completed', !completedHasRealImgTag);
 
   await page.click('#tabBuildingsBtn');
   await new Promise(r => setTimeout(r, 200));

@@ -47,6 +47,13 @@ async function main(){
   const trendPoints = await page.$$eval('#trendChart .trend-svg circle', els => els.length);
   check('trend chart rendered at least one day of data', trendPoints > 0, trendPoints);
 
+  const completedRows = await page.$$eval('#completedTable tbody tr', els => els.length);
+  check('completed list rendered at least one row', completedRows > 0, completedRows);
+  const completedHasEmail = await page.$eval('#completedTable tbody tr td:nth-child(2)', el => el.textContent.includes('@')).catch(() => false);
+  check('completed rows show a real email, not blank', completedHasEmail);
+  check('completed-empty message is hidden when there are completed rows',
+    await page.$eval('#completedEmpty', el => getComputedStyle(el).display === 'none'));
+
   const pendingRows = await page.$$eval('#pendingTable tbody tr', els => els.length);
   check('pending-completion list rendered at least one row (sample data has dropped attempts)',
     pendingRows > 0, pendingRows);

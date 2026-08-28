@@ -2617,6 +2617,15 @@ var qrcode = function() {
       </div>
 
       <div class="report-block">
+        <h3>Completed</h3>
+        <p class="block-sub">Everyone who has finished, within the current filter — one row per person (their most recent attempt, if they retried).</p>
+        <p class="block-sub" id="completedEmpty" style="display:none;">Nobody in this filter has completed it yet.</p>
+        <div style="overflow-x:auto;">
+          <table class="group-table" id="completedTable"></table>
+        </div>
+      </div>
+
+      <div class="report-block">
         <h3>Pending completion</h3>
         <p class="block-sub">Started the sort but haven't finished yet, within the current filter — useful for following up when training is mandatory.</p>
         <p class="block-sub" id="pendingEmpty" style="display:none;">Nobody in this filter has started without finishing — everyone who began also completed it.</p>
@@ -2946,7 +2955,7 @@ try {
     const prev = buildingSel.value;
     const buildings = distinctValues(allRows, 'building', () => true);
     buildingSel.innerHTML = '<option value="">All buildings</option>' +
-      buildings.map(b => `<option value="${b}">${b}</option>`).join('');
+      buildings.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
     buildingSel.value = buildings.includes(prev) ? prev : '';
     updateTenantOptions();
   }
@@ -2964,7 +2973,7 @@ try {
     const prev = tenantSel.value;
     const tenants = distinctValues(allRows, 'tenant', r => r.building === b);
     tenantSel.innerHTML = '<option value="">All tenants</option>' +
-      tenants.map(t => `<option value="${t}">${t}</option>`).join('');
+      tenants.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
     tenantSel.value = tenants.includes(prev) ? prev : '';
     updateLevelOptions();
   }
@@ -2981,7 +2990,7 @@ try {
     levelSel.disabled = false;
     const levels = distinctValues(allRows, 'level', r => r.building === b && r.tenant === t);
     levelSel.innerHTML = '<option value="">All levels</option>' +
-      levels.map(l => `<option value="${l}">${l}</option>`).join('');
+      levels.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
   }
 
   function filterByCurrentScope(rows){
@@ -3104,6 +3113,40 @@ try {
     svg.addEventListener('mouseleave', () => { crosshair.setAttribute('opacity', '0'); tooltip.style.display = 'none'; });
   }
 
+  // Mirrors renderPendingList() below, but for people who HAVE finished — the report only
+  // ever showed aggregate counts for completions, never a "here's exactly who" list, the
+  // way it already does for pending. Dedupes to each person's most recent submission (someone
+  // who retried keeps just their latest attempt here, not every historical one).
+  function renderCompletedList(rows){
+    const byEmail = {};
+    rows.forEach(r => {
+      if (!r.email) return;
+      if (!byEmail[r.email] || (r.timestamp || '') > (byEmail[r.email].timestamp || '')){
+        byEmail[r.email] = r;
+      }
+    });
+    const completed = Object.values(byEmail).sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+
+    const table = document.getElementById('completedTable');
+    document.getElementById('completedEmpty').style.display = completed.length === 0 ? 'block' : 'none';
+    table.style.display = completed.length === 0 ? 'none' : 'table';
+    if (completed.length === 0){ table.innerHTML = ''; return; }
+
+    table.innerHTML = `
+      <thead><tr><th>Name</th><th>Email</th><th>Building</th><th>Tenant</th><th>Level</th><th>Score</th><th>Completed</th></tr></thead>
+      <tbody>
+        ${completed.map(p => `
+          <tr>
+            <td>${esc(p.name) || '—'}</td><td>${esc(p.email)}</td><td>${esc(p.building) || '—'}</td>
+            <td>${esc(p.tenant) || '—'}</td><td>${esc(p.level) || '—'}</td>
+            <td><span class="pass-pill ${(p.score||0)>=75?'pass':'fail'}">${p.score!=null ? p.score+'%' : '—'}</span></td>
+            <td>${p.timestamp ? esc(p.timestamp.slice(0,10)) : '—'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    `;
+  }
+
   function renderPendingList(rows, attempts){
     const completedEmails = new Set(rows.map(r => r.email).filter(Boolean));
     const pendingByEmail = {};
@@ -3178,6 +3221,7 @@ try {
     `;
 
     buildTrendChart(rows);
+    renderCompletedList(rows);
     renderPendingList(rows, attempts);
 
     // Stream accuracy bars
