@@ -2660,7 +2660,7 @@ var qrcode = function() {
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, collection, getDocs, deleteDoc, doc, setDoc, query, orderBy, limit, serverTimestamp, connectFirestoreEmulator
+  getFirestore, collection, getDoc, getDocs, deleteDoc, doc, setDoc, query, orderBy, limit, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
@@ -3346,6 +3346,26 @@ try {
     renderBuildingsList(filtered);
   }
 
+  // Turns a building name into a short, readable link ID (was crypto.randomUUID() — a link
+  // like "?b=123-example-tower" reads as trustworthy where "?b=a3f8b2c1-1234-..." looked
+  // suspicious to trainees, per Sergio's own report). Doc IDs are immutable in Firestore once
+  // created, so this only ever affects NEW buildings — renaming a building later never breaks
+  // a link/QR already handed out, since the id itself doesn't change when the name field does.
+  function slugify(name){
+    return String(name || '').toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '') // strip accents (e.g. e -> e)
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  async function generateBuildingSlug(name){
+    const base = slugify(name);
+    if (!base) return crypto.randomUUID(); // name had no usable characters — fall back
+    const existing = await getDoc(doc(db, 'buildings', base));
+    if (!existing.exists()) return base;
+    return `${base}-${crypto.randomUUID().slice(0, 6)}`; // name collision — short unique suffix
+  }
+
   async function loadBuildings(){
     const buildingsSnap = await getDocs(collection(db, 'buildings'));
     const buildings = await Promise.all(buildingsSnap.docs.map(async (d) => {
@@ -3504,7 +3524,7 @@ try {
     if (!name){ status.textContent = 'Enter a building name first.'; return; }
     status.textContent = 'Adding…';
     try {
-      const newBuildingId = crypto.randomUUID();
+      const newBuildingId = await generateBuildingSlug(name);
       await setDoc(doc(db, 'buildings', newBuildingId), { name });
       nameInput.value = '';
       status.textContent = `Added "${name}".`;

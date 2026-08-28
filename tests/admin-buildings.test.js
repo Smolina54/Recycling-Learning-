@@ -161,13 +161,41 @@ async function runFlow(page){
   const buildingRow = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
   check('new building appears in the list', buildingRow.includes(buildingName), buildingRow.join('|'));
 
-  const newRowHandle = await page.evaluateHandle((name) => {
+  let newRowHandle = await page.evaluateHandle((name) => {
     return [...document.querySelectorAll('.building-row')].find(r => r.querySelector('h3').textContent === name);
   }, buildingName);
   const buildingId = await newRowHandle.asElement().evaluate(el => el.dataset.buildingId);
   const linkText = await newRowHandle.asElement().$eval('.building-link-text', el => el.textContent);
   check('building link contains the real buildingId and points at the training page',
     linkText.includes('recycling-training.html?b=' + buildingId), linkText);
+  check('the buildingId is a readable slug of the name, not a UUID (looked suspicious to trainees before)',
+    buildingId === 'test-tower-' + buildingName.replace('Test Tower ', '') && !/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(buildingId),
+    buildingId);
+
+  // --- Name-collision handling: a second building with the same name gets a distinct id ---
+  await page.evaluate(() => { document.getElementById('newBuildingName').value = ''; });
+  await page.type('#newBuildingName', buildingName);
+  await page.click('#addBuildingBtn');
+  await new Promise(r => setTimeout(r, 600));
+  const allBuildingIds = await page.$$eval('.building-row', els => els.map(el => el.dataset.buildingId));
+  const matchingIds = allBuildingIds.filter(id => id === buildingId || id.startsWith(buildingId + '-'));
+  check('a second building with the same name gets a distinct id, not overwriting the first',
+    matchingIds.length === 2 && new Set(matchingIds).size === 2, matchingIds.join(', '));
+
+  // Clean up the duplicate now, so every step below keeps operating on exactly one
+  // unambiguous "the" building named buildingName, as the rest of this flow assumes.
+  await page.evaluate(() => { window.confirm = () => true; });
+  const duplicateId = matchingIds.find(id => id !== buildingId);
+  if (duplicateId){
+    await page.$eval(`.building-row[data-building-id="${duplicateId}"] .delete-building-btn`, el => el.click());
+    await new Promise(r => setTimeout(r, 600));
+  }
+
+  // Both building-creation clicks above (and the delete) each re-rendered #buildingsList from
+  // scratch, so the newRowHandle captured earlier is stale/detached — re-fetch a live one.
+  newRowHandle = await page.evaluateHandle((name) => {
+    return [...document.querySelectorAll('.building-row')].find(r => r.querySelector('h3').textContent === name);
+  }, buildingName);
 
   const qrSvg = await newRowHandle.asElement().$eval('.building-qr svg', el => el.outerHTML).catch(() => null);
   check('QR code renders as a real SVG with content', Boolean(qrSvg) && qrSvg.length > 100, qrSvg ? qrSvg.length : 'none');
