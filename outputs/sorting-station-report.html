@@ -2530,16 +2530,17 @@ var qrcode = function() {
     <p id="authStatus">Sign in with an authorized account to load live results.</p>
     <div class="upload-actions">
       <button class="btn" id="signInBtn">Sign in with Google →</button>
+      <button class="btn secondary" id="showEmailSignInBtn">Sign in with email →</button>
       <button class="btn secondary" id="signOutBtn" style="display:none;">Sign out</button>
       <button class="btn secondary" id="loadSampleBtn">Load sample data (preview)</button>
     </div>
-    <form id="emailSignInForm" style="margin-top:16px;">
+    <form id="emailSignInForm" style="display:none; margin-top:16px;">
       <div class="filter-row">
         <label class="filter-field"><span>Email</span><input type="email" id="emailSignInEmail" autocomplete="username" required></label>
         <label class="filter-field"><span>Password</span><input type="password" id="emailSignInPassword" autocomplete="current-password" required></label>
       </div>
       <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
-        <button class="btn secondary" type="submit">Sign in with email →</button>
+        <button class="btn secondary" type="submit">Sign in →</button>
       </div>
     </form>
   </div>
@@ -3861,6 +3862,14 @@ try {
     }
   });
 
+  // Keeps the initial screen to just two clean buttons (matching the Google button) — the
+  // email/password fields only appear once someone actually says they want to use them.
+  document.getElementById('showEmailSignInBtn').addEventListener('click', () => {
+    document.getElementById('emailSignInForm').style.display = 'block';
+    document.getElementById('showEmailSignInBtn').style.display = 'none';
+    document.getElementById('emailSignInEmail').focus();
+  });
+
   // Firebase's own Email/Password sign-in — an alternative to Google that doesn't require the
   // person to own any external account at all. New admins are created by Sergio directly in
   // Firebase Console → Authentication → Users → Add user (no in-app "create account" flow —
@@ -3896,6 +3905,11 @@ try {
         isLiveData = false;
         allRows = []; currentRows = []; allAttempts = [];
         document.getElementById('authStatus').textContent = 'Sign in with an authorized account to load live results.';
+        // Reset the email form back to its collapsed state, and never leave a typed password
+        // sitting visible on screen after signing out.
+        document.getElementById('emailSignInForm').style.display = 'none';
+        document.getElementById('emailSignInForm').reset();
+        document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';
         document.getElementById('adminTabs').style.display = 'none';
         document.getElementById('buildingsSection').style.display = 'none';
         document.getElementById('buildingsList').innerHTML = '';

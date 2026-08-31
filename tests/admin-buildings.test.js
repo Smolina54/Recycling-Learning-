@@ -111,8 +111,10 @@ async function runFlow(page){
 
   check('the Google sign-in button is present',
     Boolean(await page.$('#signInBtn')));
-  check('an email/password sign-in form is present (no Microsoft button — dropped, unused)',
-    Boolean(await page.$('#emailSignInForm')) && !(await page.$('#signInMicrosoftBtn')));
+  check('an email/password sign-in option is present (no Microsoft button — dropped, unused)',
+    Boolean(await page.$('#showEmailSignInBtn')) && !(await page.$('#signInMicrosoftBtn')));
+  check('the email/password fields stay collapsed until asked for (clean initial screen — just two buttons)',
+    await page.$eval('#emailSignInForm', el => getComputedStyle(el).display === 'none'));
 
   const signInResult = await page.evaluate(async (email) => {
     try { await window.__testSignIn(email, 'test-password-123'); return 'ok'; }
@@ -449,6 +451,11 @@ async function runFlow(page){
   await new Promise(r => setTimeout(r, 500));
 
   // The real thing: sign in through the actual email/password form, not a test bypass.
+  // The form starts collapsed (just a "Sign in with email" button) until clicked.
+  await page.click('#showEmailSignInBtn');
+  await new Promise(r => setTimeout(r, 200));
+  check('the email/password form reveals after clicking its button (starts collapsed for a cleaner initial screen)',
+    await page.$eval('#emailSignInForm', el => getComputedStyle(el).display !== 'none'));
   await page.type('#emailSignInEmail', emailAdmin);
   await page.type('#emailSignInPassword', emailAdminPassword);
   await page.click('#emailSignInForm button[type=submit]');
