@@ -2403,15 +2403,20 @@ try {
       breakdownEl.appendChild(row);
     });
 
-    // One compact card per stream instead of one flat 25-row list — grouping by the stream
-    // each item was actually TESTED in (r.shownInPhase, not item.stream) matches the game
-    // mechanics: exactly 5 decoys are shown per phase, so this always yields 5 cards of 5.
-    // Correct ones are just an icon row (no text — nothing to explain there); wrong ones get
-    // a short "where it actually goes" + a 3-4 word reason (item.shortWhy), not the long
-    // paragraph from the pre-game detail panels — that would make this list long again.
+    // One compact card per stream, grouped by each item's REAL home stream (item.stream) —
+    // NOT by which phase it was decoy-tested in (r.shownInPhase). Grouping by test-phase
+    // originally meant e.g. the "Paper & Cardboard" card could show a phone or coffee grounds
+    // (real decoys used to test that bin, but not paper/cardboard themselves) — confusing, a
+    // real bug Sergio caught: "why is a phone showing up under Paper & Cardboard?". Grouping
+    // by the item's own true stream means the Paper & Cardboard card only ever shows real
+    // paper/cardboard items — every one of the 25 items has exactly one true stream, so this
+    // still always yields 5 cards of 5. Correct ones are just an icon row (no text — nothing
+    // to explain there); wrong ones show which (wrong) bin they got sorted into instead, plus
+    // a short 3-4 word reason (item.shortWhy) for why they actually belong in THIS card's
+    // stream — not the long paragraph from the pre-game detail panels.
     const reviewList = document.getElementById('reviewList');
-    reviewList.innerHTML = streams.map(stream => {
-      const streamResults = allResults.filter(r => r.shownInPhase === stream);
+    reviewList.innerHTML = streams.map(homeStream => {
+      const streamResults = allResults.filter(r => itemById(r.itemId).stream === homeStream);
       const correct = streamResults.filter(r => r.avoided);
       const wrong = streamResults.filter(r => !r.avoided);
 
@@ -2425,17 +2430,17 @@ try {
         return `<div class="review-wrong-item">
           <span class="item-thumb">${item.icon}</span>
           <span>
-            <span class="review-wrong-name">${item.name}</span> →
-            <span class="review-wrong-dest" style="color:var(--${item.stream})">${streamNames[item.stream]}</span><br>
+            <span class="review-wrong-name">${item.name}</span> — sorted into
+            <span class="review-wrong-dest" style="color:var(--${r.shownInPhase})">${streamNames[r.shownInPhase]}</span><br>
             <span class="review-wrong-reason">${item.shortWhy}</span>
           </span>
         </div>`;
       }).join('');
 
       return `
-        <div class="review-stream-card" style="border-left-color:var(--${stream})">
+        <div class="review-stream-card" style="border-left-color:var(--${homeStream})">
           <div class="review-stream-header">
-            <span class="review-stream-name">${streamNames[stream]}</span>
+            <span class="review-stream-name">${streamNames[homeStream]}</span>
             <span class="review-stream-score">${correct.length}/${streamResults.length}</span>
           </div>
           ${correctIconsHtml ? `<div class="review-correct-row">${correctIconsHtml}</div>` : ''}

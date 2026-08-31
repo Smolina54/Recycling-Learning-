@@ -210,6 +210,21 @@ async function runFlow(page){
   check('each stream card accounts for exactly 5 items (its 5 decoys)',
     cardCounts.every(n => n === 5), cardCounts.join(','));
 
+  // Real bug Sergio caught: cards were grouped by which phase an item was decoy-tested in,
+  // not by the item's own real category — so "Paper & Cardboard" could show a phone or coffee
+  // grounds (real decoys used to test that bin, not paper themselves). Confirm the fix: the
+  // Paper & Cardboard card only ever contains the 5 real paper/cardboard catalog items.
+  const REAL_PC_ITEM_NAMES = ['Flattened cardboard box', 'Stack of office paper', 'Used envelope', 'Folded newspaper', 'Cardboard tube'];
+  const pcCardItemNames = await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.review-stream-card')].find(c => c.querySelector('.review-stream-name').textContent === 'Paper & Cardboard');
+    const correctNames = [...card.querySelectorAll('.review-correct-row .item-thumb')].map(el => el.title);
+    const wrongNames = [...card.querySelectorAll('.review-wrong-name')].map(el => el.textContent);
+    return [...correctNames, ...wrongNames];
+  });
+  check('the Paper & Cardboard card only shows real paper/cardboard items (not a phone, coffee, etc.)',
+    pcCardItemNames.length === 5 && pcCardItemNames.every(n => REAL_PC_ITEM_NAMES.includes(n)),
+    pcCardItemNames.join(', '));
+
   const wrongReasons = await page.$$eval('#reviewList .review-wrong-reason', els => els.map(el => el.textContent.trim()));
   check('wrong items show a short reason text (not blank, not the long pre-game explanation)',
     wrongReasons.length === 0 || wrongReasons.every(t => t.length > 0 && t.length < 40),
