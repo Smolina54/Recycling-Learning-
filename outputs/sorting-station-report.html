@@ -3868,10 +3868,24 @@ try {
       document.getElementById('signOutBtn').style.display = user ? 'inline-flex' : 'none';
       if (user) loadLiveData();
       else {
+        // Real names/emails/scores were on screen the moment before this — signing out has to
+        // actually clear them, not just hide the Buildings tab. Previously reportSection (KPIs,
+        // Completed/Pending tables, the building/tenant breakdown) was left fully visible and
+        // populated after sign-out, which anyone at the same screen could still read.
         isLiveData = false;
+        allRows = []; currentRows = []; allAttempts = [];
         document.getElementById('authStatus').textContent = 'Sign in with an authorized Google account to load live results.';
         document.getElementById('adminTabs').style.display = 'none';
         document.getElementById('buildingsSection').style.display = 'none';
+        document.getElementById('buildingsList').innerHTML = '';
+        document.getElementById('reportSection').style.display = 'none';
+        document.getElementById('kpiRow').innerHTML = '';
+        document.getElementById('completedTable').innerHTML = '';
+        document.getElementById('pendingTable').innerHTML = '';
+        document.getElementById('groupTable').innerHTML = '';
+        document.getElementById('missedList').innerHTML = '';
+        document.getElementById('streamBars').innerHTML = '';
+        document.getElementById('trendChart').innerHTML = '';
         document.getElementById('tabReportsBtn').classList.add('active');
         document.getElementById('tabBuildingsBtn').classList.remove('active');
       }

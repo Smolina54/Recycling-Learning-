@@ -395,6 +395,18 @@ async function runFlow(page){
 
   const adminEmailsAfterRemove = await page.$$eval('#adminsList .tenant-name', els => els.map(el => el.textContent));
   check('the removed admin no longer appears in the list', !adminEmailsAfterRemove.includes(newAdminEmail), adminEmailsAfterRemove.join('|') || '(empty)');
+
+  // --- Sign out must actually clear real data from the screen, not just hide the Buildings tab ---
+  // (real bug: reportSection used to stay fully visible/populated with real names/emails/scores
+  // after signing out — anyone at the same screen afterward could still read it)
+  await page.click('#signOutBtn');
+  await new Promise(r => setTimeout(r, 500));
+  const reportSectionVisible = await page.$eval('#reportSection', el => getComputedStyle(el).display !== 'none');
+  check('signing out hides the Reports section entirely, not just the Buildings tab', !reportSectionVisible);
+  const kpiRowEmptyAfterSignOut = await page.$eval('#kpiRow', el => el.innerHTML.trim() === '');
+  check('signing out clears the KPI numbers, not just hides them', kpiRowEmptyAfterSignOut);
+  const completedTableEmptyAfterSignOut = await page.$eval('#completedTable', el => el.innerHTML.trim() === '');
+  check('signing out clears the Completed table\'s real names/emails', completedTableEmptyAfterSignOut);
 }
 
 async function finishAndReport(page, browser, consoleErrors, seedEnv){
