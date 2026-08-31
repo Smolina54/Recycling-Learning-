@@ -2523,17 +2523,25 @@ var qrcode = function() {
   <header class="top">
     <p class="eyebrow">Recycling Training · Client Report</p>
     <h1>Recycling knowledge, by the numbers.</h1>
-    <p class="sub">Sign in with an authorized Google account to see live results straight from Firestore — pass rates, weak streams, and the specific items people get wrong most often.</p>
+    <p class="sub">Sign in with an authorized account to see live results straight from Firestore — pass rates, weak streams, and the specific items people get wrong most often.</p>
   </header>
 
   <div class="upload-zone" id="authZone">
-    <p id="authStatus">Sign in with an authorized Google account to load live results.</p>
+    <p id="authStatus">Sign in with an authorized account to load live results.</p>
     <div class="upload-actions">
       <button class="btn" id="signInBtn">Sign in with Google →</button>
-      <button class="btn secondary" id="signInMicrosoftBtn">Sign in with Microsoft →</button>
       <button class="btn secondary" id="signOutBtn" style="display:none;">Sign out</button>
       <button class="btn secondary" id="loadSampleBtn">Load sample data (preview)</button>
     </div>
+    <form id="emailSignInForm" style="margin-top:16px;">
+      <div class="filter-row">
+        <label class="filter-field"><span>Email</span><input type="email" id="emailSignInEmail" autocomplete="username" required></label>
+        <label class="filter-field"><span>Password</span><input type="password" id="emailSignInPassword" autocomplete="current-password" required></label>
+      </div>
+      <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
+        <button class="btn secondary" type="submit">Sign in with email →</button>
+      </div>
+    </form>
   </div>
 
   <div class="admin-tabs" id="adminTabs" style="display:none;">
@@ -2664,7 +2672,7 @@ import {
   getFirestore, collection, getDoc, getDocs, deleteDoc, doc, setDoc, query, orderBy, limit, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
-  getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
   createUserWithEmailAndPassword, signInWithEmailAndPassword
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
@@ -3853,18 +3861,23 @@ try {
     }
   });
 
-  // Requires a one-time setup in Firebase Console (Authentication → Sign-in method → Microsoft)
-  // using an App Registration from Tradeflex's Microsoft Entra ID (Azure AD) tenant — someone
-  // with admin rights there needs to create it and hand over the Application ID + secret. Until
-  // that's done, this button will show a normal-looking Microsoft account picker but fail at the
-  // final step with an "operation not allowed" style error from Firebase, same as the Google
-  // button would have before its provider was enabled earlier this session.
-  document.getElementById('signInMicrosoftBtn').addEventListener('click', async () => {
+  // Firebase's own Email/Password sign-in — an alternative to Google that doesn't require the
+  // person to own any external account at all. New admins are created by Sergio directly in
+  // Firebase Console → Authentication → Users → Add user (no in-app "create account" flow —
+  // building one would need a second, isolated Firebase app instance or a Cloud Function, since
+  // the client SDK signs you in as whichever user you just created). Once created there, they
+  // still need to be added via the Admins panel (same /admins collection Google sign-in already
+  // uses) — isAllowedReviewer() only ever checks the resulting email, not how they authenticated.
+  document.getElementById('emailSignInForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
     if (!auth){ document.getElementById('authStatus').textContent = 'Firebase is not configured yet.'; return; }
-    try { await signInWithPopup(auth, new OAuthProvider('microsoft.com')); }
-    catch (err){
-      console.error('Microsoft sign-in failed:', err);
-      document.getElementById('authStatus').textContent = 'Sign-in failed or was cancelled.';
+    const email = document.getElementById('emailSignInEmail').value.trim();
+    const password = document.getElementById('emailSignInPassword').value;
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (err){
+      console.error('Email sign-in failed:', err);
+      document.getElementById('authStatus').textContent = 'Sign-in failed — check the email and password and try again.';
     }
   });
 
@@ -3882,7 +3895,7 @@ try {
         // populated after sign-out, which anyone at the same screen could still read.
         isLiveData = false;
         allRows = []; currentRows = []; allAttempts = [];
-        document.getElementById('authStatus').textContent = 'Sign in with an authorized Google account to load live results.';
+        document.getElementById('authStatus').textContent = 'Sign in with an authorized account to load live results.';
         document.getElementById('adminTabs').style.display = 'none';
         document.getElementById('buildingsSection').style.display = 'none';
         document.getElementById('buildingsList').innerHTML = '';

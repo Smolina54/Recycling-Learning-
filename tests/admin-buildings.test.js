@@ -109,8 +109,10 @@ async function runFlow(page){
   await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded' });
   await new Promise(r => setTimeout(r, 300));
 
-  check('a "Sign in with Microsoft" button is present alongside Google',
-    Boolean(await page.$('#signInMicrosoftBtn')));
+  check('the Google sign-in button is present',
+    Boolean(await page.$('#signInBtn')));
+  check('an email/password sign-in form is present (no Microsoft button — dropped, unused)',
+    Boolean(await page.$('#emailSignInForm')) && !(await page.$('#signInMicrosoftBtn')));
 
   const signInResult = await page.evaluate(async (email) => {
     try { await window.__testSignIn(email, 'test-password-123'); return 'ok'; }
@@ -423,6 +425,39 @@ async function runFlow(page){
   check('signing out clears the KPI numbers, not just hides them', kpiRowEmptyAfterSignOut);
   const completedTableEmptyAfterSignOut = await page.$eval('#completedTable', el => el.innerHTML.trim() === '');
   check('signing out clears the Completed table\'s real names/emails', completedTableEmptyAfterSignOut);
+
+  // --- Email/Password sign-in: Firebase's own auth, no external Google/Microsoft account needed ---
+  // Mirrors the real workflow: (1) owner grants a new admin by email, (2) that person's account
+  // gets created in Firebase (stands in for Sergio doing this in Console → Authentication →
+  // Users — there's no in-app "create account" flow by design), (3) they sign in for real
+  // through the actual email/password form on the page — not the __testSignIn bypass.
+  const emailAdmin = 'email-login-admin@example.com';
+  const emailAdminPassword = 'test-password-123';
+
+  await page.evaluate(async (email) => { await window.__testSignIn(email, 'test-password-123'); }, ALLOWED_EMAIL);
+  await new Promise(r => setTimeout(r, 1000));
+  await page.click('#tabBuildingsBtn');
+  await new Promise(r => setTimeout(r, 300));
+  await page.type('#newAdminEmail', emailAdmin);
+  await page.click('#addAdminBtn');
+  await new Promise(r => setTimeout(r, 600));
+
+  // Stand-in for Sergio creating this person's login in Firebase Console.
+  await page.evaluate(async (email, password) => { await window.__testSignIn(email, password); }, emailAdmin, emailAdminPassword);
+  await new Promise(r => setTimeout(r, 800));
+  await page.click('#signOutBtn');
+  await new Promise(r => setTimeout(r, 500));
+
+  // The real thing: sign in through the actual email/password form, not a test bypass.
+  await page.type('#emailSignInEmail', emailAdmin);
+  await page.type('#emailSignInPassword', emailAdminPassword);
+  await page.click('#emailSignInForm button[type=submit]');
+  await new Promise(r => setTimeout(r, 1200));
+
+  const authStatusAfterEmailSignIn = await page.$eval('#authStatus', el => el.textContent);
+  check('signing in through the real email/password form works for a Firestore-granted admin',
+    await page.$eval('#adminTabs', el => getComputedStyle(el).display !== 'none'),
+    authStatusAfterEmailSignIn);
 }
 
 async function finishAndReport(page, browser, consoleErrors, seedEnv){
