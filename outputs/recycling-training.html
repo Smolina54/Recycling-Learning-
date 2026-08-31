@@ -125,6 +125,12 @@
   .btn:disabled{opacity:0.35; cursor:not-allowed; transform:none;}
 
   /* Sorting station strip — signature element */
+  .preview-banner{
+    position:fixed; top:0; left:0; right:0; z-index:9999;
+    background:var(--ink); color:var(--paper); text-align:center;
+    font-family:var(--mono); font-size:12.5px; letter-spacing:0.03em;
+    padding:8px 12px;
+  }
   .station{
     display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:2px;
     margin-top:36px; border:1px solid var(--line); background:var(--line);
@@ -322,6 +328,8 @@
 </style>
 </head>
 <body>
+
+<div class="preview-banner" id="previewBanner" style="display:none;">Preview mode — nothing you do here is saved.</div>
 
 <section class="id-gate" id="idGate">
   <div class="id-card" id="idCardLoading">
@@ -715,6 +723,12 @@ try {
   // on old untagged docs.
   const PROGRAM_ID = 'recycling-sorting';
 
+  // ?preview=1 (from the admin report's "Preview" buttons) — the full real flow runs as
+  // normal, but nothing ever gets written to Firestore, so an admin trying it out never
+  // pollutes real completion data or drop-off stats.
+  const isPreviewMode = new URLSearchParams(window.location.search).get('preview') === '1';
+  if (isPreviewMode) document.getElementById('previewBanner').style.display = 'block';
+
   // ---------------- Identification gate ----------------
   const siteContext = {buildingId:'', buildingName:'', tenantId:'', tenantName:'', level:'', name:'', email:''};
   let tenantsCache = [];
@@ -745,8 +759,22 @@ try {
   }
 
   async function initIdGate(){
-    if (!db){ showInvalidLink(); return; }
     const buildingId = new URLSearchParams(window.location.search).get('b');
+
+    // The report's general "Preview the training →" button (not tied to any building) links
+    // here with ?preview=1 and no ?b= at all — there's no real building/tenant to fetch, so
+    // skip the gate entirely rather than show "link not recognised" for a link that was never
+    // meant to carry a building in the first place.
+    if (isPreviewMode && !buildingId){
+      siteContext.buildingId = 'preview'; siteContext.buildingName = 'Preview';
+      siteContext.tenantId = 'preview'; siteContext.tenantName = 'Preview';
+      siteContext.level = 'Preview'; siteContext.name = 'Preview'; siteContext.email = 'preview@example.com';
+      document.getElementById('idGate').style.display = 'none';
+      document.getElementById('mainApp').style.display = 'block';
+      return;
+    }
+
+    if (!db){ showInvalidLink(); return; }
     if (!buildingId){ showInvalidLink(); return; }
 
     try {
@@ -2251,7 +2279,7 @@ try {
   // Not shown to the trainee if it fails — unlike a lost final result, a missed
   // "started" ping isn't something they need to know about or retry.
   async function recordAttemptStarted(){
-    if (!db) return;
+    if (!db || isPreviewMode) return;
     try {
       await addDoc(collection(db, 'attempts'), {
         buildingId: siteContext.buildingId, buildingName: siteContext.buildingName,
@@ -2275,6 +2303,7 @@ try {
   });
 
   async function submitResults(payload){
+    if (isPreviewMode) return true; // nothing to save — report success so no warning banner shows
     try {
       await addDoc(collection(db, 'submissions'), payload);
       return true;

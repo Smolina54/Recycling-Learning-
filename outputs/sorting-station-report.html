@@ -2581,6 +2581,7 @@ var qrcode = function() {
     <div class="report-header-row">
       <h2 id="reportTitle">Overview</h2>
       <div class="source-note" id="sourceNote"></div>
+      <button class="btn secondary" id="previewTrainingBtn" style="margin-left:auto;">Preview the training →</button>
     </div>
 
     <div class="report-block" id="filterBlock" style="display:none;">
@@ -3438,6 +3439,7 @@ try {
         <div class="building-link-row">
           <code class="building-link-text">${link}</code>
           <button class="btn secondary copy-link-btn" data-link="${link}">Copy link →</button>
+          <button class="btn secondary preview-link-btn" data-link="${link}">Preview →</button>
         </div>
         <div class="building-qr" data-link="${link}"></div>
         <ul class="tenant-list">${tenantsHtml}</ul>
@@ -3730,6 +3732,12 @@ try {
       return;
     }
 
+    const previewBtn = e.target.closest('.preview-link-btn');
+    if (previewBtn){
+      window.open(`${previewBtn.dataset.link}&preview=1`, '_blank');
+      return;
+    }
+
     const copyBtn = e.target.closest('.copy-link-btn');
     if (copyBtn){
       try {
@@ -3925,6 +3933,12 @@ try {
   });
 
   document.getElementById('printBtn').addEventListener('click', () => window.print());
+
+  // No building/tenant to pick here — just "what does the training itself look like".
+  // recycling-training.html?preview=1 with no ?b= skips the id-gate entirely for this case.
+  document.getElementById('previewTrainingBtn').addEventListener('click', () => {
+    window.open(`${window.location.origin}/recycling-training.html?preview=1`, '_blank');
+  });
 })();
 </script>
 

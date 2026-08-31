@@ -213,6 +213,22 @@ async function runFlow(page){
   check('expanding it again shows the link/QR/tenant list once more',
     Boolean(await rowAfterExpand.$('.building-link-row')));
 
+  // --- Preview buttons: open the training in a new tab, tagged with &preview=1, never in the
+  // report's own tab. Stub window.open() to capture the URL instead of actually opening it. ---
+  await page.evaluate(() => { window.__openedUrls = []; window.open = (u) => { window.__openedUrls.push(u); return null; }; });
+  await rowAfterExpand.$eval('.preview-link-btn', el => el.click());
+  let previewUrls = await page.evaluate(() => window.__openedUrls);
+  check('per-building "Preview" button opens that building\'s real link with &preview=1 appended',
+    previewUrls.length === 1 && previewUrls[0].includes('recycling-training.html?b=') && previewUrls[0].endsWith('&preview=1'),
+    previewUrls.join(', '));
+
+  await page.evaluate(() => { window.__openedUrls = []; });
+  await page.$eval('#previewTrainingBtn', el => el.click());
+  previewUrls = await page.evaluate(() => window.__openedUrls);
+  check('the Overview "Preview the training" button opens the trainer with preview=1 and no building',
+    previewUrls.length === 1 && previewUrls[0].includes('recycling-training.html?preview=1') && !previewUrls[0].includes('?b='),
+    previewUrls.join(', '));
+
   // --- Search box: narrows the list by name, restores it when cleared ---
   await page.type('#buildingSearchInput', 'zzz-does-not-match-anything');
   await new Promise(r => setTimeout(r, 200));
