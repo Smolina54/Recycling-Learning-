@@ -196,15 +196,28 @@ async function runFlow(page){
   check('score percentage rendered on results screen', /^\d+%$/.test(scoreText), scoreText);
   const breakdownRows = await page.$$eval('#streamBreakdown .breakdown-row', els => els.length).catch(() => 0);
   check('per-stream breakdown rendered 5 rows', breakdownRows === 5, breakdownRows);
-  const reviewRows = await page.$$eval('#reviewList .review-item', els => els.length).catch(() => 0);
-  check('review list rendered 25 item rows', reviewRows === 25, reviewRows);
+  // Review list redesign (2026-08-28): one compact card per stream instead of one flat
+  // 25-row list — 5 cards, each covering exactly 5 decoys (correct ones as an icon-only row,
+  // wrong ones with a short "where it goes" + a 3-4 word reason).
+  const reviewCards = await page.$$eval('#reviewList .review-stream-card', els => els.length).catch(() => 0);
+  check('review list rendered 5 per-stream cards (not one flat 25-row list)', reviewCards === 5, reviewCards);
 
-  const reviewOrderClasses = await page.$$eval('#reviewList .review-item', els => els.map(el => (el.classList.contains('wrong') ? 'wrong' : 'right')));
-  const lastWrongIdx = reviewOrderClasses.lastIndexOf('wrong');
-  const firstRightIdx = reviewOrderClasses.indexOf('right');
-  check('review list shows mistakes before correct answers',
-    lastWrongIdx === -1 || firstRightIdx === -1 || lastWrongIdx < firstRightIdx,
-    reviewOrderClasses.join(','));
+  const cardCounts = await page.$$eval('#reviewList .review-stream-card', cards => cards.map(card => {
+    const correctIcons = card.querySelectorAll('.review-correct-row .item-thumb').length;
+    const wrongItems = card.querySelectorAll('.review-wrong-item').length;
+    return correctIcons + wrongItems;
+  }));
+  check('each stream card accounts for exactly 5 items (its 5 decoys)',
+    cardCounts.every(n => n === 5), cardCounts.join(','));
+
+  const wrongReasons = await page.$$eval('#reviewList .review-wrong-reason', els => els.map(el => el.textContent.trim()));
+  check('wrong items show a short reason text (not blank, not the long pre-game explanation)',
+    wrongReasons.length === 0 || wrongReasons.every(t => t.length > 0 && t.length < 40),
+    wrongReasons.join(' | '));
+
+  const correctRowHasNoText = await page.$eval('#reviewList', el =>
+    ![...el.querySelectorAll('.review-correct-row')].some(row => row.textContent.trim().length > 0));
+  check('correct items show only icons, no explanatory text next to them', correctRowHasNoText);
 
   // Real, valid data + real emulator + real rules -> the save should actually succeed this time.
   await new Promise(r => setTimeout(r, 500));
