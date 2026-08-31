@@ -125,6 +125,9 @@ async function runFlow(page){
   await new Promise(r => setTimeout(r, 200));
   const levelOptions = await page.$$eval('#idLevel option', opts => opts.map(o => o.value).filter(Boolean));
   check('level dropdown populated for the selected tenant (2 levels -> picker shown)', levelOptions.length === 2, levelOptions.join('|'));
+  const levelPreSelected = await page.$eval('#idLevel', el => el.value);
+  check('with multiple levels, none is silently pre-selected — the trainee must actually choose one',
+    levelPreSelected === '', `pre-selected value: "${levelPreSelected}"`);
   await page.select('#idLevel', 'Level 5');
   await page.click('#idForm button[type=submit]');
   await new Promise(r => setTimeout(r, 300));

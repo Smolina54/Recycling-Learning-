@@ -749,11 +749,19 @@ try {
   function populateLevelsForTenant(tenantId){
     const tenant = tenantsCache.find(t => t.id === tenantId);
     const levels = (tenant && tenant.levels) || [];
-    idLevelSelect.innerHTML = levels.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
     if (levels.length <= 1){
+      // Only one level (or none) — nothing to actually choose, auto-fill and hide the field,
+      // same as before.
+      idLevelSelect.innerHTML = levels.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
       idLevelField.style.display = 'none';
       idLevelSelect.value = levels[0] || '';
     } else {
+      // Multiple real levels to choose from — a plain <select> defaults to its first <option>
+      // selected, which silently picked a level for the person instead of making them choose
+      // one (a real bug Sergio caught testing a multi-level tenant). A disabled placeholder
+      // option, same pattern as the tenant <select> above, forces an actual choice.
+      idLevelSelect.innerHTML = '<option value="" disabled selected>Select your level…</option>' +
+        levels.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
       idLevelField.style.display = 'block';
     }
   }
