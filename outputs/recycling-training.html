@@ -785,6 +785,10 @@ try {
     // skip the gate entirely rather than show "link not recognised" for a link that was never
     // meant to carry a building in the first place.
     if (isPreviewMode && !buildingId){
+      itemOverrides = {}; hasOverrides = false;
+      applyEffectiveStreams(itemOverrides);
+      currentDecoyMap = decoyMap;
+      allResults = freshResults();
       siteContext.buildingId = 'preview'; siteContext.buildingName = 'Preview';
       siteContext.tenantId = 'preview'; siteContext.tenantName = 'Preview';
       siteContext.level = 'Preview'; siteContext.name = 'Preview'; siteContext.email = 'preview@example.com';
@@ -803,6 +807,12 @@ try {
       siteContext.buildingId = buildingId;
       siteContext.buildingName = buildingSnap.data().name || '';
       document.getElementById('idBuildingNameInline').textContent = siteContext.buildingName;
+
+      itemOverrides = buildingSnap.data().itemOverrides || {};
+      hasOverrides = Object.keys(itemOverrides).length > 0;
+      applyEffectiveStreams(itemOverrides);
+      currentDecoyMap = hasOverrides ? buildDecoyPlan() : decoyMap;
+      allResults = freshResults();
 
       const tenantsSnap = await getDocs(collection(db, 'buildings', buildingId, 'tenants'));
       tenantsCache = tenantsSnap.docs.map(d => ({id: d.id, ...d.data()}));
@@ -832,8 +842,6 @@ try {
     document.getElementById('mainApp').style.display = 'block';
     window.scrollTo(0,0);
   });
-
-  initIdGate();
 
   const streams = ['gw','mr','pc','og','ew'];
   const streamNames = {gw:'General Waste', mr:'Mixed Recycling', pc:'Paper & Cardboard', og:'Organics', ew:'E-Waste'};
@@ -880,7 +888,8 @@ try {
   function gameProgressFrac(){
     if (!gameStarted) return 0;
     if (document.getElementById('results').classList.contains('active')) return 1;
-    return (phaseIndex + sortedCount/5) / streams.length;
+    const phaseFrac = phaseCorrectTarget === 0 ? 1 : sortedCount / phaseCorrectTarget;
+    return (phaseIndex + phaseFrac) / streams.length;
   }
 
   function updateProgress(){
@@ -2091,6 +2100,9 @@ try {
       shortWhy:"Electronics won't compost" }
   ];
 
+  // Default, hand-curated decoy pairings — kept exactly as-is and used unmodified for any
+  // building with no itemOverrides, so the default experience never changes (see
+  // buildDecoyPlan() below for the per-building-override case).
   const decoyMap = {
     gw: ['mr-bottle','mr-jar','pc-box','og-banana','ew-battery'],
     mr: ['gw-pizza','pc-paper','pc-envelope','og-teabag','ew-cables'],
@@ -2098,6 +2110,37 @@ try {
     og: ['gw-mug','mr-tin','pc-newspaper','ew-toner','ew-mouse'],
     ew: ['gw-chips','gw-tissue','mr-tub','pc-tube','og-fish']
   };
+
+  const DEFAULT_STREAM_BY_ID = {};
+  items.forEach(it => { DEFAULT_STREAM_BY_ID[it.id] = it.stream; });
+
+  const DECOY_CAP = 5;
+  let itemOverrides = {};
+  let hasOverrides = false;
+  let currentDecoyMap = decoyMap;
+
+  // Applies a building's itemOverrides on top of each item's catalog default. `acceptable`
+  // is always [] until the ideal-vs-acceptable feature ships — kept here now so this code
+  // doesn't need to change again when it does.
+  function applyEffectiveStreams(overrides){
+    items.forEach(it => {
+      const ov = overrides[it.id];
+      it.stream = (ov && ov.stream) || DEFAULT_STREAM_BY_ID[it.id];
+      it.acceptable = (ov && ov.acceptable) || [];
+    });
+  }
+
+  // Only used for a building that actually has itemOverrides — the hand-curated decoyMap
+  // above can't generalise to arbitrary per-building item counts per stream. Deterministic
+  // (sorted by id, not random) so every trainee at the same building sees the same test.
+  function buildDecoyPlan(){
+    const plan = {};
+    streams.forEach(stream => {
+      const pool = items.filter(it => it.stream !== stream && !it.acceptable.includes(stream));
+      plan[stream] = pool.slice().sort((a,b) => a.id.localeCompare(b.id)).slice(0, DECOY_CAP).map(it => it.id);
+    });
+    return plan;
+  }
 
   function itemById(id){ return items.find(it => it.id === id); }
 
@@ -2113,7 +2156,7 @@ try {
   function freshResults(){
     const arr = [];
     streams.forEach(stream => {
-      decoyMap[stream].forEach(id => arr.push({itemId:id, shownInPhase:stream, avoided:true, wrongStream:null}));
+      currentDecoyMap[stream].forEach(id => arr.push({itemId:id, shownInPhase:stream, avoided:true, wrongStream:null}));
     });
     return arr;
   }
@@ -2121,6 +2164,7 @@ try {
   let allResults = freshResults();
   let phaseIndex = 0;
   let sortedCount = 0;
+  let phaseCorrectTarget = 5;
   let phaseLocked = false;
 
   const itemBoard = document.getElementById('itemBoard');
@@ -2177,7 +2221,7 @@ try {
   function handleDrop(card, item){
     if (phaseLocked || card.dataset.resolved) return;
     const targetStream = streams[phaseIndex];
-    const correct = item.stream === targetStream;
+    const correct = item.stream === targetStream || item.acceptable.includes(targetStream);
 
     card.style.transition = 'none';
     card.style.transform = 'translate(0,0)';
@@ -2187,10 +2231,10 @@ try {
       flashBin(true);
       collectIntoBin(card, item);
       sortedCount++;
-      document.getElementById('phaseCounter').textContent = `Sorted ${sortedCount} of 5`;
+      document.getElementById('phaseCounter').textContent = `Sorted ${sortedCount} of ${phaseCorrectTarget}`;
       showFeedback(item, true);
       updateProgress();
-      if (sortedCount === 5) completePhase();
+      if (sortedCount === phaseCorrectTarget) completePhase();
     } else {
       card.dataset.resolved = 'wrong'; // stop this card from responding to further drops/keys
       flashBin(false);
@@ -2270,8 +2314,8 @@ try {
   }
 
   function buildBoard(stream){
-    const correct = items.filter(it => it.stream === stream);
-    const decoys = decoyMap[stream].map(itemById);
+    const correct = items.filter(it => it.stream === stream || it.acceptable.includes(stream));
+    const decoys = currentDecoyMap[stream].map(itemById);
     return shuffle([...correct, ...decoys]);
   }
 
@@ -2295,9 +2339,10 @@ try {
     sortedCount = 0;
     phaseLocked = false;
     const stream = streams[idx];
+    phaseCorrectTarget = items.filter(it => it.stream === stream || it.acceptable.includes(stream)).length;
 
     document.getElementById('phaseLabel').textContent = `Phase ${idx+1} of 5 — ${streamNames[stream]}`;
-    document.getElementById('phaseCounter').textContent = 'Sorted 0 of 5';
+    document.getElementById('phaseCounter').textContent = `Sorted 0 of ${phaseCorrectTarget}`;
     phaseBin.dataset.stream = stream;
     document.getElementById('phaseBinIcon').style.cssText = `background:var(--${stream}-tint); border:2px solid var(--${stream}); color:var(--${stream});`;
     document.getElementById('phaseBinIcon').innerHTML = binIcons[stream];
@@ -2309,6 +2354,10 @@ try {
 
     renderBoard(buildBoard(stream));
     updateProgress();
+    // A building with no items assigned to this stream still runs the phase (same 25-item
+    // total, same 5 phases for everyone) — there's just nothing to collect, only decoys to
+    // avoid, so the phase is immediately clearable.
+    if (phaseCorrectTarget === 0) completePhase();
   }
 
   nextPhaseBtn.addEventListener('click', () => {
@@ -2330,6 +2379,7 @@ try {
         tenantId: siteContext.tenantId, tenantName: siteContext.tenantName,
         level: siteContext.level, name: siteContext.name, email: siteContext.email,
         programId: PROGRAM_ID,
+        itemOverridesSnapshot: itemOverrides,
         startedAt: serverTimestamp()
       });
     } catch (err){
@@ -2468,6 +2518,7 @@ try {
       name: siteContext.name,
       email: siteContext.email,
       programId: PROGRAM_ID,
+      itemOverridesSnapshot: itemOverrides,
       score: pct,
       avoided: avoidedCount,
       total,
@@ -2496,6 +2547,12 @@ try {
 
   updateProgress();
   updateGameLock();
+
+  // Called last, now that every module-level const/let it touches (items, decoyMap,
+  // itemOverrides, allResults, etc.) is already initialized — the preview-mode branch
+  // below returns synchronously (no await), so it would hit those before they existed
+  // if this were called any earlier in the script (as it originally was).
+  initIdGate();
 })();
 </script>
 
