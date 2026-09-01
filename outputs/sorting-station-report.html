@@ -2402,6 +2402,35 @@ var qrcode = function() {
     background:var(--line); padding:3px 9px; border-radius:20px; flex-shrink:0;
   }
   .building-header-actions{display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;}
+  .custom-config-badge{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:0.03em; text-transform:uppercase;
+    background:var(--amber-bg); color:var(--amber-ink); border:1px solid var(--amber-line);
+    padding:3px 8px; border-radius:20px; flex-shrink:0;
+  }
+  .items-editor{margin:18px 0; padding:18px; background:var(--paper); border:1px solid var(--line); border-radius:var(--radius);}
+  .items-editor-summary{font-size:13px; color:var(--ink-soft); margin-bottom:14px;}
+  .quick-merge-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--line);}
+  .quick-merge-row select{
+    font-family:var(--body); font-size:13px; padding:6px 8px; border:1.5px solid var(--line);
+    background:var(--panel); border-radius:var(--radius); color:var(--ink);
+  }
+  .items-stream-section{margin-bottom:22px;}
+  .items-stream-section:last-child{margin-bottom:0;}
+  .items-stream-head{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
+  .items-stream-swatch{width:10px; height:22px; flex-shrink:0;}
+  .items-stream-head h4{margin:0; font-size:14px; text-transform:uppercase; letter-spacing:0.02em;}
+  .items-card-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:10px;}
+  .items-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:10px 10px 8px; display:flex; flex-direction:column; gap:6px; font-size:12.5px;
+  }
+  .items-card-name{font-weight:600; line-height:1.25;}
+  .items-card select{
+    font-family:var(--body); font-size:12px; padding:5px 6px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink);
+  }
+  .items-editor-actions{display:flex; gap:8px; margin-top:20px;}
+  .items-editor-error{color:var(--gw); font-size:13px; margin:10px 0 0;}
   .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
   .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
   .building-edit-row input{flex:1; min-width:160px;}
@@ -2825,12 +2854,15 @@ try {
   function submissionToRow(id, data){
     const breakdown = data.breakdown || {};
     const items = data.items || {};
+    let itemOverridesSnapshot = {};
+    try { itemOverridesSnapshot = JSON.parse(data.itemOverridesSnapshot || '{}'); } catch { itemOverridesSnapshot = {}; }
     const row = {
       _id: id,
       building: data.buildingName || '', tenant: data.tenantName || '', level: data.level || '',
       name: data.name || '', email: data.email || '', programId: data.programId || '',
       score: data.score, avoided: data.avoided, total: data.total,
       duration_seconds: data.duration_seconds, device_type: data.device_type,
+      _itemOverrides: itemOverridesSnapshot,
       timestamp: (data.timestamp && typeof data.timestamp.toDate === 'function') ? data.timestamp.toDate().toISOString() : (data.timestamp || null)
     };
     streams.forEach(s => {
@@ -2854,7 +2886,7 @@ try {
   function rowsToCSV(rows){
     if (!rows.length) return '';
     const cols = new Set();
-    rows.forEach(r => Object.keys(r).forEach(k => { if (k !== '_id') cols.add(k); }));
+    rows.forEach(r => Object.keys(r).forEach(k => { if (k !== '_id' && k !== '_itemOverrides') cols.add(k); }));
     const headers = [...cols];
     const escape = (v) => {
       if (v === undefined || v === null) return '';
@@ -3254,13 +3286,20 @@ try {
       </div>
     `).join('');
 
-    // Most commonly missed items
+    // Most commonly missed items. Labels each item by the stream it actually tested as in
+    // the most recent contributing submission (its itemOverridesSnapshot), not always the
+    // global catalog default — a building with a custom config would otherwise show the
+    // wrong bin here (e.g. still "Paper & Cardboard" for a building that redirected it to
+    // Mixed Recycling). Falls back to the catalog default when a row has no override for it.
     const itemAgg = Object.keys(catalog).map(id => {
       const col = 'item_' + id;
-      const vals = rows.map(r => r[col]).filter(v => typeof v === 'number' && !isNaN(v));
-      if (!vals.length) return null;
-      const missRate = Math.round((1 - vals.reduce((a,b)=>a+b,0)/vals.length) * 100);
-      return {id, missRate, name: catalog[id].name, stream: catalog[id].stream};
+      const rowsWithItem = rows.filter(r => typeof r[col] === 'number' && !isNaN(r[col]));
+      if (!rowsWithItem.length) return null;
+      const missRate = Math.round((1 - rowsWithItem.reduce((a,r)=>a+r[col],0)/rowsWithItem.length) * 100);
+      const mostRecent = rowsWithItem.reduce((a,b) => (a.timestamp || '') > (b.timestamp || '') ? a : b);
+      const ov = mostRecent._itemOverrides && mostRecent._itemOverrides[id];
+      const stream = (ov && ov.stream) || catalog[id].stream;
+      return {id, missRate, name: catalog[id].name, stream};
     }).filter(Boolean).sort((a,b) => b.missRate - a.missRate).slice(0, 8);
 
     document.getElementById('missedList').innerHTML = itemAgg.map((it, i) => `
@@ -3343,6 +3382,91 @@ try {
   let buildingsCache = [];
   let editingBuildingId = null;
   let editingTenant = null; // {buildingId, tenantId}
+  let editingItemsBuildingId = null;
+  let draftItemOverrides = null; // {itemId: {stream}}, only while editingItemsBuildingId is set
+  let itemsEditorError = '';
+  // Must match recycling-training.html's DECOY_CAP — every stream needs at least this many
+  // items with a DIFFERENT effective stream available to draw decoys from (see validateDraftOverrides()).
+  const DECOY_CAP = 5;
+
+  function effectiveStreamInDraft(itemId){
+    const ov = draftItemOverrides && draftItemOverrides[itemId];
+    return (ov && ov.stream) || catalog[itemId].stream;
+  }
+
+  // Guarantees the game's decoy generator can always find DECOY_CAP genuinely-wrong items
+  // for every phase, for any config that can actually be saved — no stream may be the
+  // effective home of more than 25-DECOY_CAP items, or the streams pointing elsewhere
+  // would have fewer than DECOY_CAP items left to draw decoys from.
+  function validateDraftOverrides(){
+    const claimed = {};
+    streams.forEach(s => { claimed[s] = 0; });
+    Object.keys(catalog).forEach(id => { claimed[effectiveStreamInDraft(id)]++; });
+    const maxClaimed = Object.keys(catalog).length - DECOY_CAP;
+    for (const s of streams){
+      if (claimed[s] > maxClaimed){
+        return `Too many items are assigned to ${streamNames[s]} — at least ${DECOY_CAP} items must stay outside it so the game always has enough decoys for every other stream's phase.`;
+      }
+    }
+    return '';
+  }
+
+  function activeStreamsSummary(){
+    const claimed = {};
+    streams.forEach(s => { claimed[s] = 0; });
+    Object.keys(catalog).forEach(id => { claimed[effectiveStreamInDraft(id)]++; });
+    const active = streams.filter(s => claimed[s] > 0);
+    const empty = streams.filter(s => claimed[s] === 0);
+    let text = `Active bins for this building: ${active.map(s => streamNames[s]).join(', ')} (${active.length} of ${streams.length}).`;
+    if (empty.length){
+      text += ` ${empty.map(s => streamNames[s]).join(', ')} — no items here, won't get a game phase to sort into, but the walkthrough panel stays visible as general info.`;
+    }
+    return text;
+  }
+
+  function renderItemStreamsEditorHtml(){
+    const grouped = {};
+    streams.forEach(s => { grouped[s] = []; });
+    Object.keys(catalog).forEach(id => { grouped[effectiveStreamInDraft(id)].push(id); });
+
+    const sectionsHtml = streams.map(s => {
+      const ids = grouped[s].slice().sort((a,b) => catalog[a].name.localeCompare(catalog[b].name));
+      const cardsHtml = ids.map(id => `
+        <div class="items-card">
+          <span class="items-card-name">${esc(catalog[id].name)}</span>
+          <select class="item-stream-select" data-item-id="${id}">
+            ${streams.map(opt => `<option value="${opt}"${opt === s ? ' selected' : ''}>${streamNames[opt]}</option>`).join('')}
+          </select>
+        </div>`).join('');
+      return `
+        <div class="items-stream-section">
+          <div class="items-stream-head">
+            <span class="items-stream-swatch" style="background:var(--${s});"></span>
+            <h4>${streamNames[s]} <span class="block-sub" style="font-weight:400;">(${ids.length})</span></h4>
+          </div>
+          <div class="items-card-grid">${cardsHtml || '<p class="block-sub">Nothing here for this building.</p>'}</div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="items-editor">
+        <p class="items-editor-summary">${activeStreamsSummary()}</p>
+        <div class="quick-merge-row">
+          <span class="block-sub">Merge stream</span>
+          <select class="quick-merge-from">${streams.map(s => `<option value="${s}">${streamNames[s]}</option>`).join('')}</select>
+          <span class="block-sub">into</span>
+          <select class="quick-merge-to">${streams.map(s => `<option value="${s}">${streamNames[s]}</option>`).join('')}</select>
+          <button type="button" class="btn secondary quick-merge-btn">Merge</button>
+        </div>
+        ${sectionsHtml}
+        ${itemsEditorError ? `<p class="items-editor-error">${esc(itemsEditorError)}</p>` : ''}
+        <div class="items-editor-actions">
+          <button class="btn save-items-btn">Save</button>
+          <button class="btn secondary reset-items-btn">Reset to default</button>
+          <button class="btn secondary cancel-items-btn">Cancel</button>
+        </div>
+      </div>`;
+  }
   let buildingSearchTerm = '';
   // Collapsed by default — with dozens of real buildings (some with 20+ tenants each) showing
   // every tenant/link/QR for every building at once made the tab unusably long. A building
@@ -3385,6 +3509,7 @@ try {
       return {
         id: d.id,
         name: d.data().name || '(untitled)',
+        itemOverrides: d.data().itemOverrides || {},
         tenants: tenantsSnap.docs.map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [] })),
       };
     }));
@@ -3402,7 +3527,7 @@ try {
     }
     container.innerHTML = buildings.map(b => {
       const link = `${window.location.origin}/recycling-training.html?b=${b.id}`;
-      const isExpanded = expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id);
+      const isExpanded = expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id) || editingItemsBuildingId === b.id;
       const headerHtml = editingBuildingId === b.id
         ? `<div class="building-edit-row">
             <input type="text" class="edit-building-name-input" value="${esc(b.name)}">
@@ -3413,7 +3538,9 @@ try {
             <button type="button" class="building-toggle-btn" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
             <h3>${esc(b.name)}</h3>
             <span class="building-tenant-count">${b.tenants.length} tenant${b.tenants.length === 1 ? '' : 's'}</span>
+            ${Object.keys(b.itemOverrides || {}).length ? '<span class="custom-config-badge">Custom bins</span>' : ''}
             <div class="building-header-actions">
+              <button class="btn secondary configure-items-btn">Configure bins</button>
               <button class="btn secondary edit-building-btn">Edit name</button>
               <button class="btn secondary delete-building-btn danger-btn">Delete building</button>
             </div>
@@ -3451,6 +3578,7 @@ try {
           <button class="btn secondary preview-link-btn" data-link="${link}">Preview →</button>
         </div>
         <div class="building-qr" data-link="${link}"></div>
+        ${editingItemsBuildingId === b.id ? renderItemStreamsEditorHtml() : ''}
         <ul class="tenant-list">${tenantsHtml}</ul>
         <div class="filter-row">
           <label class="filter-field"><span>Tenant name</span><input type="text" class="new-tenant-name"></label>
@@ -3630,6 +3758,67 @@ try {
       if (expandedBuildingIds.has(buildingId)) expandedBuildingIds.delete(buildingId);
       else expandedBuildingIds.add(buildingId);
       refreshBuildingsView();
+      return;
+    }
+
+    const configureItemsBtn = e.target.closest('.configure-items-btn');
+    if (configureItemsBtn){
+      const buildingId = configureItemsBtn.closest('.building-row').dataset.buildingId;
+      const building = buildingsCache.find(b => b.id === buildingId);
+      editingItemsBuildingId = buildingId;
+      draftItemOverrides = JSON.parse(JSON.stringify((building && building.itemOverrides) || {}));
+      itemsEditorError = '';
+      refreshBuildingsView();
+      return;
+    }
+
+    const cancelItemsBtn = e.target.closest('.cancel-items-btn');
+    if (cancelItemsBtn){
+      editingItemsBuildingId = null;
+      draftItemOverrides = null;
+      itemsEditorError = '';
+      refreshBuildingsView();
+      return;
+    }
+
+    const resetItemsBtn = e.target.closest('.reset-items-btn');
+    if (resetItemsBtn){
+      draftItemOverrides = {};
+      itemsEditorError = '';
+      refreshBuildingsView();
+      return;
+    }
+
+    const quickMergeBtn = e.target.closest('.quick-merge-btn');
+    if (quickMergeBtn){
+      const row = quickMergeBtn.closest('.items-editor');
+      const fromStream = row.querySelector('.quick-merge-from').value;
+      const toStream = row.querySelector('.quick-merge-to').value;
+      if (fromStream === toStream){ alert('Choose two different streams to merge.'); return; }
+      Object.keys(catalog).forEach(id => {
+        if (effectiveStreamInDraft(id) !== fromStream) return;
+        if (toStream === catalog[id].stream) delete draftItemOverrides[id];
+        else draftItemOverrides[id] = { stream: toStream };
+      });
+      itemsEditorError = '';
+      refreshBuildingsView();
+      return;
+    }
+
+    const saveItemsBtn = e.target.closest('.save-items-btn');
+    if (saveItemsBtn){
+      const err = validateDraftOverrides();
+      if (err){ itemsEditorError = err; refreshBuildingsView(); return; }
+      try {
+        await setDoc(doc(db, 'buildings', editingItemsBuildingId), { itemOverrides: draftItemOverrides }, { merge: true });
+        editingItemsBuildingId = null;
+        draftItemOverrides = null;
+        itemsEditorError = '';
+        await loadBuildings();
+      } catch (err2){
+        console.error('Failed to save item-stream configuration:', err2);
+        alert('Failed to save — check the console for details.');
+      }
       return;
     }
 
@@ -3814,6 +4003,17 @@ try {
   });
 
   document.getElementById('buildingsList').addEventListener('change', async (e) => {
+    const itemStreamSelect = e.target.closest('.item-stream-select');
+    if (itemStreamSelect){
+      const itemId = itemStreamSelect.dataset.itemId;
+      const newStream = itemStreamSelect.value;
+      if (newStream === catalog[itemId].stream) delete draftItemOverrides[itemId];
+      else draftItemOverrides[itemId] = { stream: newStream };
+      itemsEditorError = '';
+      refreshBuildingsView();
+      return;
+    }
+
     const levelTypeSelect = e.target.closest('.level-type-select');
     if (levelTypeSelect){
       const row = levelTypeSelect.closest('.level-row');
