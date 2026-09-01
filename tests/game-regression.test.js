@@ -180,14 +180,29 @@ async function runFlow(page){
   await new Promise(r => setTimeout(r, 300));
 
   let phasesCompleted = 1;
+  let staleIconLeakedAnywhere = false;
   for (let phase = 1; phase < 5; phase++){
     const reachedFive = await resolvePhase(page);
     if (!reachedFive) break;
     phasesCompleted++;
     await page.click('#nextPhaseBtn');
+    // Deliberately short — resolvePhase() returns the instant the 5th correct drop completes
+    // the phase, which is well before that drop's 420ms fly-to-bin animation finishes. This is
+    // the exact real race that used to leak a stray icon into the next phase's tray if its
+    // delayed DOM mutation fired after startPhase() had already cleared #binCollected for the
+    // new phase (fixed via phaseGeneration in collectIntoBin()). Only applies to phase 1-3's
+    // transitions here — phase 4 (the last one) clicks "See results" instead of starting a new
+    // phase, so #binCollected is never cleared for it and this check doesn't apply there.
+    if (phase < 4){
+      await new Promise(r => setTimeout(r, 60));
+      const rightAfterTransition = await page.$$eval('#binCollected .collected-icon', els => els.length);
+      if (rightAfterTransition !== 0) staleIconLeakedAnywhere = true;
+    }
     await new Promise(r => setTimeout(r, 300));
   }
   check('all 5 phases reached 5/5 and advanced', phasesCompleted === 5, phasesCompleted);
+  check('no stale collected-icon from the previous phase\'s in-flight animation leaks into a new phase\'s tray',
+    !staleIconLeakedAnywhere);
 
   await new Promise(r => setTimeout(r, 300));
   check('results screen is active after the 5th phase',

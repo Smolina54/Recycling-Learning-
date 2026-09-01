@@ -2231,6 +2231,7 @@ try {
   let sortedCount = 0;
   let phaseCorrectTarget = 5;
   let phaseLocked = false;
+  let phaseGeneration = 0; // bumped on every startPhase() — see collectIntoBin()
 
   const itemBoard = document.getElementById('itemBoard');
   const gameFeedback = document.getElementById('gameFeedback');
@@ -2269,8 +2270,14 @@ try {
     card.style.transition = 'transform .4s cubic-bezier(.3,.6,.4,1), opacity .4s ease';
     card.style.transform = `translate(${dx}px, ${dy}px) scale(.2)`;
     card.style.opacity = '0';
+    // Tag this animation with the phase it was collected in. If the phase has already moved
+    // on by the time this timeout fires (a very fast trainee, or a test clicking through
+    // faster than the 420ms animation), the collected-icon tray has already been cleared and
+    // repopulated for the NEW phase — appending here would leak a stray icon into it.
+    const myPhaseGeneration = phaseGeneration;
     setTimeout(() => {
       card.remove();
+      if (myPhaseGeneration !== phaseGeneration) return;
       const mini = document.createElement('span');
       mini.className = 'collected-icon';
       mini.innerHTML = item.icon;
@@ -2407,6 +2414,7 @@ try {
   }
 
   function startPhase(idx){
+    phaseGeneration++;
     phaseIndex = idx;
     sortedCount = 0;
     phaseLocked = false;
