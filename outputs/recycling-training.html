@@ -596,13 +596,12 @@
           <h2>E-Waste</h2>
         </div>
       </div>
-      <p class="detail-desc">Batteries and electronics contain materials that are dangerous in landfill and valuable when recovered properly. These never go in a general bin — they go to a dedicated collection point.</p>
+      <p class="detail-desc">Electronics contain materials that are dangerous in landfill and valuable when recovered properly. These never go in a general bin — they go to this dedicated E-Waste point.</p>
       <div class="building-note" data-stream="ew"></div>
       <div class="rule-grid">
         <div class="rule-card yes">
           <h3>✓ Goes in</h3>
           <ul>
-            <li>Batteries — all types</li>
             <li>Cables, chargers, adaptors</li>
             <li>Phones, laptops, small electronics</li>
             <li>Printer and toner cartridges</li>
@@ -611,6 +610,7 @@
         <div class="rule-card no">
           <h3>✕ Never goes in</h3>
           <ul>
+            <li>Batteries — need their own dedicated battery point, not this one (ask your Waste Champion or Building Management where it is)</li>
             <li>Any general waste or recycling bin</li>
             <li>Bulk furniture or large appliances (arrange separate pickup)</li>
           </ul>
@@ -1891,7 +1891,7 @@ try {
       shortWhy:"Food scraps, not electronics" },
 
     // E-Waste
-    { id:'ew-battery', name:'Dead battery', stream:'ew',
+    { id:'ew-battery', name:'Dead battery', stream:'ew', noCorrectBin:true,
       icon:`<svg viewBox="0 0 128 128"><g>
 	<path style="fill:#8DCC47;" d="M34.02,20.35v88.57c0,7.92,13.42,14.34,29.98,14.34c16.56,0,29.98-6.42,29.98-14.34V20.35H34.02z"/>
 	<path style="fill:#9EE350;" d="M94,20.36c0,9.44-15.79,15.37-29.98,15.37c-13.82,0-29.02-5.96-29.98-15.37
@@ -1920,8 +1920,8 @@ try {
 		c-0.08-0.28-0.07-0.97-0.43-0.32c-0.35,0.63-0.7,1.28-1.05,1.9c-0.9,1.58-0.12,3.33,1.03,4.45c2.01,1.95,5.13,2.85,8.08,2.85h0h0
 		c2.95,0,6.07-0.9,8.08-2.85C73.24,18.33,74.01,16.58,73.11,15.01z"/>
 </g></svg>`,
-      explain:"Batteries can spark fires in waste collection trucks and contain materials that need to be recovered separately — they always need a dedicated collection point, never an ordinary bin.",
-      shortWhy:"Fire risk in trucks" },
+      explain:"Batteries need their own dedicated collection point — separate from the general E-Waste point used for cables, phones, and other electronics. Mixing them in risks a fire in a collection bin or truck.",
+      shortWhy:"Needs its own battery point" },
     { id:'ew-cables', name:'Tangled cables & charger', stream:'ew',
       icon:`<svg viewBox="0 0 128 128"><g>
 	<g>
@@ -2121,12 +2121,18 @@ try {
   // Default, hand-curated decoy pairings — kept exactly as-is and used unmodified for any
   // building with no itemOverrides, so the default experience never changes (see
   // buildDecoyPlan() below for the per-building-override case).
+  // gw has 4 decoys and ew has 6 — not a typo. ew-battery is a noCorrectBin item (batteries
+  // need their own dedicated point, not any of the 5 streams) and is deliberately tested as a
+  // decoy in ITS OWN nominal stream (ew) instead of gw, since "would you wrongly put a battery
+  // in the general E-Waste bin" is the real question, not "in general waste". The total across
+  // all 5 phases is still exactly 25 — that's the invariant that actually matters for score
+  // comparability, not an equal split per phase.
   const decoyMap = {
-    gw: ['mr-bottle','mr-jar','pc-box','og-banana','ew-battery'],
+    gw: ['mr-bottle','mr-jar','pc-box','og-banana'],
     mr: ['gw-pizza','pc-paper','pc-envelope','og-teabag','ew-cables'],
     pc: ['gw-cup','mr-can','og-apple','og-coffee','ew-phone'],
     og: ['gw-mug','mr-tin','pc-newspaper','ew-toner','ew-mouse'],
-    ew: ['gw-chips','gw-tissue','mr-tub','pc-tube','og-fish']
+    ew: ['gw-chips','gw-tissue','mr-tub','pc-tube','og-fish','ew-battery']
   };
 
   const DEFAULT_STREAM_BY_ID = {};
@@ -2155,7 +2161,10 @@ try {
   function buildDecoyPlan(){
     const plan = {};
     streams.forEach(stream => {
-      const pool = items.filter(it => it.stream !== stream && !it.acceptable.includes(stream));
+      // A noCorrectBin item is a valid decoy for EVERY stream, including its own nominal one
+      // (buildBoard() already excludes it from ever being that stream's correct pile) — it has
+      // no real home to be naturally excluded from testing itself against.
+      const pool = items.filter(it => it.noCorrectBin || (it.stream !== stream && !it.acceptable.includes(stream)));
       plan[stream] = pool.slice().sort((a,b) => a.id.localeCompare(b.id)).slice(0, DECOY_CAP).map(it => it.id);
     });
     return plan;
@@ -2250,7 +2259,10 @@ try {
     // Three real outcomes, but only two ever get stored (see handleDrop) — "acceptable but
     // not ideal" is purely a feedback-text distinction, never a different scored result.
     let text;
-    if (!correct){
+    if (item.noCorrectBin){
+      // "Belongs in [stream]" would be actively wrong here — there is no correct one of the 5.
+      text = `<span><b>Not quite.</b> ${item.explain}</span>`;
+    } else if (!correct){
       text = `<span><b>Not quite</b> — belongs in ${streamNames[item.stream]}. ${item.explain}</span>`;
     } else if (targetStream !== item.stream){
       text = `<span><b>Correct — this works too.</b> ${streamNames[item.stream]} is the best fit for this item where available. ${item.explain}</span>`;
@@ -2300,7 +2312,10 @@ try {
   function handleDrop(card, item){
     if (phaseLocked || card.dataset.resolved) return;
     const targetStream = streams[phaseIndex];
-    const correct = item.stream === targetStream || item.acceptable.includes(targetStream);
+    // noCorrectBin items are never correct anywhere, even in their own nominal stream (e.g. a
+    // battery dropped into E-Waste — its own "category" for review/colour purposes — is still
+    // wrong, since the real correct answer, a dedicated battery point, isn't one of the 5 bins).
+    const correct = !item.noCorrectBin && (item.stream === targetStream || item.acceptable.includes(targetStream));
 
     card.style.transition = 'none';
     card.style.transform = 'translate(0,0)';
@@ -2393,7 +2408,10 @@ try {
   }
 
   function buildBoard(stream){
-    const correct = items.filter(it => it.stream === stream || it.acceptable.includes(stream));
+    // noCorrectBin items (e.g. batteries — real collection point is separate from every one
+    // of the 5 streams, not represented here) never belong in ANY phase's correct pile, no
+    // matter which stream is asking — they only ever appear as decoys (see currentDecoyMap).
+    const correct = items.filter(it => !it.noCorrectBin && (it.stream === stream || it.acceptable.includes(stream)));
     const decoys = currentDecoyMap[stream].map(itemById);
     return shuffle([...correct, ...decoys]);
   }
@@ -2407,7 +2425,10 @@ try {
       card.tabIndex = 0;
       card.setAttribute('role', 'button');
       card.setAttribute('aria-label', item.name);
-      card.innerHTML = `<span class="item-icon">${item.icon}</span><span class="item-name">${item.name}</span><span class="reveal-badge" style="color:var(--${item.stream})">→ ${streamNames[item.stream]}</span>`;
+      // A noCorrectBin item has no true "→ [stream]" answer to reveal — saying so would be
+      // actively wrong, not just imprecise (see buildBoard()/handleDrop()).
+      const revealText = item.noCorrectBin ? 'Own collection point' : streamNames[item.stream];
+      card.innerHTML = `<span class="item-icon">${item.icon}</span><span class="item-name">${item.name}</span><span class="reveal-badge" style="color:var(--${item.stream})">→ ${revealText}</span>`;
       itemBoard.appendChild(card);
       attachDrag(card, item);
     });
@@ -2419,7 +2440,7 @@ try {
     sortedCount = 0;
     phaseLocked = false;
     const stream = streams[idx];
-    phaseCorrectTarget = items.filter(it => it.stream === stream || it.acceptable.includes(stream)).length;
+    phaseCorrectTarget = items.filter(it => !it.noCorrectBin && (it.stream === stream || it.acceptable.includes(stream))).length;
 
     document.getElementById('phaseLabel').textContent = `Phase ${idx+1} of 5 — ${streamNames[stream]}`;
     document.getElementById('phaseCounter').textContent = `Sorted 0 of ${phaseCorrectTarget}`;
