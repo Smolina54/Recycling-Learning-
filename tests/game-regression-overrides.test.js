@@ -19,6 +19,16 @@ const TEST_BUILDING_ID = 'test-tower-overrides';
 const TEST_TENANT_ID = 'test-tenant-overrides';
 const GAME_URL = `${url.pathToFileURL(GAME_PATH).href}?b=${TEST_BUILDING_ID}&emulator=1`;
 
+// A second building for Milestone 4 (ideal-vs-acceptable): pc-box keeps its default primary
+// (pc) but also becomes acceptable in mr — Sergio's "paper is best in Paper & Cardboard, but
+// also technically fine in Mixed Recycling" example.
+const ACCEPTABLE_BUILDING_ID = 'test-tower-acceptable';
+const ACCEPTABLE_TENANT_ID = 'test-tenant-acceptable';
+const ACCEPTABLE_GAME_URL = `${url.pathToFileURL(GAME_PATH).href}?b=${ACCEPTABLE_BUILDING_ID}&emulator=1`;
+const ACCEPTABLE_ITEM_OVERRIDES = {
+  'pc-box': { stream: 'pc', acceptable: ['mr'] },
+};
+
 // pc's 5 items redirected to mr — the exact "no Paper & Cardboard bin" case that started this.
 const ITEM_OVERRIDES = {
   'pc-box': { stream: 'mr' },
@@ -55,16 +65,18 @@ async function seedTestBuilding(){
     const db = context.firestore();
     await setDoc(doc(db, 'buildings', TEST_BUILDING_ID), { name: 'Test Tower Overrides', itemOverrides: ITEM_OVERRIDES });
     await setDoc(doc(db, 'buildings', TEST_BUILDING_ID, 'tenants', TEST_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
+    await setDoc(doc(db, 'buildings', ACCEPTABLE_BUILDING_ID), { name: 'Test Tower Acceptable', itemOverrides: ACCEPTABLE_ITEM_OVERRIDES });
+    await setDoc(doc(db, 'buildings', ACCEPTABLE_BUILDING_ID, 'tenants', ACCEPTABLE_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
   });
   return testEnv;
 }
 
-async function passIdGate(page, email){
-  await page.goto(GAME_URL, { waitUntil: 'domcontentloaded' });
+async function passIdGate(page, email, gameUrl, tenantId){
+  await page.goto(gameUrl, { waitUntil: 'domcontentloaded' });
   await new Promise(r => setTimeout(r, 500));
   await page.type('#idName', 'Jane Doe');
   await page.type('#idEmail', email);
-  await page.select('#idTenant', TEST_TENANT_ID);
+  await page.select('#idTenant', tenantId);
   await new Promise(r => setTimeout(r, 200));
   await page.select('#idLevel', 'Level 1');
   await page.click('#idForm button[type=submit]');
@@ -89,6 +101,7 @@ async function main(){
 
   try {
     await runFlow(page);
+    await runAcceptableFlow(browser, consoleErrors);
   } catch (err) {
     console.error('CRASHED — dumping diagnostics:', err.message);
     console.error('Console errors so far:', JSON.stringify(consoleErrors, null, 2));
@@ -101,7 +114,7 @@ async function main(){
 }
 
 async function runFlow(page){
-  await passIdGate(page, 'jane-overrides-1@example.com');
+  await passIdGate(page, 'jane-overrides-1@example.com', GAME_URL, TEST_TENANT_ID);
   check('mainApp is shown after a valid gate submit for a building with overrides',
     await page.$eval('#mainApp', el => getComputedStyle(el).display !== 'none'));
 
@@ -178,7 +191,7 @@ async function runFlow(page){
 
   // --- Second, independent playthrough: same building, confirm decoys are deterministic ---
   const page2 = await page.browser().newPage();
-  await passIdGate(page2, 'jane-overrides-2@example.com');
+  await passIdGate(page2, 'jane-overrides-2@example.com', GAME_URL, TEST_TENANT_ID);
   const tabs2 = await page2.$$('.bin-tab');
   for (const tab of tabs2){ await tab.click(); await new Promise(r => setTimeout(r, 60)); }
   await new Promise(r => setTimeout(r, 150));
@@ -208,6 +221,90 @@ async function runFlow(page){
     snapshotOk = Boolean(parsed && parsed['pc-box'] && parsed['pc-box'].stream === 'mr');
   });
   check('the submission stores a snapshot of the config that was active when it was taken', snapshotOk);
+}
+
+// Milestone 4 (ideal-vs-acceptable): pc-box stays primary/ideal in pc, but is ALSO acceptable
+// in mr for this building — confirms the item deliberately appears in both phases, both count
+// as fully correct (no scored distinction), and only the feedback text differs.
+async function runAcceptableFlow(browser, consoleErrors){
+  const page = await browser.newPage();
+  page.on('console', async (msg) => {
+    if (msg.type() !== 'error') return;
+    const parts = await Promise.all(msg.args().map(async (a) => {
+      try { return await a.evaluate(v => (v && v.message) ? v.message + (v.stack ? '\n' + v.stack : '') : JSON.stringify(v)); }
+      catch { return msg.text(); }
+    }));
+    consoleErrors.push('[acceptable-flow] ' + parts.join(' '));
+  });
+  page.on('pageerror', (err) => consoleErrors.push('[acceptable-flow] pageerror: ' + err.message));
+
+  await passIdGate(page, 'jane-acceptable@example.com', ACCEPTABLE_GAME_URL, ACCEPTABLE_TENANT_ID);
+  const tabs = await page.$$('.bin-tab');
+  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 80)); }
+  await new Promise(r => setTimeout(r, 200));
+  await page.click('#startGameBtn');
+  await new Promise(r => setTimeout(r, 300));
+
+  for (let i = 0; i < 5; i++){
+    const stream = STREAM_ORDER[i];
+    const counter = await page.$eval('#phaseCounter', el => el.textContent).catch(() => '');
+    const boardIds = await page.$$eval('.board-item', els => els.map(el => el.dataset.id));
+
+    if (stream === 'mr'){
+      check('mr phase target grows by 1 for the item that is only acceptable (not primary) here',
+        counter === 'Sorted 0 of 6', counter);
+      check('pc-box (acceptable here, primary elsewhere) appears on the mr board',
+        boardIds.includes('pc-box'), boardIds.join(','));
+
+      const pcBoxCard = await page.$('.board-item[data-id="pc-box"]');
+      await pcBoxCard.evaluate(el => el.setAttribute('data-test-clicked', '1'));
+      await pcBoxCard.focus();
+      await page.keyboard.press('Enter');
+      // collectIntoBin()'s fly-to-bin animation removes the card and appends its collected
+      // icon after a fixed 420ms — must outwait that before checking either.
+      await new Promise(r => setTimeout(r, 600));
+      const acceptableFeedback = await page.$eval('#gameFeedback', el => el.textContent);
+      check('dropping pc-box into its acceptable-but-not-ideal bin gives distinct feedback text, still marked correct',
+        acceptableFeedback.includes('this works too') && acceptableFeedback.includes('Paper & Cardboard'),
+        acceptableFeedback);
+      const collectedAfterAcceptable = await page.$$eval('#binCollected .collected-icon', els => els.length);
+      check('the acceptable-drop was collected as correct, not left on the board as wrong', collectedAfterAcceptable === 1, collectedAfterAcceptable);
+    }
+
+    if (stream === 'pc'){
+      check('pc phase target is unaffected — pc-box is still counted as primary/ideal here too', counter === 'Sorted 0 of 5', counter);
+      check('pc-box ALSO appears on its own ideal-stream board (deliberate double-appearance)',
+        boardIds.includes('pc-box'), boardIds.join(','));
+
+      const pcBoxCard = await page.$('.board-item[data-id="pc-box"]');
+      await pcBoxCard.evaluate(el => el.setAttribute('data-test-clicked', '1'));
+      await pcBoxCard.focus();
+      await page.keyboard.press('Enter');
+      await new Promise(r => setTimeout(r, 600));
+      const idealFeedback = await page.$eval('#gameFeedback', el => el.textContent);
+      check('dropping pc-box into its ideal bin gives the plain "Correct" message, no "this works too" caveat',
+        idealFeedback.includes('Correct.') && !idealFeedback.includes('this works too'), idealFeedback);
+    }
+
+    const reached = await resolvePhase(page, 25);
+    if (!reached) break;
+    // Let any still-in-flight collectIntoBin() fly-to-bin animation (420ms) from the last
+    // correct drop finish BEFORE advancing — otherwise its delayed DOM mutation can land
+    // after the next phase's startPhase() has already cleared #binCollected for the new
+    // phase, leaking a stray icon into it (a pre-existing animation/phase-transition race,
+    // unrelated to the override work — worth a fix of its own later, not chased down here).
+    await new Promise(r => setTimeout(r, 500));
+    await page.click('#nextPhaseBtn');
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  await new Promise(r => setTimeout(r, 300));
+  const scoreOfText = await page.$eval('#scoreOf', el => el.textContent.trim()).catch(() => '');
+  const totalMatch = scoreOfText.match(/\/\s*(\d+)\s*correctly avoided/);
+  check('total stays exactly 25 even with an acceptable-but-not-ideal entry in the config',
+    totalMatch && totalMatch[1] === '25', scoreOfText);
+
+  await page.close();
 }
 
 async function finishAndReport(page, browser, consoleErrors){

@@ -2138,8 +2138,9 @@ try {
   let currentDecoyMap = decoyMap;
 
   // Applies a building's itemOverrides on top of each item's catalog default. `acceptable`
-  // is always [] until the ideal-vs-acceptable feature ships — kept here now so this code
-  // doesn't need to change again when it does.
+  // (extra streams that count as correct-but-not-ideal for this item, at this building) is
+  // empty unless the admin config UI set some — see showFeedback()/handleDrop() for how the
+  // ideal/acceptable distinction is surfaced without ever becoming a different scored outcome.
   function applyEffectiveStreams(overrides){
     items.forEach(it => {
       const ov = overrides[it.id];
@@ -2166,12 +2167,14 @@ try {
   // Returns '' for every stream on a building with no overrides (DEFAULT_STREAM_BY_ID never
   // differs from item.stream in that case), so the note divs simply stay empty/hidden.
   function computeBuildingNotes(){
-    const movedOutOf = {}, movedInto = {};
+    const movedOutOf = {}, movedInto = {}, acceptableIn = {};
     items.forEach(it => {
       const from = DEFAULT_STREAM_BY_ID[it.id], to = it.stream;
-      if (from === to) return;
-      (movedOutOf[from] = movedOutOf[from] || []).push({item: it, to});
-      (movedInto[to] = movedInto[to] || []).push({item: it, from});
+      if (from !== to){
+        (movedOutOf[from] = movedOutOf[from] || []).push({item: it, to});
+        (movedInto[to] = movedInto[to] || []).push({item: it, from});
+      }
+      it.acceptable.forEach(s => { (acceptableIn[s] = acceptableIn[s] || []).push(it); });
     });
     const notes = {};
     streams.forEach(s => {
@@ -2187,6 +2190,9 @@ try {
       }
       if (movedInto[s]){
         html += `<p>This building also sorts these here: ${movedInto[s].map(x => `${x.item.name} (normally ${streamNames[x.from]})`).join(', ')}.</p>`;
+      }
+      if (acceptableIn[s]){
+        html += `<p>This building also accepts these items here, though it's not the ideal bin for them: ${acceptableIn[s].map(it => `${it.name} (ideally ${streamNames[it.stream]})`).join(', ')}.</p>`;
       }
       notes[s] = html;
     });
@@ -2236,13 +2242,20 @@ try {
     setTimeout(() => phaseBin.classList.remove('bin-flash-correct','bin-flash-wrong'), 700);
   }
 
-  function showFeedback(item, correct){
+  function showFeedback(item, correct, targetStream){
     gameFeedback.classList.remove('correct','wrong');
     gameFeedback.classList.add('show', correct ? 'correct' : 'wrong');
     const iconHtml = `<span class="fb-bin-icon" style="background:var(--${item.stream}-tint); border-color:var(--${item.stream}); color:var(--${item.stream});">${binIcons[item.stream]}</span>`;
-    const text = correct
-      ? `<span><b>Correct.</b> ${item.explain}</span>`
-      : `<span><b>Not quite</b> — belongs in ${streamNames[item.stream]}. ${item.explain}</span>`;
+    // Three real outcomes, but only two ever get stored (see handleDrop) — "acceptable but
+    // not ideal" is purely a feedback-text distinction, never a different scored result.
+    let text;
+    if (!correct){
+      text = `<span><b>Not quite</b> — belongs in ${streamNames[item.stream]}. ${item.explain}</span>`;
+    } else if (targetStream !== item.stream){
+      text = `<span><b>Correct — this works too.</b> ${streamNames[item.stream]} is the best fit for this item where available. ${item.explain}</span>`;
+    } else {
+      text = `<span><b>Correct.</b> ${item.explain}</span>`;
+    }
     gameFeedback.innerHTML = iconHtml + text;
   }
 
@@ -2291,7 +2304,7 @@ try {
       collectIntoBin(card, item);
       sortedCount++;
       document.getElementById('phaseCounter').textContent = `Sorted ${sortedCount} of ${phaseCorrectTarget}`;
-      showFeedback(item, true);
+      showFeedback(item, true, targetStream);
       updateProgress();
       if (sortedCount === phaseCorrectTarget) completePhase();
     } else {

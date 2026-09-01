@@ -411,6 +411,31 @@ async function runFlow(page){
   check('the override persisted after reload — reopening the editor shows the saved stream',
     pcBoxSelectValue === 'mr', pcBoxSelectValue);
 
+  // --- "Also acceptable in" checkboxes (Milestone 4: ideal-vs-acceptable) ---
+  // og-teabag keeps its default primary (og) but gains gw as an "also acceptable" pick.
+  const teabagCheckboxSelector = `${itemsBuildingSelector} .item-acceptable-checkbox[data-item-id="og-teabag"][value="gw"]`;
+  await page.$eval(teabagCheckboxSelector, el => el.click());
+  await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  row = await findBuildingRow(page, buildingName);
+  await row.$eval('.configure-items-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  const teabagPrimaryValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-teabag"]`, el => el.value);
+  const teabagAcceptableChecked = await page.$eval(teabagCheckboxSelector, el => el.checked);
+  check('an "also acceptable in" checkbox persists after reload without disturbing the item\'s primary stream',
+    teabagPrimaryValue === 'og' && teabagAcceptableChecked === true, `primary=${teabagPrimaryValue} acceptableChecked=${teabagAcceptableChecked}`);
+
+  // Unchecking it should fully clear that item's acceptable list again.
+  await page.$eval(teabagCheckboxSelector, el => el.click());
+  await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+  row = await findBuildingRow(page, buildingName);
+  await row.$eval('.configure-items-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  const teabagAcceptableAfterUncheck = await page.$eval(teabagCheckboxSelector, el => el.checked);
+  check('unchecking "also acceptable in" and saving clears it', teabagAcceptableAfterUncheck === false);
+
   // Reset to default, save, confirm the badge disappears.
   await page.$eval(`${itemsBuildingSelector} .reset-items-btn`, el => el.click());
   await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
