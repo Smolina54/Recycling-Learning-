@@ -29,6 +29,16 @@ const ACCEPTABLE_ITEM_OVERRIDES = {
   'pc-box': { stream: 'pc', acceptable: ['mr'] },
 };
 
+// A third building: og-teabag is marked "not accepted in any of the 5 streams" for this one
+// building — a per-building version of the global noCorrectBin flag (see the "Configure bins
+// no longer knows about notAccepted" gap this closes).
+const BLOCKED_BUILDING_ID = 'test-tower-blocked';
+const BLOCKED_TENANT_ID = 'test-tenant-blocked';
+const BLOCKED_GAME_URL = `${url.pathToFileURL(GAME_PATH).href}?b=${BLOCKED_BUILDING_ID}&emulator=1`;
+const BLOCKED_ITEM_OVERRIDES = {
+  'og-teabag': { notAccepted: true },
+};
+
 // pc's 5 items redirected to mr — the exact "no Paper & Cardboard bin" case that started this.
 const ITEM_OVERRIDES = {
   'pc-box': { stream: 'mr' },
@@ -67,6 +77,8 @@ async function seedTestBuilding(){
     await setDoc(doc(db, 'buildings', TEST_BUILDING_ID, 'tenants', TEST_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
     await setDoc(doc(db, 'buildings', ACCEPTABLE_BUILDING_ID), { name: 'Test Tower Acceptable', itemOverrides: ACCEPTABLE_ITEM_OVERRIDES });
     await setDoc(doc(db, 'buildings', ACCEPTABLE_BUILDING_ID, 'tenants', ACCEPTABLE_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
+    await setDoc(doc(db, 'buildings', BLOCKED_BUILDING_ID), { name: 'Test Tower Blocked', itemOverrides: BLOCKED_ITEM_OVERRIDES });
+    await setDoc(doc(db, 'buildings', BLOCKED_BUILDING_ID, 'tenants', BLOCKED_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
   });
   return testEnv;
 }
@@ -102,6 +114,7 @@ async function main(){
   try {
     await runFlow(page);
     await runAcceptableFlow(browser, consoleErrors);
+    await runBlockedFlow(browser, consoleErrors);
   } catch (err) {
     console.error('CRASHED — dumping diagnostics:', err.message);
     console.error('Console errors so far:', JSON.stringify(consoleErrors, null, 2));
@@ -316,6 +329,83 @@ async function runAcceptableFlow(browser, consoleErrors){
   const scoreOfText = await page.$eval('#scoreOf', el => el.textContent.trim()).catch(() => '');
   const totalMatch = scoreOfText.match(/\/\s*(\d+)\s*correctly avoided/);
   check('total stays exactly 25 even with an acceptable-but-not-ideal entry in the config',
+    totalMatch && totalMatch[1] === '25', scoreOfText);
+
+  await page.close();
+}
+
+// Confirms the new per-building "not accepted anywhere" flag (notAccepted): the item is
+// decoy-eligible everywhere but never counted correct, its home stream's phase target shrinks
+// by one, its reveal badge and feedback text are building-specific (not the item's normal
+// material explanation), the walkthrough note appears under its default stream, and — since
+// this exercises the same "eligible in every pool" mechanism as noCorrectBin — that the
+// buildDecoyPlan() dedup fix means it's placed as a decoy exactly once, never zero, never twice.
+async function runBlockedFlow(browser, consoleErrors){
+  const page = await browser.newPage();
+  page.on('console', async (msg) => {
+    if (msg.type() !== 'error') return;
+    const parts = await Promise.all(msg.args().map(async (a) => {
+      try { return await a.evaluate(v => (v && v.message) ? v.message + (v.stack ? '\n' + v.stack : '') : JSON.stringify(v)); }
+      catch { return msg.text(); }
+    }));
+    consoleErrors.push('[blocked-flow] ' + parts.join(' '));
+  });
+  page.on('pageerror', (err) => consoleErrors.push('[blocked-flow] pageerror: ' + err.message));
+
+  await passIdGate(page, 'jane-blocked@example.com', BLOCKED_GAME_URL, BLOCKED_TENANT_ID);
+  const tabs = await page.$$('.bin-tab');
+  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 80)); }
+  await new Promise(r => setTimeout(r, 200));
+
+  const ogNoteText = await page.$eval('.building-note[data-stream="og"]', el => el.textContent).catch(() => '');
+  check('the walkthrough panel under the blocked item\'s default stream explains it is not accepted anywhere',
+    ogNoteText.includes('Used tea bag') && ogNoteText.includes('Waste Champion'), ogNoteText);
+
+  await page.click('#startGameBtn');
+  await new Promise(r => setTimeout(r, 300));
+
+  let ogCorrectTarget = null;
+  let teabagAppearances = 0;
+  let teabagRevealText = '';
+  let teabagFeedbackText = '';
+
+  for (let i = 0; i < 5; i++){
+    const stream = STREAM_ORDER[i];
+    if (stream === 'og'){
+      ogCorrectTarget = await page.$eval('#phaseCounter', el => el.textContent).catch(() => '');
+    }
+    const boardIds = await page.$$eval('.board-item', els => els.map(el => el.dataset.id));
+    if (boardIds.includes('og-teabag')){
+      teabagAppearances++;
+      const teabagCard = await page.$('.board-item[data-id="og-teabag"]');
+      teabagRevealText = await teabagCard.$eval('.reveal-badge', el => el.textContent).catch(() => '');
+      await teabagCard.evaluate(el => el.setAttribute('data-test-clicked', '1'));
+      await teabagCard.focus();
+      await page.keyboard.press('Enter');
+      await new Promise(r => setTimeout(r, 200));
+      teabagFeedbackText = await page.$eval('#gameFeedback', el => el.textContent).catch(() => '');
+    }
+
+    const reached = await resolvePhase(page, 25);
+    if (!reached) break;
+    await new Promise(r => setTimeout(r, 500));
+    await page.click('#nextPhaseBtn');
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  check("the blocked item's own default-stream phase (og) shows a correct-target that excludes it (4, not 5)",
+    ogCorrectTarget === 'Sorted 0 of 4', ogCorrectTarget);
+  check('the blocked item is placed as a decoy in exactly one phase (buildDecoyPlan dedup fix — not zero, not two)',
+    teabagAppearances === 1, teabagAppearances);
+  check('the blocked item\'s reveal badge says "Not accepted here", not a stream name',
+    teabagRevealText.includes('Not accepted here'), teabagRevealText);
+  check('dropping the blocked item anywhere gives the building-specific "not accepted" message, not its normal material explanation',
+    teabagFeedbackText.includes("doesn't have a bin for this item in any of the 5 streams"), teabagFeedbackText);
+
+  await new Promise(r => setTimeout(r, 300));
+  const scoreOfText = await page.$eval('#scoreOf', el => el.textContent.trim()).catch(() => '');
+  const totalMatch = scoreOfText.match(/\/\s*(\d+)\s*correctly avoided/);
+  check('total stays exactly 25 even with a per-building "not accepted anywhere" item',
     totalMatch && totalMatch[1] === '25', scoreOfText);
 
   await page.close();

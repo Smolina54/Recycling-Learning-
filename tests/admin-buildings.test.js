@@ -393,15 +393,24 @@ async function runFlow(page){
 
   await row.$eval('.configure-items-btn', el => el.click());
   await new Promise(r => setTimeout(r, 200));
-  check('opening "Configure bins" shows the item-streams editor',
+  check('opening "Configure streams" shows the item-streams editor',
     Boolean(await page.$(`${itemsBuildingSelector} .items-editor`)));
 
-  // Real bug Sergio caught: clicking the collapse arrow while "Configure bins" is open hid
+  // Bench/backup items (active:false in recycling-training.html) must never reach the admin
+  // editor at all — tools/sync-catalog.js filters them out before the report's `catalog` object
+  // is generated, so an admin can't accidentally configure an item that isn't even in the game.
+  const totalItemCards = await page.$$eval(`${itemsBuildingSelector} .items-card`, els => els.length);
+  check('the editor shows exactly the 25 active items, no bench/backup items included',
+    totalItemCards === 25, totalItemCards);
+  const benchItemPresent = Boolean(await page.$(`${itemsBuildingSelector} .item-stream-select[data-item-id="gw-glass"]`));
+  check('a specific bench item (gw-glass) is completely absent from the editor', !benchItemPresent);
+
+  // Real bug Sergio caught: clicking the collapse arrow while "Configure streams" is open hid
   // only the QR code, leaving the rest of the expanded card (including the items editor)
   // behind — the QR-render check had drifted out of sync with the card's own isExpanded logic.
   await page.click(`${itemsBuildingSelector} .building-toggle-btn`);
   await new Promise(r => setTimeout(r, 200));
-  check('the collapse arrow does not hide the QR code while "Configure bins" is open (matches the rest of the card staying expanded)',
+  check('the collapse arrow does not hide the QR code while "Configure streams" is open (matches the rest of the card staying expanded)',
     Boolean(await page.$(`${itemsBuildingSelector} .building-qr svg`)));
   check('the items editor is still open after clicking the collapse arrow',
     Boolean(await page.$(`${itemsBuildingSelector} .items-editor`)));
@@ -420,6 +429,41 @@ async function runFlow(page){
   const pcBoxSelectValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="pc-box"]`, el => el.value);
   check('the override persisted after reload — reopening the editor shows the saved stream',
     pcBoxSelectValue === 'mr', pcBoxSelectValue);
+
+  // --- Globally noCorrectBin items (battery, toner) render locked, not configurable ---
+  // Closes the gap Sergio found: an admin used to be able to reassign these to a real stream,
+  // producing a misleading walkthrough note even though the game always marks them wrong.
+  const batteryLocked = await page.$eval(`${itemsBuildingSelector} .items-card-locked .items-card-name`,
+    el => el.textContent).catch(() => '');
+  check('the battery item renders as a locked, uneditable card (name visible, no select)',
+    batteryLocked.includes('Dead battery'));
+  const batterySelectExists = Boolean(await page.$(`${itemsBuildingSelector} .item-stream-select[data-item-id="ew-battery"]`));
+  check('the locked battery card has no stream <select> at all', !batterySelectExists);
+
+  // --- Per-building "not accepted anywhere" (a building-specific version of noCorrectBin,
+  // for any ordinary item — the general fix Sergio asked for after finding the gap above) ---
+  await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-fish"]`, '__blocked__');
+  await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  row = await findBuildingRow(page, buildingName);
+  await row.$eval('.configure-items-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  const fishBlockedValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-fish"]`, el => el.value);
+  check('an ordinary item marked "not accepted anywhere" persists after reload',
+    fishBlockedValue === '__blocked__', fishBlockedValue);
+
+  // Moving it back to a real stream should round-trip cleanly (the override entry is replaced,
+  // not left behind as a stale {notAccepted:true} alongside a new {stream,...} shape).
+  await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-fish"]`, 'og');
+  await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+  row = await findBuildingRow(page, buildingName);
+  await row.$eval('.configure-items-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  const fishRestoredValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-fish"]`, el => el.value);
+  check('moving it back to its default stream clears the "not accepted anywhere" override cleanly',
+    fishRestoredValue === 'og', fishRestoredValue);
 
   // --- "Also acceptable in" checkboxes (Milestone 4: ideal-vs-acceptable) ---
   // og-teabag keeps its default primary (og) but gains gw as an "also acceptable" pick.

@@ -930,7 +930,7 @@ try {
   });
 
   // ---------------- Sorting game: item catalogue ----------------
-  const items = [
+  const ALL_ITEMS = [
     // General Waste
     { id:'gw-pizza', name:'Greasy pizza box', stream:'gw',
       icon:`<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="1" fill="#F2EEE3" stroke="var(--ink)" stroke-width="1.2"/><path d="M3 6l3-3h12l3 3" fill="none" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 6.8l16 1.6" stroke="#C1443F" stroke-width="1.8" stroke-linecap="round"/><ellipse cx="9" cy="14" rx="2.2" ry="1.6" fill="#A9622C" opacity="0.75"/><ellipse cx="15" cy="16" rx="1.6" ry="1.2" fill="#A9622C" opacity="0.65"/><ellipse cx="14" cy="11" rx="1.1" ry="0.9" fill="#A9622C" opacity="0.6"/></svg>`,
@@ -2115,8 +2115,130 @@ try {
 		c-6.25,3.63-4.79,8.34-8.15,9.73c-4.17,1.72-6.14-3.03-6.06-6.14C42.84,12.86,49.41,10.94,51.78,10.01z"/>
 </g></svg>`,
       explain:"A wired mouse is a small electronic, just like cables, phones, and other office electronics — it needs the same dedicated recovery.",
-      shortWhy:"Electronics won't compost" }
+      shortWhy:"Electronics won't compost" },
+
+    // BACKUP POOL — inactive (active:false) reserve items, not used in the live game yet.
+    // Drafted in full (icon/explain/shortWhy) so that a future reclassification (like the
+    // battery/toner one this week) is a one-line flag flip instead of a content-creation
+    // sprint under time pressure. See ALL_ITEMS.filter() below — nothing else in this file
+    // needs to change for these to stay completely inert until an `active:false` is removed.
+    // General Waste backups
+    { id:'gw-glass', name:'Broken drinking glass', stream:'gw', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M7 4h10l-1 14a3 3 0 01-3 3h-2a3 3 0 01-3-3z" fill="#EAF6F8" stroke="var(--ink)" stroke-width="1.2" stroke-linejoin="round"/><path d="M9 4l1.5 6-2 3 2 3.5" fill="none" stroke="var(--ink)" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 4l-1 5 2 2-1.5 4" fill="none" stroke="var(--ink)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+      explain:"Drinking glass is heat-treated to a different melting point than bottle and jar glass, so it contaminates a recycling batch rather than blending in — it needs to go in general waste, broken or not.",
+      shortWhy:"Different glass, contaminates batch" },
+    { id:'gw-napkin', name:'Used paper napkin', stream:'gw', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M4 5h16v14l-4-2-4 2-4-2-4 2z" fill="#F2EEE3" stroke="var(--ink)" stroke-width="1" stroke-linejoin="round"/><path d="M7 9h10M7 12.5h10" stroke="#DAD6C8" stroke-width="0.9" stroke-linecap="round"/></svg>`,
+      explain:"Once paper fibre has absorbed food, grease, or liquid it can't be recycled as paper — a used napkin or paper towel belongs with general waste, not with clean paper stock.",
+      shortWhy:"Soiled paper, not clean fibre" },
+    { id:'gw-cutlery', name:'Disposable plastic cutlery', stream:'gw', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M7 3v8a2 2 0 002 2v8" fill="none" stroke="var(--ink)" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 3v5M9 3v5M11 3v5" stroke="var(--ink)" stroke-width="0.9" stroke-linecap="round"/><path d="M17 3c1.5 1 1.5 6 0 8-1 .8-1 1-1 2v8" fill="none" stroke="var(--ink)" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+      explain:"Small, mixed-shape plastic like disposable cutlery falls through sorting screens built for rigid containers, and its light weight and odd shape jam equipment rather than getting sorted — it belongs in general waste.",
+      shortWhy:"Too small, jams sorting equipment" },
+    { id:'gw-foam', name:'Polystyrene foam container', stream:'gw', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M6 8h12l-1.5 11a1.5 1.5 0 01-1.5 1.3H9a1.5 1.5 0 01-1.5-1.3z" fill="#F5F5F0" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><ellipse cx="12" cy="8" rx="6" ry="1.6" fill="#F5F5F0" stroke="var(--ink)" stroke-width="1.1"/><circle cx="10" cy="12" r="0.5" fill="#DAD6C8"/><circle cx="14" cy="13.5" r="0.5" fill="#DAD6C8"/><circle cx="11.5" cy="16" r="0.5" fill="#DAD6C8"/></svg>`,
+      explain:"Foam packaging is mostly trapped air and crumbles into tiny beads rather than melting down cleanly — most facilities can't process it, so it belongs in general waste.",
+      shortWhy:"Crumbles, not a real container" },
+    { id:'gw-wrap', name:'Soft plastic wrap', stream:'gw', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M4 6c3-1 5 1.2 8 0s5-1 8 0v12c-3-1-5 1.2-8 0s-5-1-8 0z" fill="#EAF3EF" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><circle cx="8" cy="10" r="1.1" fill="none" stroke="#B9CFC3" stroke-width="0.7"/><circle cx="12" cy="13" r="1.1" fill="none" stroke="#B9CFC3" stroke-width="0.7"/><circle cx="16" cy="10" r="1.1" fill="none" stroke="#B9CFC3" stroke-width="0.7"/><circle cx="10" cy="17" r="1.1" fill="none" stroke="#B9CFC3" stroke-width="0.7"/></svg>`,
+      explain:"Thin, flexible plastic film stretches and tangles in the machinery that sorts rigid containers — without a dedicated soft-plastics point, it belongs in general waste.",
+      shortWhy:"Soft plastic tangles machinery" },
+
+    // Mixed Recycling backups
+    { id:'mr-detergent', name:'Plastic detergent bottle', stream:'mr', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M8 9h6l1 2v9a1.5 1.5 0 01-1.5 1.5h-5A1.5 1.5 0 017 20V11z" fill="#CFEFEA" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><rect x="9.5" y="5" width="3" height="4" fill="#CFEFEA" stroke="var(--ink)" stroke-width="1"/><rect x="9" y="4" width="4" height="1.6" rx="0.4" fill="var(--ink)"/><path d="M14 12h2.5a1 1 0 011 1v4a1 1 0 01-1 1H14" fill="none" stroke="var(--ink)" stroke-width="0.9"/></svg>`,
+      explain:"It's a rigid, empty plastic container — the shape is what matters, not the label. A quick rinse of any leftover residue keeps the batch clean.",
+      shortWhy:"Rigid container, rinse and recycle" },
+    { id:'mr-lid', name:'Loose metal bottle cap', stream:'mr', active:false,
+      icon:`<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="#D9D9D9" stroke="var(--ink)" stroke-width="1.2"/><circle cx="12" cy="12" r="5.2" fill="none" stroke="var(--ink)" stroke-width="0.8" stroke-dasharray="1.4 1.4"/></svg>`,
+      explain:"A loose metal cap or lid is small but still a rigid metal container piece — collect it separately from the bottle rather than leaving it on, so sorting equipment can catch it properly.",
+      shortWhy:"Small metal, still recyclable" },
+    { id:'mr-carton', name:'Rinsed milk carton', stream:'mr', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M7 9l1-4h8l1 4z" fill="#DCEBF7" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M6 9h12v10a1 1 0 01-1 1H7a1 1 0 01-1-1z" fill="#F2F8FC" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M9 5l3-2 3 2" fill="none" stroke="var(--ink)" stroke-width="1" stroke-linejoin="round"/></svg>`,
+      explain:"The wax or foil coating that keeps liquid in is bonded to the cardboard in a way most paper mills can't separate, but the carton's rigid shape means it sorts fine as mixed recycling once rinsed.",
+      shortWhy:"Coated carton, not plain paper" },
+    { id:'mr-foiltray', name:'Aluminium foil tray', stream:'mr', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M4 8h16l-2 10a1.5 1.5 0 01-1.5 1.2h-9A1.5 1.5 0 016 18z" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M6.5 8.5c1-1 3-1.4 5.5-1.4s4.5 0.4 5.5 1.4" fill="none" stroke="var(--ink)" stroke-width="0.8"/></svg>`,
+      explain:"Clean aluminium foil and foil trays are valuable, endlessly-recyclable metal — scrunching loose foil into a rinsed tray or ball helps it survive sorting instead of slipping through as litter.",
+      shortWhy:"Clean metal, recycles well" },
+    { id:'mr-aerosol', name:'Empty aerosol can', stream:'mr', active:false,
+      icon:`<svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="13" rx="1.2" fill="#D6D9DC" stroke="var(--ink)" stroke-width="1.1"/><rect x="10" y="4" width="4" height="4" rx="0.6" fill="#B9BEC2" stroke="var(--ink)" stroke-width="1"/><circle cx="12" cy="3.2" r="0.9" fill="#B9BEC2" stroke="var(--ink)" stroke-width="0.8"/></svg>`,
+      explain:"A fully empty aerosol can is rigid metal like any other tin — the pressurised contents are the hazard, not the empty container, so once it's spent it recycles the same as a steel tin.",
+      shortWhy:"Empty can, metal recycles" },
+
+    // Paper & Cardboard backups
+    { id:'pc-magazine', name:'Glossy magazine', stream:'pc', active:false,
+      icon:`<svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="0.8" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1"/><rect x="7.5" y="6.5" width="9" height="6" fill="#DCEBF7" stroke="var(--ink)" stroke-width="0.7"/><path d="M7.5 15h9M7.5 17.3h6" stroke="#C7C2B2" stroke-width="0.9" stroke-linecap="round"/></svg>`,
+      explain:"Glossy paper is still paper fibre once the ink and coating are pulped out at the mill — magazines and glossy flyers recycle right alongside plain paper.",
+      shortWhy:"Glossy paper still pulps fine" },
+    { id:'pc-junkmail', name:'Junk mail flyer', stream:'pc', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M4 8l8-4 8 4v10a1 1 0 01-1 1H5a1 1 0 01-1-1z" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 8l8 5 8-5" fill="none" stroke="var(--ink)" stroke-width="1"/></svg>`,
+      explain:"Junk mail and flyers are plain paper — no need to shred or sort by sender first, they go straight in with the rest of your paper and cardboard.",
+      shortWhy:"Plain paper, no shredding needed" },
+    { id:'pc-eggcarton', name:'Cardboard egg carton', stream:'pc', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M3 9h18v9a1 1 0 01-1 1H4a1 1 0 01-1-1z" fill="#E4D3B0" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><circle cx="7" cy="13.5" r="2.2" fill="none" stroke="var(--ink)" stroke-width="0.9"/><circle cx="12" cy="13.5" r="2.2" fill="none" stroke="var(--ink)" stroke-width="0.9"/><circle cx="17" cy="13.5" r="2.2" fill="none" stroke="var(--ink)" stroke-width="0.9"/><path d="M3 9l2-3h14l2 3" fill="none" stroke="var(--ink)" stroke-width="1"/></svg>`,
+      explain:"Moulded pulp egg cartons are just pressed paper fibre, no coating or lining — they break back down with the rest of your cardboard once flattened.",
+      shortWhy:"Pressed paper fibre, no coating" },
+    { id:'pc-notebook', name:'Spiral notebook', stream:'pc', active:false,
+      icon:`<svg viewBox="0 0 24 24"><rect x="6" y="4" width="14" height="17" rx="0.8" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1"/><path d="M6 6.5c-1 0-1.6.6-1.6 1.3s.6 1.3 1.6 1.3M6 11c-1 0-1.6.6-1.6 1.3s.6 1.3 1.6 1.3M6 15.5c-1 0-1.6.6-1.6 1.3s.6 1.3 1.6 1.3" fill="none" stroke="var(--ink)" stroke-width="0.9"/><path d="M9 8h8M9 11.5h8M9 15h5" stroke="#C7C2B2" stroke-width="0.9" stroke-linecap="round"/></svg>`,
+      explain:"The paper pages recycle just like any other office paper — the small metal spiral binding is separated out automatically at the recycling facility, no need to remove it yourself.",
+      shortWhy:"Paper pages, binding sorts out" },
+    { id:'pc-giftwrap', name:'Plain paper gift wrap', stream:'pc', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M4 9h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1z" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 9l4-5h8l4 5" fill="none" stroke="var(--ink)" stroke-width="1" stroke-linejoin="round"/><path d="M8 20V9M16 20V9" stroke="#C7C2B2" stroke-width="0.9" stroke-dasharray="1.6 1.6"/></svg>`,
+      explain:"Plain paper gift wrap — no foil, glitter, or plastic coating — recycles the same as any other sheet of paper, once any tape is torn off.",
+      shortWhy:"Plain paper, tape removed first" },
+
+    // Organics backups
+    { id:'og-eggshell', name:'Egg shells', stream:'og', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M12 4c3.5 0 5.5 5 5.5 9.5S15.5 20 12 20s-5.5-2-5.5-6.5S8.5 4 12 4z" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1"/><path d="M9 10.5l2 1.5-1.5 2 2.5 1" fill="none" stroke="#DAD6C8" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+      explain:"Egg shells break down quickly and add useful minerals to compost — crushing them first helps them decompose even faster.",
+      shortWhy:"Breaks down fast, adds minerals" },
+    { id:'og-breadcrust', name:'Stale bread crust', stream:'og', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M4 12c0-4.5 3.5-8 8-8s8 3.5 8 8-3 6-8 6-8-1.5-8-6z" fill="#D9A45C" stroke="var(--ink)" stroke-width="1.1"/><path d="M8 9c1-1 2-1.5 4-1.5s3 .5 4 1.5" fill="none" stroke="#B9803D" stroke-width="0.9" stroke-linecap="round"/><circle cx="9" cy="13" r="0.5" fill="#B9803D"/><circle cx="13" cy="14.5" r="0.5" fill="#B9803D"/><circle cx="15.5" cy="12" r="0.5" fill="#B9803D"/></svg>`,
+      explain:"Bread and other baked goods break down quickly as food waste — stale or mouldy is still compostable, no need to wait until it's fresh.",
+      shortWhy:"Food scraps, compost fine stale" },
+    { id:'og-veggie', name:'Vegetable peelings', stream:'og', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M6 6c4-2 10-2 12 2-2 6-8 10-14 8 0-4 0-8 2-10z" fill="#8FAE55" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M7 8c2 3 3 6 2 10" fill="none" stroke="#6C8A3C" stroke-width="0.9" stroke-linecap="round"/></svg>`,
+      explain:"Vegetable peelings and trimmings are food scraps like any other — they compost quickly and add nutrients back into the soil.",
+      shortWhy:"Food scraps, compost naturally" },
+    { id:'og-flowers', name:'Wilted flowers', stream:'og', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M12 10v10" stroke="#6C8A3C" stroke-width="1.1" stroke-linecap="round"/><path d="M12 10c-1.5-1-2-3-1-4.5 1.5.5 2.5 2 2 3.8M12 10c1.5-1 2-3 1-4.5-1.5.5-2.5 2-2 3.8" fill="#B8CE84" stroke="var(--ink)" stroke-width="0.9"/><circle cx="12" cy="6.5" r="2.2" fill="#E8B8CE" stroke="var(--ink)" stroke-width="0.9"/></svg>`,
+      explain:"Wilted flowers and plant trimmings are green waste — they break down naturally as organic matter, the same as food scraps.",
+      shortWhy:"Green waste, breaks down naturally" },
+    { id:'og-ricepasta', name:'Leftover rice or pasta', stream:'og', active:false,
+      icon:`<svg viewBox="0 0 24 24"><ellipse cx="12" cy="15" rx="8" ry="4" fill="#F0E6C8" stroke="var(--ink)" stroke-width="1.1"/><path d="M8 13.5c1.5-1 2.5.5 4-.3s2.5.6 4-.2" fill="none" stroke="#D6C79A" stroke-width="0.9" stroke-linecap="round"/><path d="M8.5 15.8c1.5-1 2.5.5 4-.3s2.5.6 3.5-.1" fill="none" stroke="#D6C79A" stroke-width="0.9" stroke-linecap="round"/></svg>`,
+      explain:"Cooked leftovers like rice or pasta are food scraps just like any other meal waste — they compost fine, plate scrapings included.",
+      shortWhy:"Cooked food scraps, compostable" },
+
+    // E-Waste backups
+    { id:'ew-keyboard', name:'Computer keyboard', stream:'ew', active:false,
+      icon:`<svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="10" rx="1" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><rect x="5" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="8" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="11" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="14" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="17" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="6" y="14" width="12" height="1.6" fill="var(--ink)" opacity="0.5"/></svg>`,
+      explain:"A keyboard is small electronics like any other — the circuitry inside needs the same dedicated recovery as cables, phones, and other office electronics.",
+      shortWhy:"Circuitry needs e-waste recovery" },
+    { id:'ew-remote', name:'Broken remote control', stream:'ew', active:false,
+      icon:`<svg viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="18" rx="2" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><circle cx="12" cy="7" r="1.1" fill="var(--ink)" opacity="0.5"/><rect x="10" y="10" width="4" height="2" fill="var(--ink)" opacity="0.4"/><rect x="10" y="13.5" width="4" height="2" fill="var(--ink)" opacity="0.4"/><rect x="10" y="17" width="4" height="2" fill="var(--ink)" opacity="0.4"/></svg>`,
+      explain:"A remote control is small electronics with a circuit board inside, just like a mouse or keyboard — it needs proper e-waste recovery, not the household bin (remove any batteries first).",
+      shortWhy:"Circuit board, not household waste" },
+    { id:'ew-headphones', name:'Broken headphones', stream:'ew', active:false,
+      icon:`<svg viewBox="0 0 24 24"><path d="M5 13v-2a7 7 0 0114 0v2" fill="none" stroke="var(--ink)" stroke-width="1.2" stroke-linecap="round"/><rect x="3.3" y="12" width="3.4" height="6" rx="1.5" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><rect x="17.3" y="12" width="3.4" height="6" rx="1.5" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/></svg>`,
+      explain:"Headphones and earbuds contain small speakers and wiring — the same kind of electronic materials as cables and phones, needing the same dedicated recovery.",
+      shortWhy:"Small speakers, e-waste recovery" },
+    { id:'ew-speaker', name:'Desktop speaker', stream:'ew', active:false,
+      icon:`<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="1.5" fill="#DCE3E6" stroke="var(--ink)" stroke-width="1.1"/><circle cx="12" cy="9" r="3.2" fill="none" stroke="var(--ink)" stroke-width="1"/><circle cx="12" cy="9" r="1.1" fill="var(--ink)" opacity="0.5"/><circle cx="12" cy="16" r="1.8" fill="none" stroke="var(--ink)" stroke-width="0.9"/></svg>`,
+      explain:"A desktop speaker has a magnet and wiring coil inside — genuine electronic components that need dedicated recovery, not the general bin.",
+      shortWhy:"Magnet and coil, needs recovery" },
+    { id:'ew-powerboard', name:'Power board', stream:'ew', active:false,
+      icon:`<svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="1.5" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><circle cx="7" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><circle cx="12" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><circle cx="17" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><path d="M3 12H1M21 12c1 0 2 1 2 3" fill="none" stroke="var(--ink)" stroke-width="1.1" stroke-linecap="round"/></svg>`,
+      explain:"A power board or extension cord is electrical wiring and switches, the same category as chargers and cables — it needs dedicated e-waste recovery, not the general bin.",
+      shortWhy:"Wiring and switches, not general bin" }
   ];
+
+  // Only the 25 currently-active items are ever seen by the game — every function below
+  // (buildBoard, buildDecoyPlan, DEFAULT_STREAM_BY_ID, applyEffectiveStreams,
+  // computeBuildingNotes, itemById, the review-list grouping, decoyMap lookups) already
+  // consumes `items`, not the raw literal above, so this is the one and only chokepoint
+  // a bench item needs to cross to go live: remove its `active:false`.
+  const items = ALL_ITEMS.filter(it => it.active !== false);
 
   // Default, hand-curated decoy pairings — kept exactly as-is and used unmodified for any
   // building with no itemOverrides, so the default experience never changes (see
@@ -2149,25 +2271,43 @@ try {
   // (extra streams that count as correct-but-not-ideal for this item, at this building) is
   // empty unless the admin config UI set some — see showFeedback()/handleDrop() for how the
   // ideal/acceptable distinction is surfaced without ever becoming a different scored outcome.
+  // `notAccepted` is a per-building version of the global `noCorrectBin` flag below — an item
+  // this specific building doesn't take in any of the 5 bins (its override shape is just
+  // {notAccepted:true}, with no `stream`/`acceptable` — `it.stream` still falls back to the
+  // catalog default so the item keeps a stable nominal color/grouping).
   function applyEffectiveStreams(overrides){
     items.forEach(it => {
       const ov = overrides[it.id];
       it.stream = (ov && ov.stream) || DEFAULT_STREAM_BY_ID[it.id];
       it.acceptable = (ov && ov.acceptable) || [];
+      it.notAccepted = !!(ov && ov.notAccepted);
     });
   }
+
+  // Shared by buildBoard()/handleDrop()/startPhase(): an item is never a valid drop target
+  // anywhere, either globally (noCorrectBin — e.g. batteries) or for this one building only
+  // (notAccepted — an admin-chosen per-building exception, see applyEffectiveStreams()).
+  function neverCorrect(it){ return it.noCorrectBin || it.notAccepted; }
 
   // Only used for a building that actually has itemOverrides — the hand-curated decoyMap
   // above can't generalise to arbitrary per-building item counts per stream. Deterministic
   // (sorted by id, not random) so every trainee at the same building sees the same test.
   function buildDecoyPlan(){
     const plan = {};
+    const alreadyUsed = new Set();
+    // A noCorrectBin/notAccepted item is a valid decoy for EVERY stream, including its own
+    // nominal one (buildBoard() already excludes it from ever being that stream's correct
+    // pile) — it has no real home to be naturally excluded from testing itself against. That
+    // makes it eligible for more than one stream's pool at once, so streams are processed in a
+    // fixed order and `alreadyUsed` guarantees each item is only ever placed as a decoy in ONE
+    // stream — matching the guarantee the hand-curated decoyMap above already gives by
+    // construction (every item is a decoy exactly once, never zero, never twice).
     streams.forEach(stream => {
-      // A noCorrectBin item is a valid decoy for EVERY stream, including its own nominal one
-      // (buildBoard() already excludes it from ever being that stream's correct pile) — it has
-      // no real home to be naturally excluded from testing itself against.
-      const pool = items.filter(it => it.noCorrectBin || (it.stream !== stream && !it.acceptable.includes(stream)));
-      plan[stream] = pool.slice().sort((a,b) => a.id.localeCompare(b.id)).slice(0, DECOY_CAP).map(it => it.id);
+      const pool = items.filter(it => !alreadyUsed.has(it.id) &&
+        (neverCorrect(it) || (it.stream !== stream && !it.acceptable.includes(stream))));
+      const picked = pool.slice().sort((a,b) => a.id.localeCompare(b.id)).slice(0, DECOY_CAP);
+      picked.forEach(it => alreadyUsed.add(it.id));
+      plan[stream] = picked.map(it => it.id);
     });
     return plan;
   }
@@ -2178,9 +2318,17 @@ try {
   // Returns '' for every stream on a building with no overrides (DEFAULT_STREAM_BY_ID never
   // differs from item.stream in that case), so the note divs simply stay empty/hidden.
   function computeBuildingNotes(){
-    const movedOutOf = {}, movedInto = {}, acceptableIn = {};
+    const movedOutOf = {}, movedInto = {}, acceptableIn = {}, blockedFrom = {};
     items.forEach(it => {
-      const from = DEFAULT_STREAM_BY_ID[it.id], to = it.stream;
+      const from = DEFAULT_STREAM_BY_ID[it.id];
+      // A per-building notAccepted item has no destination stream to report — it's not
+      // "moved," it's excluded from all 5 — so it gets its own bucket, shown under its
+      // catalog-default stream's panel, and skips the moved/acceptable bucketing below.
+      if (it.notAccepted){
+        (blockedFrom[from] = blockedFrom[from] || []).push(it);
+        return;
+      }
+      const to = it.stream;
       if (from !== to){
         (movedOutOf[from] = movedOutOf[from] || []).push({item: it, to});
         (movedInto[to] = movedInto[to] || []).push({item: it, from});
@@ -2204,6 +2352,9 @@ try {
       }
       if (acceptableIn[s]){
         html += `<p>This building also accepts these items here, though it's not the ideal bin for them: ${acceptableIn[s].map(it => `${it.name} (ideally ${streamNames[it.stream]})`).join(', ')}.</p>`;
+      }
+      if (blockedFrom[s]){
+        html += `<p><b>These items aren't accepted in any bin at this building:</b> ${blockedFrom[s].map(it => it.name).join(', ')} — check with your Waste Champion for how to dispose of them here.</p>`;
       }
       notes[s] = html;
     });
@@ -2264,6 +2415,11 @@ try {
     if (item.noCorrectBin){
       // "Belongs in [stream]" would be actively wrong here — there is no correct one of the 5.
       text = `<span><b>Not quite.</b> ${item.explain}</span>`;
+    } else if (item.notAccepted){
+      // Building-specific exclusion — item.explain is the global material-property reason
+      // (e.g. "food waste, compostable"), which would be confusing here since it doesn't
+      // explain why THIS building doesn't take it in any of its 5 bins.
+      text = `<span><b>Not quite.</b> This building doesn't have a bin for this item in any of the 5 streams — check with your Waste Champion for how to dispose of it here.</span>`;
     } else if (!correct){
       text = `<span><b>Not quite</b> — belongs in ${streamNames[item.stream]}. ${item.explain}</span>`;
     } else if (targetStream !== item.stream){
@@ -2314,10 +2470,11 @@ try {
   function handleDrop(card, item){
     if (phaseLocked || card.dataset.resolved) return;
     const targetStream = streams[phaseIndex];
-    // noCorrectBin items are never correct anywhere, even in their own nominal stream (e.g. a
-    // battery dropped into E-Waste — its own "category" for review/colour purposes — is still
-    // wrong, since the real correct answer, a dedicated battery point, isn't one of the 5 bins).
-    const correct = !item.noCorrectBin && (item.stream === targetStream || item.acceptable.includes(targetStream));
+    // noCorrectBin/notAccepted items are never correct anywhere, even in their own nominal
+    // stream (e.g. a battery dropped into E-Waste — its own "category" for review/colour
+    // purposes — is still wrong, since the real correct answer isn't one of the 5 bins) — see
+    // neverCorrect().
+    const correct = !neverCorrect(item) && (item.stream === targetStream || item.acceptable.includes(targetStream));
 
     card.style.transition = 'none';
     card.style.transform = 'translate(0,0)';
@@ -2410,10 +2567,9 @@ try {
   }
 
   function buildBoard(stream){
-    // noCorrectBin items (e.g. batteries — real collection point is separate from every one
-    // of the 5 streams, not represented here) never belong in ANY phase's correct pile, no
-    // matter which stream is asking — they only ever appear as decoys (see currentDecoyMap).
-    const correct = items.filter(it => !it.noCorrectBin && (it.stream === stream || it.acceptable.includes(stream)));
+    // noCorrectBin/notAccepted items never belong in ANY phase's correct pile, no matter which
+    // stream is asking — they only ever appear as decoys (see currentDecoyMap, neverCorrect()).
+    const correct = items.filter(it => !neverCorrect(it) && (it.stream === stream || it.acceptable.includes(stream)));
     const decoys = currentDecoyMap[stream].map(itemById);
     return shuffle([...correct, ...decoys]);
   }
@@ -2427,9 +2583,9 @@ try {
       card.tabIndex = 0;
       card.setAttribute('role', 'button');
       card.setAttribute('aria-label', item.name);
-      // A noCorrectBin item has no true "→ [stream]" answer to reveal — saying so would be
-      // actively wrong, not just imprecise (see buildBoard()/handleDrop()).
-      const revealText = item.noCorrectBin ? 'Own collection point' : streamNames[item.stream];
+      // A noCorrectBin/notAccepted item has no true "→ [stream]" answer to reveal — saying so
+      // would be actively wrong, not just imprecise (see buildBoard()/handleDrop()).
+      const revealText = item.noCorrectBin ? 'Own collection point' : item.notAccepted ? 'Not accepted here' : streamNames[item.stream];
       card.innerHTML = `<span class="item-icon">${item.icon}</span><span class="item-name">${item.name}</span><span class="reveal-badge" style="color:var(--${item.stream})">→ ${revealText}</span>`;
       itemBoard.appendChild(card);
       attachDrag(card, item);
@@ -2442,7 +2598,7 @@ try {
     sortedCount = 0;
     phaseLocked = false;
     const stream = streams[idx];
-    phaseCorrectTarget = items.filter(it => !it.noCorrectBin && (it.stream === stream || it.acceptable.includes(stream))).length;
+    phaseCorrectTarget = items.filter(it => !neverCorrect(it) && (it.stream === stream || it.acceptable.includes(stream))).length;
 
     document.getElementById('phaseLabel').textContent = `Phase ${idx+1} of 5 — ${streamNames[stream]}`;
     document.getElementById('phaseCounter').textContent = `Sorted 0 of ${phaseCorrectTarget}`;

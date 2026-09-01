@@ -1,5 +1,5 @@
 // Regenerates the `catalog` object inside sorting-station-report.html from the
-// authoritative `items` array in recycling-training.html, so the two files can
+// authoritative `ALL_ITEMS` array in recycling-training.html, so the two files can
 // never silently drift apart. Run: npm run sync-catalog
 const fs = require('fs');
 const path = require('path');
@@ -9,16 +9,22 @@ const REPORT_PATH = path.join(__dirname, '..', 'outputs', 'sorting-station-repor
 const START_MARKER = '// AUTO-GENERATED CATALOG START';
 const END_MARKER = '// AUTO-GENERATED CATALOG END';
 
-// Only id/name/stream are extracted — icon/explain contain unescaped quotes inside
-// backtick template strings, so a full object-literal parse isn't attempted.
-const ITEM_PATTERN = /\{\s*id:'([^']+)',\s*name:'([^']+)',\s*stream:'([^']+)'/g;
+// Captures id/name/stream, the flags segment between `stream` and `icon:` (used to detect
+// `active:false`/`noCorrectBin:true`), and the icon SVG itself in one pass. `explain` is still
+// skipped — it contains unescaped quotes inside its own backtick-free string — but the icon is
+// safe to grab verbatim between its own backticks: no stray backtick exists inside any icon's
+// SVG markup in the current catalog (every icon has exactly two backticks, open and close), so
+// the non-greedy `` `([\s\S]*?)` `` reliably stops at this item's own closing backtick.
+const ITEM_PATTERN = /\{\s*id:'([^']+)',\s*name:'([^']+)',\s*stream:'([^']+)'([\s\S]*?)icon:`([\s\S]*?)`/g;
 
 function extractCatalog(gameHtml){
   const catalog = [];
   let match;
   while ((match = ITEM_PATTERN.exec(gameHtml)) !== null){
-    const [, id, name, stream] = match;
-    catalog.push({ id, name, stream });
+    const [, id, name, stream, flags, icon] = match;
+    if (flags.includes('active:false')) continue; // bench/backup item — not in rotation yet
+    const noCorrectBin = flags.includes('noCorrectBin:true');
+    catalog.push({ id, name, stream, icon, noCorrectBin });
   }
   return catalog;
 }
@@ -26,9 +32,10 @@ function extractCatalog(gameHtml){
 function buildCatalogBlock(catalog){
   const lines = catalog.map((item, i) => {
     const comma = i < catalog.length - 1 ? ',' : '';
-    return `    '${item.id}': {name:'${item.name}', stream:'${item.stream}'}${comma}`;
+    const noCorrectBinPart = item.noCorrectBin ? ', noCorrectBin:true' : '';
+    return `    '${item.id}': {name:'${item.name}', stream:'${item.stream}', icon:\`${item.icon}\`${noCorrectBinPart}}${comma}`;
   });
-  return `${START_MARKER} — do not edit by hand, run \`npm run sync-catalog\` after\n  // changing the \`items\` array in recycling-training.html (see tools/sync-catalog.js).\n  const catalog = {\n${lines.join('\n')}\n  };\n  ${END_MARKER}`;
+  return `${START_MARKER} — do not edit by hand, run \`npm run sync-catalog\` after\n  // changing the \`ALL_ITEMS\` array in recycling-training.html (see tools/sync-catalog.js).\n  const catalog = {\n${lines.join('\n')}\n  };\n  ${END_MARKER}`;
 }
 
 function computeUpdatedReport(){
