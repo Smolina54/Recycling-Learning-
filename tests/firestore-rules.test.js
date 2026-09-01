@@ -63,6 +63,10 @@ async function main(){
     assertSucceeds(setDoc(doc(allowedUser, 'buildings', 'building-new', 'tenants', 'tenant-new'), { name: 'New Co', levels: ['Level 1'] })));
   await record('anon CANNOT create a tenant under a building', () =>
     assertFails(setDoc(doc(anon, 'buildings', 'building-new', 'tenants', 'tenant-hacked'), { name: 'Hacked', levels: [] })));
+  await record('non-allowlisted signed-in user CANNOT set itemOverrides on a building (same write rule as the name field, no separate schema for it)', () =>
+    assertFails(setDoc(doc(otherUser, 'buildings', 'building-new'), { itemOverrides: { 'pc-box': { stream: 'mr' } } }, { merge: true })));
+  await record('allowlisted user CAN set itemOverrides on a building', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'buildings', 'building-new'), { itemOverrides: { 'pc-box': { stream: 'mr' } } }, { merge: true })));
 
   await record('anon can create a valid submission', () =>
     assertSucceeds(addDoc(collection(anon, 'submissions'), validSubmission)));

@@ -80,6 +80,19 @@ async function seedMaliciousAttempt(){
       programId: 'recycling-sorting', score: 80, avoided: 20, total: 25,
       timestamp: new Date().toISOString(),
     });
+    // A submission from a building where pc-box (default stream "pc") was reconfigured to
+    // "mr" — the "most commonly missed items" list should label it Mixed Recycling here, not
+    // its global-default Paper & Cardboard (the mislabeling bug fixed alongside Milestone 2's
+    // item-streams editor). Marked as missed (0) so it's guaranteed a spot in the top-8 ranking.
+    await setDoc(doc(db, 'submissions', 'override-config-submission'), {
+      buildingId: 'override-config-building', buildingName: 'Override Config Tower',
+      tenantId: 'override-config-tenant', tenantName: 'Override Co',
+      level: 'Level 1', name: 'Pat Doe', email: 'pat@example.com',
+      programId: 'recycling-sorting', score: 96, avoided: 24, total: 25,
+      items: { 'pc-box': 0 },
+      itemOverridesSnapshot: JSON.stringify({ 'pc-box': { stream: 'mr' } }),
+      timestamp: new Date().toISOString(),
+    });
   });
   return testEnv; // not cleaned up here — same reasoning as game-regression.test.js
 }
@@ -146,6 +159,11 @@ async function runFlow(page){
     completedText.includes('<img src=x'), completedText.slice(0, 300));
   const completedHasRealImgTag = await page.$$eval('#completedTable img', els => els.length > 0);
   check('...and no real <img> element was created from it in Completed', !completedHasRealImgTag);
+
+  const missedListText = await page.$eval('#missedList', el => el.textContent).catch(() => '');
+  check('the "most commonly missed items" list labels a reconfigured item by its actual building-specific stream, not the global default',
+    missedListText.includes('Flattened cardboard box') && missedListText.includes('Mixed Recycling') && !missedListText.includes('Paper & Cardboard'),
+    missedListText.slice(0, 400));
 
   await page.click('#tabBuildingsBtn');
   await new Promise(r => setTimeout(r, 200));
@@ -367,6 +385,73 @@ async function runFlow(page){
   check('deleted tenant no longer appears', !tenantEntriesLive.some(t => t.includes('Test Tenant Renamed')), tenantEntriesLive.join(' || '));
   check('other tenants in the same building survive an unrelated tenant delete',
     tenantEntriesLive.some(t => t.includes('Widgetco')), tenantEntriesLive.join(' || '));
+
+  // --- Configure item streams (per-building item-stream overrides, Milestone 2) ---
+  row = await findBuildingRow(page, buildingName);
+  const buildingIdForItems = await row.evaluate(el => el.dataset.buildingId);
+  const itemsBuildingSelector = `.building-row[data-building-id="${buildingIdForItems}"]`;
+
+  await row.$eval('.configure-items-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  check('opening "Configure bins" shows the item-streams editor',
+    Boolean(await page.$(`${itemsBuildingSelector} .items-editor`)));
+
+  // Move "Flattened cardboard box" (pc-box, default stream pc) to Mixed Recycling.
+  await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="pc-box"]`, 'mr');
+  await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  check('"Custom bins" badge appears on the building once an override is saved',
+    Boolean(await page.$(`${itemsBuildingSelector} .custom-config-badge`)));
+
+  row = await findBuildingRow(page, buildingName);
+  await row.$eval('.configure-items-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  const pcBoxSelectValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="pc-box"]`, el => el.value);
+  check('the override persisted after reload — reopening the editor shows the saved stream',
+    pcBoxSelectValue === 'mr', pcBoxSelectValue);
+
+  // Reset to default, save, confirm the badge disappears.
+  await page.$eval(`${itemsBuildingSelector} .reset-items-btn`, el => el.click());
+  await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+  check('the "Custom bins" badge disappears after resetting to default and saving',
+    !(await page.$(`${itemsBuildingSelector} .custom-config-badge`)));
+
+  // Quick-merge shortcut: merge all of Paper & Cardboard into Mixed Recycling in one action.
+  row = await findBuildingRow(page, buildingName);
+  await row.$eval('.configure-items-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  await page.select(`${itemsBuildingSelector} .quick-merge-from`, 'pc');
+  await page.select(`${itemsBuildingSelector} .quick-merge-to`, 'mr');
+  await page.$eval(`${itemsBuildingSelector} .quick-merge-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  const pcItemIds = ['pc-box', 'pc-paper', 'pc-envelope', 'pc-newspaper', 'pc-tube'];
+  const mergedValues = await Promise.all(pcItemIds.map(id =>
+    page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="${id}"]`, el => el.value)));
+  check('quick-merge moves all 5 items from one stream to another in a single action',
+    mergedValues.every(v => v === 'mr'), mergedValues.join(','));
+
+  // Validation: try to merge everything else into gw too, leaving mr with no genuinely-wrong
+  // candidates for its own decoy pool — this must be rejected, not silently saved.
+  for (const fromStream of ['og', 'ew']){
+    await page.select(`${itemsBuildingSelector} .quick-merge-from`, fromStream);
+    await page.select(`${itemsBuildingSelector} .quick-merge-to`, 'gw');
+    await page.$eval(`${itemsBuildingSelector} .quick-merge-btn`, el => el.click());
+    await new Promise(r => setTimeout(r, 150));
+  }
+  await page.select(`${itemsBuildingSelector} .quick-merge-from`, 'mr');
+  await page.select(`${itemsBuildingSelector} .quick-merge-to`, 'gw');
+  await page.$eval(`${itemsBuildingSelector} .quick-merge-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 150));
+  await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 300));
+  const validationErrorText = await page.$eval(`${itemsBuildingSelector} .items-editor-error`, el => el.textContent).catch(() => '');
+  check('a configuration that would starve a stream of decoys is rejected at save time, not silently accepted',
+    validationErrorText.length > 0, validationErrorText);
+
+  await page.$eval(`${itemsBuildingSelector} .cancel-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 200));
 
   // --- Edit and delete the building itself ---
   row = await findBuildingRow(page, buildingName);
