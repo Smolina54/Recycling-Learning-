@@ -503,6 +503,16 @@ async function runFlow(page){
   buildingNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
   check('deleted building no longer appears in the list', !buildingNames.includes(renamedBuildingName), buildingNames.join('|') || '(none left)');
 
+  // --- Admins panel: its own tab now, not tucked inside Buildings ---
+  await page.click('#tabAdminsBtn');
+  await new Promise(r => setTimeout(r, 200));
+  check('Admins tab becomes visible on click',
+    await page.$eval('#adminsSection', el => getComputedStyle(el).display !== 'none'));
+  check('Buildings section hides when Admins tab is active',
+    await page.$eval('#buildingsSection', el => getComputedStyle(el).display === 'none'));
+  check('Reports section hides when Admins tab is active',
+    await page.$eval('#reportSection', el => getComputedStyle(el).display === 'none'));
+
   // --- Admins panel: grant/revoke a second reviewer without touching firestore.rules ---
   check('owner email note is shown', (await page.$eval('#ownerEmailNote', el => el.textContent)) === ALLOWED_EMAIL);
   check('no additional admins yet', (await page.$eval('#adminsList', el => el.textContent)).includes('just you'));
@@ -537,6 +547,8 @@ async function runFlow(page){
   check('signing out clears the KPI numbers, not just hides them', kpiRowEmptyAfterSignOut);
   const completedTableEmptyAfterSignOut = await page.$eval('#completedTable', el => el.innerHTML.trim() === '');
   check('signing out clears the Completed table\'s real names/emails', completedTableEmptyAfterSignOut);
+  const adminsListEmptyAfterSignOut = await page.$eval('#adminsList', el => el.innerHTML.trim() === '');
+  check('signing out also clears the Admins list (now its own tab, same privacy rule applies)', adminsListEmptyAfterSignOut);
 
   // --- Email/Password sign-in: Firebase's own auth, no external Google/Microsoft account needed ---
   // Mirrors the real workflow: (1) owner grants a new admin by email, (2) that person's account
@@ -548,7 +560,7 @@ async function runFlow(page){
 
   await page.evaluate(async (email) => { await window.__testSignIn(email, 'test-password-123'); }, ALLOWED_EMAIL);
   await new Promise(r => setTimeout(r, 1000));
-  await page.click('#tabBuildingsBtn');
+  await page.click('#tabAdminsBtn');
   await new Promise(r => setTimeout(r, 300));
   await page.type('#newAdminEmail', emailAdmin);
   await page.click('#addAdminBtn');

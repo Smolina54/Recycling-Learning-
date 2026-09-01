@@ -2581,6 +2581,7 @@ var qrcode = function() {
   <div class="admin-tabs" id="adminTabs" style="display:none;">
     <button class="tab-btn active" id="tabReportsBtn">Reports</button>
     <button class="tab-btn" id="tabBuildingsBtn">Buildings</button>
+    <button class="tab-btn" id="tabAdminsBtn">Admins</button>
   </div>
 
   <section id="buildingsSection" style="display:none;">
@@ -2604,9 +2605,14 @@ var qrcode = function() {
     </div>
 
     <div id="buildingsList"></div>
+  </section>
+
+  <section id="adminsSection" style="display:none;">
+    <div class="report-header-row">
+      <h2>Admins</h2>
+    </div>
 
     <div class="report-block">
-      <h3>Admins</h3>
       <p class="block-sub">Google accounts allowed to sign in here and view/export/delete results or manage buildings. <span id="ownerEmailNote"></span> always has access. Adding someone here takes effect immediately — no code change or deploy needed.</p>
       <div class="filter-row">
         <label class="filter-field"><span>Google account email</span><input type="email" id="newAdminEmail" placeholder="name@company.com"></label>
@@ -4098,18 +4104,20 @@ try {
     input.value = '';
   });
 
-  document.getElementById('tabReportsBtn').addEventListener('click', () => {
-    document.getElementById('tabReportsBtn').classList.add('active');
-    document.getElementById('tabBuildingsBtn').classList.remove('active');
-    document.getElementById('reportSection').style.display = 'block';
-    document.getElementById('buildingsSection').style.display = 'none';
-  });
-  document.getElementById('tabBuildingsBtn').addEventListener('click', () => {
-    document.getElementById('tabBuildingsBtn').classList.add('active');
-    document.getElementById('tabReportsBtn').classList.remove('active');
-    document.getElementById('buildingsSection').style.display = 'block';
-    document.getElementById('reportSection').style.display = 'none';
-  });
+  // Three tabs, one visible section at a time — showTab() is the single place that knows how
+  // to switch between them, so tabReportsBtn/tabBuildingsBtn/tabAdminsBtn and the sign-in
+  // success handler all stay in sync instead of each toggling display/active by hand.
+  function showTab(tabName){
+    const tabs = { reports: 'tabReportsBtn', buildings: 'tabBuildingsBtn', admins: 'tabAdminsBtn' };
+    const sections = { reports: 'reportSection', buildings: 'buildingsSection', admins: 'adminsSection' };
+    Object.keys(tabs).forEach(name => {
+      document.getElementById(tabs[name]).classList.toggle('active', name === tabName);
+      document.getElementById(sections[name]).style.display = name === tabName ? 'block' : 'none';
+    });
+  }
+  document.getElementById('tabReportsBtn').addEventListener('click', () => showTab('reports'));
+  document.getElementById('tabBuildingsBtn').addEventListener('click', () => showTab('buildings'));
+  document.getElementById('tabAdminsBtn').addEventListener('click', () => showTab('admins'));
 
   document.getElementById('signInBtn').addEventListener('click', async () => {
     if (!auth){ document.getElementById('authStatus').textContent = 'Firebase is not configured yet.'; return; }
@@ -4169,6 +4177,8 @@ try {
         document.getElementById('emailSignInForm').reset();
         document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';
         document.getElementById('adminTabs').style.display = 'none';
+        document.getElementById('adminsSection').style.display = 'none';
+        document.getElementById('adminsList').innerHTML = '';
         document.getElementById('buildingsSection').style.display = 'none';
         document.getElementById('buildingsList').innerHTML = '';
         document.getElementById('reportSection').style.display = 'none';
@@ -4179,8 +4189,12 @@ try {
         document.getElementById('missedList').innerHTML = '';
         document.getElementById('streamBars').innerHTML = '';
         document.getElementById('trendChart').innerHTML = '';
+        // Reset which tab LOOKS active for next sign-in, without using showTab() here — that
+        // would set reportSection back to display:block, undoing the hide two lines above and
+        // reintroducing the exact post-sign-out data-visibility bug fixed earlier this project.
         document.getElementById('tabReportsBtn').classList.add('active');
         document.getElementById('tabBuildingsBtn').classList.remove('active');
+        document.getElementById('tabAdminsBtn').classList.remove('active');
       }
     });
   }
