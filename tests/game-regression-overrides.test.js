@@ -210,17 +210,31 @@ async function runFlow(page){
     firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
   });
   let snapshotOk = false;
+  let attemptSnapshotOk = false;
   await verifyEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     const q = query(collection(db, 'submissions'), where('email', '==', 'jane-overrides-1@example.com'));
     const snap = await getDocs(q);
-    if (snap.empty) return;
-    const data = snap.docs[0].data();
-    let parsed = null;
-    try { parsed = JSON.parse(data.itemOverridesSnapshot || '{}'); } catch { parsed = null; }
-    snapshotOk = Boolean(parsed && parsed['pc-box'] && parsed['pc-box'].stream === 'mr');
+    if (!snap.empty){
+      const data = snap.docs[0].data();
+      let parsed = null;
+      try { parsed = JSON.parse(data.itemOverridesSnapshot || '{}'); } catch { parsed = null; }
+      snapshotOk = Boolean(parsed && parsed['pc-box'] && parsed['pc-box'].stream === 'mr');
+    }
+    // recordAttemptStarted() gets the same field, written the moment "Begin the sort" is
+    // clicked — separately checked here since a dropped/abandoned attempt (no matching
+    // submission) is exactly the case this exists to cover, so it needs its own verification.
+    const q2 = query(collection(db, 'attempts'), where('email', '==', 'jane-overrides-1@example.com'));
+    const snap2 = await getDocs(q2);
+    if (!snap2.empty){
+      const data2 = snap2.docs[0].data();
+      let parsed2 = null;
+      try { parsed2 = JSON.parse(data2.itemOverridesSnapshot || '{}'); } catch { parsed2 = null; }
+      attemptSnapshotOk = Boolean(parsed2 && parsed2['pc-box'] && parsed2['pc-box'].stream === 'mr');
+    }
   });
   check('the submission stores a snapshot of the config that was active when it was taken', snapshotOk);
+  check('the attempt (recorded when "Begin the sort" is clicked) also stores the config snapshot', attemptSnapshotOk);
 }
 
 // Milestone 4 (ideal-vs-acceptable): pc-box stays primary/ideal in pc, but is ALSO acceptable

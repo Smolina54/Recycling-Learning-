@@ -2452,20 +2452,37 @@ try {
   // Fire-and-forget: lets the report compute a completion rate (started vs. finished).
   // Not shown to the trainee if it fails — unlike a lost final result, a missed
   // "started" ping isn't something they need to know about or retry.
+  // A write failure here is occasionally transient — retry a couple of times with a short,
+  // increasing pause before giving up, rather than treating the very first hiccup as final.
+  // Found via testing: writes carrying a non-trivial itemOverridesSnapshot value fail
+  // intermittently against the local emulator (~30% of runs) with no repeatable cause found;
+  // never observed on the plain default-config path. Root cause unconfirmed (could be emulator-
+  // only), but retrying costs nothing and directly protects against losing a real submission
+  // either way — matches this app's standing priority that no real attempt/result gets lost.
+  async function addDocWithRetry(collectionRef, payload, attempts = 3){
+    for (let i = 0; i < attempts; i++){
+      try {
+        await addDoc(collectionRef, payload);
+        return true;
+      } catch (err){
+        if (i === attempts - 1){ console.error('addDocWithRetry: all attempts failed:', err); return false; }
+        await new Promise(r => setTimeout(r, 500 * (i + 1)));
+      }
+    }
+    return false;
+  }
+
   async function recordAttemptStarted(){
     if (!db || isPreviewMode) return;
-    try {
-      await addDoc(collection(db, 'attempts'), {
-        buildingId: siteContext.buildingId, buildingName: siteContext.buildingName,
-        tenantId: siteContext.tenantId, tenantName: siteContext.tenantName,
-        level: siteContext.level, name: siteContext.name, email: siteContext.email,
-        programId: PROGRAM_ID,
-        itemOverridesSnapshot: JSON.stringify(itemOverrides),
-        startedAt: serverTimestamp()
-      });
-    } catch (err){
-      console.error('Failed to record attempt start:', err);
-    }
+    const ok = await addDocWithRetry(collection(db, 'attempts'), {
+      buildingId: siteContext.buildingId, buildingName: siteContext.buildingName,
+      tenantId: siteContext.tenantId, tenantName: siteContext.tenantName,
+      level: siteContext.level, name: siteContext.name, email: siteContext.email,
+      programId: PROGRAM_ID,
+      itemOverridesSnapshot: JSON.stringify(itemOverrides),
+      startedAt: serverTimestamp()
+    });
+    if (!ok) console.error('Failed to record attempt start after retries.');
   }
 
   document.getElementById('startGameBtn').addEventListener('click', () => {
@@ -2479,13 +2496,7 @@ try {
 
   async function submitResults(payload){
     if (isPreviewMode) return true; // nothing to save — report success so no warning banner shows
-    try {
-      await addDoc(collection(db, 'submissions'), payload);
-      return true;
-    } catch (err){
-      console.error('Failed to submit Recycling Training results:', err);
-      return false;
-    }
+    return await addDocWithRetry(collection(db, 'submissions'), payload);
   }
 
   let lastResultsPayload = null;
