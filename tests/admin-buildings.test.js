@@ -396,6 +396,16 @@ async function runFlow(page){
   check('opening "Configure bins" shows the item-streams editor',
     Boolean(await page.$(`${itemsBuildingSelector} .items-editor`)));
 
+  // Real bug Sergio caught: clicking the collapse arrow while "Configure bins" is open hid
+  // only the QR code, leaving the rest of the expanded card (including the items editor)
+  // behind — the QR-render check had drifted out of sync with the card's own isExpanded logic.
+  await page.click(`${itemsBuildingSelector} .building-toggle-btn`);
+  await new Promise(r => setTimeout(r, 200));
+  check('the collapse arrow does not hide the QR code while "Configure bins" is open (matches the rest of the card staying expanded)',
+    Boolean(await page.$(`${itemsBuildingSelector} .building-qr svg`)));
+  check('the items editor is still open after clicking the collapse arrow',
+    Boolean(await page.$(`${itemsBuildingSelector} .items-editor`)));
+
   // Move "Flattened cardboard box" (pc-box, default stream pc) to Mixed Recycling.
   await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="pc-box"]`, 'mr');
   await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());

@@ -3564,6 +3564,15 @@ try {
     refreshBuildingsView();
   }
 
+  // Single source of truth for "should this building's card be shown expanded" — used both
+  // for the card's own content and for whether its QR code gets (re)rendered. Kept as one
+  // function specifically because those two call sites drifted out of sync once before (the
+  // QR check forgot the itemsEditor case, so collapsing while "Configure bins" was open hid
+  // only the QR code, leaving the rest of the expanded card behind).
+  function isBuildingExpanded(b){
+    return expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id) || editingItemsBuildingId === b.id;
+  }
+
   function renderBuildingsList(buildings){
     const container = document.getElementById('buildingsList');
     if (buildings.length === 0){
@@ -3574,7 +3583,7 @@ try {
     }
     container.innerHTML = buildings.map(b => {
       const link = `${window.location.origin}/recycling-training.html?b=${b.id}`;
-      const isExpanded = expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id) || editingItemsBuildingId === b.id;
+      const isExpanded = isBuildingExpanded(b);
       const headerHtml = editingBuildingId === b.id
         ? `<div class="building-edit-row">
             <input type="text" class="edit-building-name-input" value="${esc(b.name)}">
@@ -3644,7 +3653,7 @@ try {
     }).join('');
 
     buildings.forEach(b => {
-      if (expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id)){
+      if (isBuildingExpanded(b)){
         renderQrCode(b.id, `${window.location.origin}/recycling-training.html?b=${b.id}`);
       }
     });
