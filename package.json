@@ -5,6 +5,7 @@
   "scripts": {
     "test:rules": "firebase emulators:exec --only firestore \"node tests/firestore-rules.test.js\"",
     "test:game": "firebase emulators:exec --only firestore \"node tests/game-regression.test.js\"",
+    "test:overrides": "firebase emulators:exec --only firestore \"node tests/game-regression-overrides.test.js\"",
     "test:preview": "firebase emulators:exec --only firestore \"node tests/preview-mode.test.js\"",
     "test:report": "node tests/report-ui.test.js",
     "test:admin": "firebase emulators:exec --only firestore,auth \"node tests/admin-buildings.test.js\"",

@@ -2379,7 +2379,7 @@ try {
         tenantId: siteContext.tenantId, tenantName: siteContext.tenantName,
         level: siteContext.level, name: siteContext.name, email: siteContext.email,
         programId: PROGRAM_ID,
-        itemOverridesSnapshot: itemOverrides,
+        itemOverridesSnapshot: JSON.stringify(itemOverrides),
         startedAt: serverTimestamp()
       });
     } catch (err){
@@ -2518,7 +2518,7 @@ try {
       name: siteContext.name,
       email: siteContext.email,
       programId: PROGRAM_ID,
-      itemOverridesSnapshot: itemOverrides,
+      itemOverridesSnapshot: JSON.stringify(itemOverrides),
       score: pct,
       avoided: avoidedCount,
       total,
