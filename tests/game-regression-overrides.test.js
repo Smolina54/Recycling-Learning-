@@ -110,6 +110,16 @@ async function runFlow(page){
   for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 80)); }
   await new Promise(r => setTimeout(r, 200));
 
+  const pcNoteText = await page.$eval('.building-note[data-stream="pc"]', el => el.textContent).catch(() => '');
+  check('the Paper & Cardboard walkthrough panel shows a dynamic note explaining the redirect',
+    pcNoteText.includes('Mixed Recycling') && pcNoteText.length > 0, pcNoteText);
+  const mrNoteText = await page.$eval('.building-note[data-stream="mr"]', el => el.textContent).catch(() => '');
+  check('the Mixed Recycling walkthrough panel shows a dynamic note explaining what it absorbed',
+    mrNoteText.includes('Paper & Cardboard') && mrNoteText.length > 0, mrNoteText);
+  const gwNoteText = await page.$eval('.building-note[data-stream="gw"]', el => el.textContent).catch(() => '');
+  check('an unaffected stream (General Waste) shows no note at all',
+    gwNoteText === '', gwNoteText);
+
   await page.click('#startGameBtn');
   await new Promise(r => setTimeout(r, 300));
 
@@ -130,6 +140,9 @@ async function runFlow(page){
       check('a 0-target phase auto-completes immediately (no drag required to proceed)', nextVisibleImmediately);
       const boardCount = await page.$$eval('.board-item', els => els.length);
       check('a 0-target phase still shows 5 decoys on the board (still tested, still scored)', boardCount === 5, boardCount);
+      const phaseNoteText = await page.$eval('#phaseBuildingNote', el => el.textContent).catch(() => '');
+      check('the 0-target phase shows the same recap note as the walkthrough (still teaches the category)',
+        phaseNoteText.includes('Mixed Recycling') && phaseNoteText.length > 0, phaseNoteText);
     }
     if (stream === 'mr'){
       check('mixed recycling absorbs the 5 redirected pc items — target becomes 10, not 5',

@@ -171,6 +171,17 @@
   .detail-title-group h2{font-family:var(--display); text-transform:uppercase; font-size:28px; margin:2px 0 6px;}
   .detail-desc{color:var(--ink-soft); font-size:15px; max-width:600px;}
 
+  /* Empty by default for every building with no custom item-stream config — populated by
+     applyBuildingNotes() only when this building's setup differs from the standard 5 streams. */
+  .building-note{
+    margin-top:12px; padding:10px 14px; max-width:600px;
+    border-left:3px solid var(--ink-soft); font-size:13.5px; color:var(--ink-soft);
+  }
+  .building-note:empty{display:none;}
+  .building-note p{margin:0 0 4px;}
+  .building-note p:last-child{margin-bottom:0;}
+  .building-note b{color:var(--ink);}
+
   .rule-grid{display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:22px;}
   @media (max-width:640px){.rule-grid{grid-template-columns:1fr;}}
   .rule-card{background:var(--paper); border:1px solid var(--line); padding:18px 20px;}
@@ -440,6 +451,7 @@
         </div>
       </div>
       <p class="detail-desc">Anything that can't be recycled, composted, or handled as e-waste goes here. This is the last resort stream — the goal across every floor is to keep it as small as possible.</p>
+      <div class="building-note" data-stream="gw"></div>
       <div class="rule-grid">
         <div class="rule-card yes">
           <h3>✓ Goes in</h3>
@@ -475,6 +487,7 @@
         </div>
       </div>
       <p class="detail-desc">Rigid containers only — bottles, cans, and jars. The single rule that matters most here: clean and dry. Food residue is the #1 reason a whole bin of recycling gets rejected and sent to landfill instead.</p>
+      <div class="building-note" data-stream="mr"></div>
       <div class="rule-grid">
         <div class="rule-card yes">
           <h3>✓ Goes in</h3>
@@ -483,14 +496,13 @@
             <li>Aluminium and steel cans</li>
             <li>Glass bottles and jars</li>
             <li>Rinsed takeaway plastic containers</li>
-            <li>Paper or cardboard (only if your building has no separate Paper &amp; Cardboard stream)</li>
           </ul>
         </div>
         <div class="rule-card no">
           <h3>✕ Never goes in</h3>
           <ul>
             <li>Soft plastics — bags, cling wrap, bubble wrap</li>
-            <li>Paper or cardboard (if your building has its own Paper &amp; Cardboard stream)</li>
+            <li>Paper or cardboard (own stream)</li>
             <li>Long-life milk and juice cartons</li>
             <li>Coffee cups (plastic-lined, not recyclable here)</li>
             <li>Anything still holding food or liquid</li>
@@ -511,7 +523,8 @@
           <h2>Paper &amp; Cardboard</h2>
         </div>
       </div>
-      <p class="detail-desc">Dry, clean paper fibre — office paper, envelopes, and flattened boxes. Grease and food contact are the two things that disqualify a piece of paper or cardboard from this stream. If your building doesn't have this stream, paper and cardboard goes in Mixed Recycling instead.</p>
+      <p class="detail-desc">Dry, clean paper fibre — office paper, envelopes, and flattened boxes. Grease and food contact are the two things that disqualify a piece of paper or cardboard from this stream.</p>
+      <div class="building-note" data-stream="pc"></div>
       <div class="rule-grid">
         <div class="rule-card yes">
           <h3>✓ Goes in</h3>
@@ -547,6 +560,7 @@
         </div>
       </div>
       <p class="detail-desc">Give your food scraps a second life — don't send them to landfill. Organic waste in Australian landfills generates around 13 million tonnes of greenhouse gas emissions every year.</p>
+      <div class="building-note" data-stream="og"></div>
       <div class="rule-grid">
         <div class="rule-card yes">
           <h3>✓ Goes in</h3>
@@ -583,6 +597,7 @@
         </div>
       </div>
       <p class="detail-desc">Batteries and electronics contain materials that are dangerous in landfill and valuable when recovered properly. These never go in a general bin — they go to a dedicated collection point.</p>
+      <div class="building-note" data-stream="ew"></div>
       <div class="rule-grid">
         <div class="rule-card yes">
           <h3>✓ Goes in</h3>
@@ -624,6 +639,7 @@
       <div class="phase-label" id="phaseLabel">Phase 1 of 5 — General Waste</div>
       <div class="phase-counter" id="phaseCounter">Sorted 0 of 5</div>
     </div>
+    <div class="building-note" id="phaseBuildingNote"></div>
 
     <div class="phase-bin-row">
       <div class="bin-drop-target" id="phaseBin" data-stream="gw">
@@ -789,6 +805,7 @@ try {
       applyEffectiveStreams(itemOverrides);
       currentDecoyMap = decoyMap;
       allResults = freshResults();
+      applyBuildingNotes();
       siteContext.buildingId = 'preview'; siteContext.buildingName = 'Preview';
       siteContext.tenantId = 'preview'; siteContext.tenantName = 'Preview';
       siteContext.level = 'Preview'; siteContext.name = 'Preview'; siteContext.email = 'preview@example.com';
@@ -813,6 +830,7 @@ try {
       applyEffectiveStreams(itemOverrides);
       currentDecoyMap = hasOverrides ? buildDecoyPlan() : decoyMap;
       allResults = freshResults();
+      applyBuildingNotes();
 
       const tenantsSnap = await getDocs(collection(db, 'buildings', buildingId, 'tenants'));
       tenantsCache = tenantsSnap.docs.map(d => ({id: d.id, ...d.data()}));
@@ -2142,6 +2160,47 @@ try {
     return plan;
   }
 
+  // Compares each item's current (effective) stream against its catalog default and turns
+  // any difference into plain-language notes, one per stream — shown on the walkthrough
+  // panel (via applyBuildingNotes) and inside a zero-target game phase (via startPhase).
+  // Returns '' for every stream on a building with no overrides (DEFAULT_STREAM_BY_ID never
+  // differs from item.stream in that case), so the note divs simply stay empty/hidden.
+  function computeBuildingNotes(){
+    const movedOutOf = {}, movedInto = {};
+    items.forEach(it => {
+      const from = DEFAULT_STREAM_BY_ID[it.id], to = it.stream;
+      if (from === to) return;
+      (movedOutOf[from] = movedOutOf[from] || []).push({item: it, to});
+      (movedInto[to] = movedInto[to] || []).push({item: it, from});
+    });
+    const notes = {};
+    streams.forEach(s => {
+      let html = '';
+      if (movedOutOf[s]){
+        const destinations = [...new Set(movedOutOf[s].map(x => x.to))];
+        if (destinations.length === 1){
+          html += `<p><b>This building doesn't have a separate ${streamNames[s]} bin.</b> These items go to ${streamNames[destinations[0]]} instead: ${movedOutOf[s].map(x => x.item.name).join(', ')}.</p>`;
+        } else {
+          html += `<p>For this building, some items are sorted differently: ${destinations.map(d =>
+            `${movedOutOf[s].filter(x => x.to === d).map(x => x.item.name).join(', ')} → ${streamNames[d]}`).join('; ')}.</p>`;
+        }
+      }
+      if (movedInto[s]){
+        html += `<p>This building also sorts these here: ${movedInto[s].map(x => `${x.item.name} (normally ${streamNames[x.from]})`).join(', ')}.</p>`;
+      }
+      notes[s] = html;
+    });
+    return notes;
+  }
+
+  function applyBuildingNotes(){
+    const notes = computeBuildingNotes();
+    streams.forEach(s => {
+      const el = document.querySelector(`.building-note[data-stream="${s}"]`);
+      if (el) el.innerHTML = notes[s] || '';
+    });
+  }
+
   function itemById(id){ return items.find(it => it.id === id); }
 
   function shuffle(arr){
@@ -2347,6 +2406,7 @@ try {
     document.getElementById('phaseBinIcon').style.cssText = `background:var(--${stream}-tint); border:2px solid var(--${stream}); color:var(--${stream});`;
     document.getElementById('phaseBinIcon').innerHTML = binIcons[stream];
     document.getElementById('phaseBinLabel').textContent = streamNames[stream];
+    document.getElementById('phaseBuildingNote').innerHTML = computeBuildingNotes()[stream] || '';
     nextPhaseBtn.style.display = 'none';
     gameFeedback.classList.remove('show','correct','wrong');
     gameFeedback.innerHTML = '';
