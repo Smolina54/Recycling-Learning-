@@ -604,13 +604,13 @@
           <ul>
             <li>Cables, chargers, adaptors</li>
             <li>Phones, laptops, small electronics</li>
-            <li>Printer and toner cartridges</li>
           </ul>
         </div>
         <div class="rule-card no">
           <h3>✕ Never goes in</h3>
           <ul>
             <li>Batteries — need their own dedicated battery point, not this one (ask your Waste Champion or Building Management where it is)</li>
+            <li>Printer and toner cartridges — most manufacturers run their own take-back program for these, separate from this point (ask your Waste Champion or Building Management where it is)</li>
             <li>Any general waste or recycling bin</li>
             <li>Bulk furniture or large appliances (arrange separate pickup)</li>
           </ul>
@@ -2038,7 +2038,7 @@ try {
 </g></svg>`,
       explain:"Phones and other small electronics need a dedicated collection point, cracked or not — the materials inside need proper recovery.",
       shortWhy:"Electronics, not paper waste" },
-    { id:'ew-toner', name:'Printer toner cartridge', stream:'ew',
+    { id:'ew-toner', name:'Printer toner cartridge', stream:'ew', noCorrectBin:true,
       icon:`<svg viewBox="0 0 128 128"><g>
 	<path style="fill:#757575;" d="M98.27,44.34H29.73l4.48-27.88c0-1.9,1.54-3.45,3.45-3.45h52.97c1.9,0,3.45,1.54,3.45,3.45
 		L98.27,44.34z"/>
@@ -2088,8 +2088,8 @@ try {
 		c1.36,0,2.47,1.1,2.47,2.47v0.4C69.43,84.4,68.32,85.5,66.96,85.5z"/>
 	<path style="fill:#212121;" d="M93.87,90.44H34.13c-2.94,0-5.32,2.38-5.32,5.32v0h70.37v0C99.19,92.82,96.8,90.44,93.87,90.44z"/>
 </g></svg>`,
-      explain:"Printer and toner cartridges are electronics — most manufacturers also run their own take-back program, but they never belong in an ordinary waste or recycling bin.",
-      shortWhy:"Cartridge won't compost" },
+      explain:"Printer and toner cartridges need their own dedicated collection — most manufacturers run a take-back program for them, separate from the general E-Waste point used for cables, phones, and other electronics. They never belong in an ordinary waste or recycling bin either.",
+      shortWhy:"Needs its own cartridge return point" },
     { id:'ew-mouse', name:'Computer mouse', stream:'ew',
       icon:`<svg viewBox="0 0 128 128"><g>
 	<path style="fill:#E0E0E0;" d="M103.07,37.67C103.07,16.11,85.55,4,64,4S24.93,16.11,24.93,37.67v47.27
@@ -2121,18 +2121,20 @@ try {
   // Default, hand-curated decoy pairings — kept exactly as-is and used unmodified for any
   // building with no itemOverrides, so the default experience never changes (see
   // buildDecoyPlan() below for the per-building-override case).
-  // gw has 4 decoys and ew has 6 — not a typo. ew-battery is a noCorrectBin item (batteries
-  // need their own dedicated point, not any of the 5 streams) and is deliberately tested as a
-  // decoy in ITS OWN nominal stream (ew) instead of gw, since "would you wrongly put a battery
-  // in the general E-Waste bin" is the real question, not "in general waste". The total across
-  // all 5 phases is still exactly 25 — that's the invariant that actually matters for score
-  // comparability, not an equal split per phase.
+  // Counts per phase are uneven (gw:4, og:4, ew:7) — not a typo. ew-battery and ew-toner are
+  // both noCorrectBin items (batteries and printer/toner cartridges each need their own
+  // dedicated collection point, not any of the 5 streams) and are deliberately tested as
+  // decoys in THEIR OWN nominal stream (ew) rather than wherever they used to sit, since
+  // "would you wrongly put this in the general E-Waste bin" is the real question being tested,
+  // not "in general waste"/"in organics". The total across all 5 phases is still exactly 25 —
+  // that's the invariant that actually matters for score comparability, not an equal split
+  // per phase.
   const decoyMap = {
     gw: ['mr-bottle','mr-jar','pc-box','og-banana'],
     mr: ['gw-pizza','pc-paper','pc-envelope','og-teabag','ew-cables'],
     pc: ['gw-cup','mr-can','og-apple','og-coffee','ew-phone'],
-    og: ['gw-mug','mr-tin','pc-newspaper','ew-toner','ew-mouse'],
-    ew: ['gw-chips','gw-tissue','mr-tub','pc-tube','og-fish','ew-battery']
+    og: ['gw-mug','mr-tin','pc-newspaper','ew-mouse'],
+    ew: ['gw-chips','gw-tissue','mr-tub','pc-tube','og-fish','ew-battery','ew-toner']
   };
 
   const DEFAULT_STREAM_BY_ID = {};
