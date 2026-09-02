@@ -39,6 +39,23 @@ const BLOCKED_ITEM_OVERRIDES = {
   'og-teabag': { notAccepted: true },
 };
 
+// A fourth building: full Paper & Cardboard -> Organics merge — a real config discovered (via
+// a 200k-config stress test, not observed in production) to leave Organics with ZERO decoys
+// under the FIRST version of buildDecoyPlan()'s cross-stream dedup fix (a simple greedy
+// fixed-order assignment). Replaced with a proper bipartite matching (Kuhn's algorithm) —
+// this building locks in that a full single-stream merge, the primary documented admin
+// workflow, always gives every phase its full DECOY_CAP.
+const FULL_MERGE_BUILDING_ID = 'test-tower-full-merge';
+const FULL_MERGE_TENANT_ID = 'test-tenant-full-merge';
+const FULL_MERGE_GAME_URL = `${url.pathToFileURL(GAME_PATH).href}?b=${FULL_MERGE_BUILDING_ID}&emulator=1`;
+const FULL_MERGE_ITEM_OVERRIDES = {
+  'pc-box': { stream: 'og' },
+  'pc-paper': { stream: 'og' },
+  'pc-envelope': { stream: 'og' },
+  'pc-newspaper': { stream: 'og' },
+  'pc-tube': { stream: 'og' },
+};
+
 // pc's 5 items redirected to mr — the exact "no Paper & Cardboard bin" case that started this.
 const ITEM_OVERRIDES = {
   'pc-box': { stream: 'mr' },
@@ -79,6 +96,8 @@ async function seedTestBuilding(){
     await setDoc(doc(db, 'buildings', ACCEPTABLE_BUILDING_ID, 'tenants', ACCEPTABLE_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
     await setDoc(doc(db, 'buildings', BLOCKED_BUILDING_ID), { name: 'Test Tower Blocked', itemOverrides: BLOCKED_ITEM_OVERRIDES });
     await setDoc(doc(db, 'buildings', BLOCKED_BUILDING_ID, 'tenants', BLOCKED_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
+    await setDoc(doc(db, 'buildings', FULL_MERGE_BUILDING_ID), { name: 'Test Tower Full Merge', itemOverrides: FULL_MERGE_ITEM_OVERRIDES });
+    await setDoc(doc(db, 'buildings', FULL_MERGE_BUILDING_ID, 'tenants', FULL_MERGE_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
   });
   return testEnv;
 }
@@ -115,6 +134,7 @@ async function main(){
     await runFlow(page);
     await runAcceptableFlow(browser, consoleErrors);
     await runBlockedFlow(browser, consoleErrors);
+    await runFullMergeFlow(browser, consoleErrors);
   } catch (err) {
     console.error('CRASHED — dumping diagnostics:', err.message);
     console.error('Console errors so far:', JSON.stringify(consoleErrors, null, 2));
@@ -406,6 +426,62 @@ async function runBlockedFlow(browser, consoleErrors){
   const scoreOfText = await page.$eval('#scoreOf', el => el.textContent.trim()).catch(() => '');
   const totalMatch = scoreOfText.match(/\/\s*(\d+)\s*correctly avoided/);
   check('total stays exactly 25 even with a per-building "not accepted anywhere" item',
+    totalMatch && totalMatch[1] === '25', scoreOfText);
+
+  await page.close();
+}
+
+// Regression test for a real bug found by stress-testing buildDecoyPlan(): merging Paper &
+// Cardboard fully into Organics used to leave Organics with ZERO decoys (not just fewer than
+// DECOY_CAP — literally none), because a naive fixed-order greedy assignment let earlier
+// streams exhaust every item Organics could have used, even though a valid 25-item disjoint
+// assignment existed. Every phase must get its full DECOY_CAP=5 decoys, always.
+async function runFullMergeFlow(browser, consoleErrors){
+  const page = await browser.newPage();
+  page.on('console', async (msg) => {
+    if (msg.type() !== 'error') return;
+    const parts = await Promise.all(msg.args().map(async (a) => {
+      try { return await a.evaluate(v => (v && v.message) ? v.message + (v.stack ? '\n' + v.stack : '') : JSON.stringify(v)); }
+      catch { return msg.text(); }
+    }));
+    consoleErrors.push('[full-merge-flow] ' + parts.join(' '));
+  });
+  page.on('pageerror', (err) => consoleErrors.push('[full-merge-flow] pageerror: ' + err.message));
+
+  await passIdGate(page, 'jane-full-merge@example.com', FULL_MERGE_GAME_URL, FULL_MERGE_TENANT_ID);
+  const tabs = await page.$$('.bin-tab');
+  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 80)); }
+  await new Promise(r => setTimeout(r, 200));
+  await page.click('#startGameBtn');
+  await new Promise(r => setTimeout(r, 300));
+
+  const boardCountsByStream = {};
+  for (let i = 0; i < 5; i++){
+    const stream = STREAM_ORDER[i];
+    boardCountsByStream[stream] = await page.$$eval('.board-item', els => els.length);
+    const reached = await resolvePhase(page, 25);
+    if (!reached) break;
+    await page.click('#nextPhaseBtn');
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  // pc has 0 correct items here (fully merged away), og has 10 (5 native + 5 absorbed) — so
+  // board sizes are correct-target + DECOY_CAP: pc=0+5=5, og=10+5=15, gw/mr=5+5=10. ew is
+  // unaffected by THIS merge but already has only 3 correct items (battery/toner are
+  // noCorrectBin, see the earlier reclassification work), so ew=3+5=8, not 10. The point of
+  // this check is specifically that NONE of them fall short of their expected DECOY_CAP=5.
+  check('the redirected stream (pc) still gets its full 5 decoys despite having 0 correct items',
+    boardCountsByStream.pc === 5, boardCountsByStream.pc);
+  check('the absorbing stream (og) still gets its full 5 decoys on top of its 10 correct items (not fewer, not zero)',
+    boardCountsByStream.og === 15, boardCountsByStream.og);
+  check('gw/mr/ew (unaffected by the merge) keep their normal boards (10, 10, 8 — ew is already 3-correct)',
+    boardCountsByStream.gw === 10 && boardCountsByStream.mr === 10 && boardCountsByStream.ew === 8,
+    JSON.stringify(boardCountsByStream));
+
+  await new Promise(r => setTimeout(r, 300));
+  const scoreOfText = await page.$eval('#scoreOf', el => el.textContent.trim()).catch(() => '');
+  const totalMatch = scoreOfText.match(/\/\s*(\d+)\s*correctly avoided/);
+  check('total stays exactly 25 for a full single-stream merge too',
     totalMatch && totalMatch[1] === '25', scoreOfText);
 
   await page.close();
