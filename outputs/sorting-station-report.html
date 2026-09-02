@@ -2433,7 +2433,7 @@ var qrcode = function() {
   .item-toggle input{position:absolute; inset:0; opacity:0; margin:0; cursor:pointer;}
   .item-toggle-track{position:absolute; inset:0; background:var(--ink-soft); border-radius:20px; transition:background .15s ease;}
   .item-toggle-thumb{position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; transition:transform .15s ease;}
-  .item-toggle input:checked + .item-toggle-track{background:var(--forest);}
+  .item-toggle input:checked + .item-toggle-track{background:#2ECC5F;}
   .item-toggle input:checked + .item-toggle-track .item-toggle-thumb{transform:translateX(14px);}
   .item-toggle input:focus-visible + .item-toggle-track{outline:2px solid var(--ink); outline-offset:2px;}
   .items-card select{
@@ -4656,7 +4656,12 @@ try {
     Object.keys(catalog).forEach(id => { grouped[effectiveStreamInDraft(id)].push(id); });
 
     const sectionsHtml = streams.map(s => {
-      const ids = grouped[s].slice().sort((a,b) => catalog[a].name.localeCompare(catalog[b].name));
+      // Active items first, then inactive ones — each group alphabetical — so the on/off state
+      // reads as two clear clusters instead of being interleaved by name.
+      const ids = grouped[s].slice().sort((a,b) => {
+        const activeDiff = Number(effectiveActiveInDraft(b)) - Number(effectiveActiveInDraft(a));
+        return activeDiff !== 0 ? activeDiff : catalog[a].name.localeCompare(catalog[b].name);
+      });
       const cardsHtml = ids.map(id => {
         const active = effectiveActiveInDraft(id);
         const iconHtml = catalog[id].icon ? `<span class="items-card-icon">${catalog[id].icon}</span>` : '';
