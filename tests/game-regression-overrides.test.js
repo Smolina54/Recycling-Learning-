@@ -463,17 +463,17 @@ async function runFullMergeFlow(browser, consoleErrors){
   }
 
   // pc has 0 correct items here (fully merged away), og has 10 (5 native + 5 absorbed) — so
-  // board sizes are correct-target + DECOY_CAP: pc=0+5=5, og=10+5=15, mr=5+5=10. gw=11 and
-  // ew=12 (not 10) because the 2026-09-02 content correction gave each of them an extra
-  // correct item of their own (gw picked up the reclassified "Used tea bag"; ew picked up
-  // printer + monitor) — DECOY_CAP stays 5 regardless. The point of this check is specifically
-  // that NONE of them fall short of their expected DECOY_CAP=5.
+  // board sizes are correct-target + DECOY_CAP: pc=0+5=5, og=10+5=15, gw/mr/ew=5+5=10. Every
+  // stream stays at exactly 5 correct items by default (Sergio's standing rule, 2026-09-02) —
+  // the "Used tea bag"/"Printer"/"Computer monitor" content correction stayed net-neutral per
+  // stream (each addition/reclassification paired with taking an equivalent item back out).
+  // The point of this check is specifically that NONE of them fall short of DECOY_CAP=5.
   check('the redirected stream (pc) still gets its full 5 decoys despite having 0 correct items',
     boardCountsByStream.pc === 5, boardCountsByStream.pc);
   check('the absorbing stream (og) still gets its full 5 decoys on top of its 10 correct items (not fewer, not zero)',
     boardCountsByStream.og === 15, boardCountsByStream.og);
-  check('gw/mr/ew (unaffected by the merge) keep their normal boards (11, 10, 12)',
-    boardCountsByStream.gw === 11 && boardCountsByStream.mr === 10 && boardCountsByStream.ew === 12,
+  check('gw/mr/ew (unaffected by the merge) keep their normal boards (10, 10, 10)',
+    boardCountsByStream.gw === 10 && boardCountsByStream.mr === 10 && boardCountsByStream.ew === 10,
     JSON.stringify(boardCountsByStream));
 
   await new Promise(r => setTimeout(r, 300));
