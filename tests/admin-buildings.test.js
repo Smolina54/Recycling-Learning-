@@ -396,14 +396,14 @@ async function runFlow(page){
   check('opening "Configure streams" shows the item-streams editor',
     Boolean(await page.$(`${itemsBuildingSelector} .items-editor`)));
 
-  // Bench/backup items (active:false in recycling-training.html) must never reach the admin
-  // editor at all — tools/sync-catalog.js filters them out before the report's `catalog` object
-  // is generated, so an admin can't accidentally configure an item that isn't even in the game.
+  // Every catalog item (both the 25 in rotation and the 25 backups) shows up here now — an
+  // admin can personalize any of them per building via the on/off toggle.
   const totalItemCards = await page.$$eval(`${itemsBuildingSelector} .items-card`, els => els.length);
-  check('the editor shows exactly the 25 active items, no bench/backup items included',
-    totalItemCards === 25, totalItemCards);
-  const benchItemPresent = Boolean(await page.$(`${itemsBuildingSelector} .item-stream-select[data-item-id="gw-glass"]`));
-  check('a specific bench item (gw-glass) is completely absent from the editor', !benchItemPresent);
+  check('the editor shows all 50 catalog items, backups included',
+    totalItemCards === 50, totalItemCards);
+  const benchItemInactive = await page.$eval(`${itemsBuildingSelector} .item-active-toggle[data-item-id="gw-glass"]`,
+    el => !el.checked).catch(() => null);
+  check('a specific bench item (gw-glass) is present but shown off by default', benchItemInactive === true);
 
   // Real bug Sergio caught: clicking the collapse arrow while "Configure streams" is open hid
   // only the QR code, leaving the rest of the expanded card (including the items editor)
@@ -415,8 +415,12 @@ async function runFlow(page){
   check('the items editor is still open after clicking the collapse arrow',
     Boolean(await page.$(`${itemsBuildingSelector} .items-editor`)));
 
-  // Move "Flattened cardboard box" (pc-box, default stream pc) to Mixed Recycling.
+  // Swap "Flattened cardboard box" (pc-box) and "Empty plastic bottle" (mr-bottle) between
+  // Paper & Cardboard and Mixed Recycling — a straight swap keeps both streams at a valid 5,
+  // unlike moving just one item alone (which the new 0-or-≥5 validation correctly rejects;
+  // see the dedicated check for that further down).
   await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="pc-box"]`, 'mr');
+  await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="mr-bottle"]`, 'pc');
   await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
   await new Promise(r => setTimeout(r, 600));
 
@@ -427,47 +431,75 @@ async function runFlow(page){
   await row.$eval('.configure-items-btn', el => el.click());
   await new Promise(r => setTimeout(r, 200));
   const pcBoxSelectValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="pc-box"]`, el => el.value);
-  check('the override persisted after reload — reopening the editor shows the saved stream',
-    pcBoxSelectValue === 'mr', pcBoxSelectValue);
+  const mrBottleSelectValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="mr-bottle"]`, el => el.value);
+  check('the override persisted after reload — reopening the editor shows the saved streams',
+    pcBoxSelectValue === 'mr' && mrBottleSelectValue === 'pc', `${pcBoxSelectValue}, ${mrBottleSelectValue}`);
 
-  // --- Globally noCorrectBin items (battery, toner) render locked, not configurable ---
-  // Closes the gap Sergio found: an admin used to be able to reassign these to a real stream,
-  // producing a misleading walkthrough note even though the game always marks them wrong.
-  const batteryLocked = await page.$eval(`${itemsBuildingSelector} .items-card-locked .items-card-name`,
-    el => el.textContent).catch(() => '');
-  check('the battery item renders as a locked, uneditable card (name visible, no select)',
-    batteryLocked.includes('Dead battery'));
-  const batterySelectExists = Boolean(await page.$(`${itemsBuildingSelector} .item-stream-select[data-item-id="ew-battery"]`));
-  check('the locked battery card has no stream <select> at all', !batterySelectExists);
+  // Swap them back so the rest of the flow starts from a clean, default state.
+  await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="pc-box"]`, 'pc');
+  await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="mr-bottle"]`, 'mr');
+  await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+  row = await findBuildingRow(page, buildingName);
+  await row.$eval('.configure-items-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
 
-  // --- Per-building "not accepted anywhere" (a building-specific version of noCorrectBin,
-  // for any ordinary item — the general fix Sergio asked for after finding the gap above) ---
-  await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-fish"]`, '__blocked__');
+  // --- Battery/toner are no longer a permanent, unconfigurable special case — they're ordinary
+  // items, off by default, that any building can turn on if its e-waste actually accepts them.
+  // Closes the gap Sergio found (a misleading walkthrough note claiming they're correct
+  // somewhere) from the other direction: instead of locking them, an admin now sees exactly
+  // what will happen — an off toggle and a real stream <select>, no hidden special case.
+  const batteryToggledOffByDefault = await page.$eval(`${itemsBuildingSelector} .item-active-toggle[data-item-id="ew-battery"]`,
+    el => !el.checked).catch(() => null);
+  check('the battery item is off by default, not a locked special case', batteryToggledOffByDefault === true);
+  const batterySelectEnabled = Boolean(await page.$(`${itemsBuildingSelector} .item-stream-select[data-item-id="ew-battery"]`));
+  check('the battery card has a normal, usable stream <select>, same as any other item', batterySelectEnabled);
+
+  await page.click(`${itemsBuildingSelector} .item-active-toggle[data-item-id="ew-battery"]`);
   await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
   await new Promise(r => setTimeout(r, 600));
 
   row = await findBuildingRow(page, buildingName);
   await row.$eval('.configure-items-btn', el => el.click());
   await new Promise(r => setTimeout(r, 200));
-  const fishBlockedValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-fish"]`, el => el.value);
-  check('an ordinary item marked "not accepted anywhere" persists after reload',
-    fishBlockedValue === '__blocked__', fishBlockedValue);
+  const batteryOnAfterReload = await page.$eval(`${itemsBuildingSelector} .item-active-toggle[data-item-id="ew-battery"]`, el => el.checked);
+  check('turning battery on for this building persists after reload', batteryOnAfterReload === true);
 
-  const summaryWithBlocked = await page.$eval(`${itemsBuildingSelector} .items-editor-summary`, el => el.textContent).catch(() => '');
-  check('the editor summary mentions the blocked item count, excluding the 2 fixed battery/toner ones',
-    summaryWithBlocked.includes('Not accepted anywhere: 1 item'), summaryWithBlocked);
+  // --- New floor rule: a stream must land on 0 (merged away) or ≥5 correct items, never a
+  // partial number like 3 or 4 — the exact "E-Waste only has 3" problem this redesign fixes.
+  // Turning off just one of Organics's 5 default items, alone, must be rejected at save time.
+  await page.click(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-fish"]`);
+  await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 400));
+  const partialStreamError = await page.$eval(`${itemsBuildingSelector} .items-editor-error`, el => el.textContent).catch(() => '');
+  check('turning Organics down to 4 correct items is rejected at save time, naming the stream and count',
+    partialStreamError.includes('Organics') && partialStreamError.includes('4'), partialStreamError);
+  check('the editor stays open after a rejected save (no badge/reload happened)',
+    Boolean(await page.$(`${itemsBuildingSelector} .items-editor`)));
 
-  // Moving it back to a real stream should round-trip cleanly (the override entry is replaced,
-  // not left behind as a stale {notAccepted:true} alongside a new {stream,...} shape).
-  await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-fish"]`, 'og');
+  // Turning on a backup item to compensate brings Organics back to a valid count (5) and the
+  // save succeeds — this is the actual "swap which items count toward the 5" workflow Sergio
+  // described.
+  await page.click(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-eggshell"]`);
+  await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  row = await findBuildingRow(page, buildingName);
+  await row.$eval('.configure-items-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  const fishOffAfterReload = await page.$eval(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-fish"]`, el => !el.checked);
+  const eggshellOnAfterReload = await page.$eval(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-eggshell"]`, el => el.checked);
+  check('the compensated swap (fish off, eggshell on) persists after reload',
+    fishOffAfterReload && eggshellOnAfterReload);
+
+  // Reset both items back to their defaults for the rest of the flow.
+  await page.click(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-fish"]`);
+  await page.click(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-eggshell"]`);
   await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
   await new Promise(r => setTimeout(r, 600));
   row = await findBuildingRow(page, buildingName);
   await row.$eval('.configure-items-btn', el => el.click());
   await new Promise(r => setTimeout(r, 200));
-  const fishRestoredValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-fish"]`, el => el.value);
-  check('moving it back to its default stream clears the "not accepted anywhere" override cleanly',
-    fishRestoredValue === 'og', fishRestoredValue);
 
   // --- "Also acceptable in" checkboxes (Milestone 4: ideal-vs-acceptable) ---
   // og-teabag keeps its default primary (og) but gains gw as an "also acceptable" pick.

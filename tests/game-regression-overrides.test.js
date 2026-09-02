@@ -29,14 +29,20 @@ const ACCEPTABLE_ITEM_OVERRIDES = {
   'pc-box': { stream: 'pc', acceptable: ['mr'] },
 };
 
-// A third building: og-teabag is marked "not accepted in any of the 5 streams" for this one
-// building — a per-building version of the global noCorrectBin flag (see the "Configure bins
-// no longer knows about notAccepted" gap this closes).
+// A third building: og-teabag is turned OFF for this one building only — the per-building
+// on/off toggle that replaced both the old global noCorrectBin flag and the earlier
+// "Not accepted anywhere" feature (2026-09-02 redesign, see the plan). An inactive item is
+// simply absent from that building's game entirely — not a decoy, no special message.
 const BLOCKED_BUILDING_ID = 'test-tower-blocked';
 const BLOCKED_TENANT_ID = 'test-tenant-blocked';
 const BLOCKED_GAME_URL = `${url.pathToFileURL(GAME_PATH).href}?b=${BLOCKED_BUILDING_ID}&emulator=1`;
+// Paired with turning on an og backup (og-eggshell) so the total active pool stays at 25 and
+// Organics stays at a valid 5 correct items — an admin turning an item off for real always has
+// to keep every stream at 0-or-≥5 (see validateDraftOverrides() in sorting-station-report.html),
+// so this is the actual reachable shape of a "toggle an item off" config, not an isolated flip.
 const BLOCKED_ITEM_OVERRIDES = {
-  'og-teabag': { notAccepted: true },
+  'og-teabag': { active: false },
+  'og-eggshell': { active: true },
 };
 
 // A fourth building: full Paper & Cardboard -> Organics merge — a real config discovered (via
@@ -354,12 +360,11 @@ async function runAcceptableFlow(browser, consoleErrors){
   await page.close();
 }
 
-// Confirms the new per-building "not accepted anywhere" flag (notAccepted): the item is
-// decoy-eligible everywhere but never counted correct, its home stream's phase target shrinks
-// by one, its reveal badge and feedback text are building-specific (not the item's normal
-// material explanation), the walkthrough note appears under its default stream, and — since
-// this exercises the same "eligible in every pool" mechanism as noCorrectBin — that the
-// buildDecoyPlan() dedup fix means it's placed as a decoy exactly once, never zero, never twice.
+// Confirms the per-building on/off toggle (2026-09-02 redesign, replacing both the old global
+// noCorrectBin flag and the earlier "Not accepted anywhere" feature): a toggled-off item is
+// simply absent from this building's game — never on any board, correct or decoy, and no
+// walkthrough note about it (there's nothing to explain; a swapped-in backup just quietly
+// takes its place as an ordinary correct item).
 async function runBlockedFlow(browser, consoleErrors){
   const page = await browser.newPage();
   page.on('console', async (msg) => {
@@ -377,34 +382,28 @@ async function runBlockedFlow(browser, consoleErrors){
   for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 80)); }
   await new Promise(r => setTimeout(r, 200));
 
+  // Nothing to narrate — the swapped-in backup already has 'og' as its own catalog default,
+  // so it isn't "moved" from anywhere, and the toggled-off item is simply not in `items` at
+  // all, so computeBuildingNotes() never sees it. No special messaging either way.
   const ogNoteText = await page.$eval('.building-note[data-stream="og"]', el => el.textContent).catch(() => '');
-  check('the walkthrough panel under the blocked item\'s default stream explains it is not accepted anywhere',
-    ogNoteText.includes('Used tea bag') && ogNoteText.includes('Waste Champion'), ogNoteText);
+  check('no walkthrough note appears for a toggled-off item — it is just absent, not narrated',
+    ogNoteText.trim() === '', ogNoteText);
 
   await page.click('#startGameBtn');
   await new Promise(r => setTimeout(r, 300));
 
   let ogCorrectTarget = null;
   let teabagAppearances = 0;
-  let teabagRevealText = '';
-  let teabagFeedbackText = '';
+  let eggshellInOgPhase = false;
 
   for (let i = 0; i < 5; i++){
     const stream = STREAM_ORDER[i];
+    const boardIds = await page.$$eval('.board-item', els => els.map(el => el.dataset.id));
     if (stream === 'og'){
       ogCorrectTarget = await page.$eval('#phaseCounter', el => el.textContent).catch(() => '');
+      eggshellInOgPhase = boardIds.includes('og-eggshell');
     }
-    const boardIds = await page.$$eval('.board-item', els => els.map(el => el.dataset.id));
-    if (boardIds.includes('og-teabag')){
-      teabagAppearances++;
-      const teabagCard = await page.$('.board-item[data-id="og-teabag"]');
-      teabagRevealText = await teabagCard.$eval('.reveal-badge', el => el.textContent).catch(() => '');
-      await teabagCard.evaluate(el => el.setAttribute('data-test-clicked', '1'));
-      await teabagCard.focus();
-      await page.keyboard.press('Enter');
-      await new Promise(r => setTimeout(r, 200));
-      teabagFeedbackText = await page.$eval('#gameFeedback', el => el.textContent).catch(() => '');
-    }
+    if (boardIds.includes('og-teabag')) teabagAppearances++;
 
     const reached = await resolvePhase(page, 25);
     if (!reached) break;
@@ -413,19 +412,17 @@ async function runBlockedFlow(browser, consoleErrors){
     await new Promise(r => setTimeout(r, 300));
   }
 
-  check("the blocked item's own default-stream phase (og) shows a correct-target that excludes it (4, not 5)",
-    ogCorrectTarget === 'Sorted 0 of 4', ogCorrectTarget);
-  check('the blocked item is placed as a decoy in exactly one phase (buildDecoyPlan dedup fix — not zero, not two)',
-    teabagAppearances === 1, teabagAppearances);
-  check('the blocked item\'s reveal badge says "Not accepted here", not a stream name',
-    teabagRevealText.includes('Not accepted here'), teabagRevealText);
-  check('dropping the blocked item anywhere gives the building-specific "not accepted" message, not its normal material explanation',
-    teabagFeedbackText.includes("doesn't have a bin for this item in any of the 5 streams"), teabagFeedbackText);
+  check('Organics still has 5 correct items (teabag swapped out, eggshell swapped in)',
+    ogCorrectTarget === 'Sorted 0 of 5', ogCorrectTarget);
+  check('the toggled-off item never appears on any board — not correct, not a decoy',
+    teabagAppearances === 0, teabagAppearances);
+  check('the toggled-on backup appears on Organics\'s own board as one of its correct items',
+    eggshellInOgPhase === true);
 
   await new Promise(r => setTimeout(r, 300));
   const scoreOfText = await page.$eval('#scoreOf', el => el.textContent.trim()).catch(() => '');
   const totalMatch = scoreOfText.match(/\/\s*(\d+)\s*correctly avoided/);
-  check('total stays exactly 25 even with a per-building "not accepted anywhere" item',
+  check('total stays exactly 25 with a like-for-like item swap',
     totalMatch && totalMatch[1] === '25', scoreOfText);
 
   await page.close();
@@ -466,16 +463,16 @@ async function runFullMergeFlow(browser, consoleErrors){
   }
 
   // pc has 0 correct items here (fully merged away), og has 10 (5 native + 5 absorbed) — so
-  // board sizes are correct-target + DECOY_CAP: pc=0+5=5, og=10+5=15, gw/mr=5+5=10. ew is
-  // unaffected by THIS merge but already has only 3 correct items (battery/toner are
-  // noCorrectBin, see the earlier reclassification work), so ew=3+5=8, not 10. The point of
-  // this check is specifically that NONE of them fall short of their expected DECOY_CAP=5.
+  // board sizes are correct-target + DECOY_CAP: pc=0+5=5, og=10+5=15, gw/mr/ew=5+5=10 (E-Waste
+  // is back to its full 5 correct items — keyboard/powerboard replaced battery/toner's old
+  // slot in the 2026-09-02 redesign). The point of this check is specifically that NONE of
+  // them fall short of their expected DECOY_CAP=5.
   check('the redirected stream (pc) still gets its full 5 decoys despite having 0 correct items',
     boardCountsByStream.pc === 5, boardCountsByStream.pc);
   check('the absorbing stream (og) still gets its full 5 decoys on top of its 10 correct items (not fewer, not zero)',
     boardCountsByStream.og === 15, boardCountsByStream.og);
-  check('gw/mr/ew (unaffected by the merge) keep their normal boards (10, 10, 8 — ew is already 3-correct)',
-    boardCountsByStream.gw === 10 && boardCountsByStream.mr === 10 && boardCountsByStream.ew === 8,
+  check('gw/mr/ew (unaffected by the merge) keep their normal boards (10, 10, 10)',
+    boardCountsByStream.gw === 10 && boardCountsByStream.mr === 10 && boardCountsByStream.ew === 10,
     JSON.stringify(boardCountsByStream));
 
   await new Promise(r => setTimeout(r, 300));

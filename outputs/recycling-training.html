@@ -1892,7 +1892,7 @@ try {
       shortWhy:"Food scraps, not electronics" },
 
     // E-Waste
-    { id:'ew-battery', name:'Dead battery', stream:'ew', noCorrectBin:true,
+    { id:'ew-battery', name:'Dead battery', stream:'ew', active:false,
       icon:`<svg viewBox="0 0 128 128"><g>
 	<path style="fill:#8DCC47;" d="M34.02,20.35v88.57c0,7.92,13.42,14.34,29.98,14.34c16.56,0,29.98-6.42,29.98-14.34V20.35H34.02z"/>
 	<path style="fill:#9EE350;" d="M94,20.36c0,9.44-15.79,15.37-29.98,15.37c-13.82,0-29.02-5.96-29.98-15.37
@@ -2039,7 +2039,7 @@ try {
 </g></svg>`,
       explain:"Phones and other small electronics need a dedicated collection point, cracked or not — the materials inside need proper recovery.",
       shortWhy:"Electronics, not paper waste" },
-    { id:'ew-toner', name:'Printer toner cartridge', stream:'ew', noCorrectBin:true,
+    { id:'ew-toner', name:'Printer toner cartridge', stream:'ew', active:false,
       icon:`<svg viewBox="0 0 128 128"><g>
 	<path style="fill:#757575;" d="M98.27,44.34H29.73l4.48-27.88c0-1.9,1.54-3.45,3.45-3.45h52.97c1.9,0,3.45,1.54,3.45,3.45
 		L98.27,44.34z"/>
@@ -2212,7 +2212,7 @@ try {
       shortWhy:"Cooked food scraps, compostable" },
 
     // E-Waste backups
-    { id:'ew-keyboard', name:'Computer keyboard', stream:'ew', active:false,
+    { id:'ew-keyboard', name:'Computer keyboard', stream:'ew',
       icon:`<svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="10" rx="1" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><rect x="5" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="8" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="11" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="14" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="17" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="6" y="14" width="12" height="1.6" fill="var(--ink)" opacity="0.5"/></svg>`,
       explain:"A keyboard is small electronics like any other — the circuitry inside needs the same dedicated recovery as cables, phones, and other office electronics.",
       shortWhy:"Circuitry needs e-waste recovery" },
@@ -2228,67 +2228,58 @@ try {
       icon:`<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="1.5" fill="#DCE3E6" stroke="var(--ink)" stroke-width="1.1"/><circle cx="12" cy="9" r="3.2" fill="none" stroke="var(--ink)" stroke-width="1"/><circle cx="12" cy="9" r="1.1" fill="var(--ink)" opacity="0.5"/><circle cx="12" cy="16" r="1.8" fill="none" stroke="var(--ink)" stroke-width="0.9"/></svg>`,
       explain:"A desktop speaker has a magnet and wiring coil inside — genuine electronic components that need dedicated recovery, not the general bin.",
       shortWhy:"Magnet and coil, needs recovery" },
-    { id:'ew-powerboard', name:'Power board', stream:'ew', active:false,
+    { id:'ew-powerboard', name:'Power board', stream:'ew',
       icon:`<svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="1.5" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><circle cx="7" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><circle cx="12" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><circle cx="17" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><path d="M3 12H1M21 12c1 0 2 1 2 3" fill="none" stroke="var(--ink)" stroke-width="1.1" stroke-linecap="round"/></svg>`,
       explain:"A power board or extension cord is electrical wiring and switches, the same category as chargers and cables — it needs dedicated e-waste recovery, not the general bin.",
       shortWhy:"Wiring and switches, not general bin" }
   ];
 
-  // Only the 25 currently-active items are ever seen by the game — every function below
-  // (buildBoard, buildDecoyPlan, DEFAULT_STREAM_BY_ID, applyEffectiveStreams,
-  // computeBuildingNotes, itemById, the review-list grouping, decoyMap lookups) already
-  // consumes `items`, not the raw literal above, so this is the one and only chokepoint
-  // a bench item needs to cross to go live: remove its `active:false`.
-  const items = ALL_ITEMS.filter(it => it.active !== false);
+  // `items` is the CURRENT BUILDING's active set — recomputed by applyEffectiveStreams()
+  // once that building's itemOverrides load (a building can turn any catalog item, including
+  // a backup, on or off for itself). This starting value is only the default (25 active items,
+  // used by itemById()/etc. before any building has loaded, e.g. during early preview setup).
+  let items = ALL_ITEMS.filter(it => it.active !== false);
 
   // Default, hand-curated decoy pairings — kept exactly as-is and used unmodified for any
   // building with no itemOverrides, so the default experience never changes (see
-  // buildDecoyPlan() below for the per-building-override case).
-  // Counts per phase are uneven (gw:4, og:4, ew:7) — not a typo. ew-battery and ew-toner are
-  // both noCorrectBin items (batteries and printer/toner cartridges each need their own
-  // dedicated collection point, not any of the 5 streams) and are deliberately tested as
-  // decoys in THEIR OWN nominal stream (ew) rather than wherever they used to sit, since
-  // "would you wrongly put this in the general E-Waste bin" is the real question being tested,
-  // not "in general waste"/"in organics". The total across all 5 phases is still exactly 25 —
-  // that's the invariant that actually matters for score comparability, not an equal split
-  // per phase.
+  // buildDecoyPlan() below for the per-building-override case). Every one of the 25
+  // default-active items appears as a decoy exactly once, in a stream other than its own.
   const decoyMap = {
-    gw: ['mr-bottle','mr-jar','pc-box','og-banana'],
+    gw: ['mr-bottle','mr-jar','pc-box','og-banana','ew-keyboard'],
     mr: ['gw-pizza','pc-paper','pc-envelope','og-teabag','ew-cables'],
     pc: ['gw-cup','mr-can','og-apple','og-coffee','ew-phone'],
-    og: ['gw-mug','mr-tin','pc-newspaper','ew-mouse'],
-    ew: ['gw-chips','gw-tissue','mr-tub','pc-tube','og-fish','ew-battery','ew-toner']
+    og: ['gw-mug','mr-tin','pc-newspaper','ew-powerboard','ew-mouse'],
+    ew: ['gw-chips','gw-tissue','mr-tub','pc-tube','og-fish']
   };
 
+  // Built from ALL_ITEMS (not `items`) so a currently-inactive item still has a default
+  // stream ready for whenever some building turns it on.
   const DEFAULT_STREAM_BY_ID = {};
-  items.forEach(it => { DEFAULT_STREAM_BY_ID[it.id] = it.stream; });
+  ALL_ITEMS.forEach(it => { DEFAULT_STREAM_BY_ID[it.id] = it.stream; });
 
   const DECOY_CAP = 5;
   let itemOverrides = {};
   let hasOverrides = false;
   let currentDecoyMap = decoyMap;
 
-  // Applies a building's itemOverrides on top of each item's catalog default. `acceptable`
+  // Recomputes `items` itself (not just each item's fields) — a building can turn any catalog
+  // item, including a backup or the two items with no default stream in rotation, on or off
+  // for itself (override shape: {active}). Once an item is out of `items`, it's simply not in
+  // that building's game at all — not correct, not a decoy, nothing to narrate. `acceptable`
   // (extra streams that count as correct-but-not-ideal for this item, at this building) is
   // empty unless the admin config UI set some — see showFeedback()/handleDrop() for how the
   // ideal/acceptable distinction is surfaced without ever becoming a different scored outcome.
-  // `notAccepted` is a per-building version of the global `noCorrectBin` flag below — an item
-  // this specific building doesn't take in any of the 5 bins (its override shape is just
-  // {notAccepted:true}, with no `stream`/`acceptable` — `it.stream` still falls back to the
-  // catalog default so the item keeps a stable nominal color/grouping).
   function applyEffectiveStreams(overrides){
+    items = ALL_ITEMS.filter(it => {
+      const ov = overrides[it.id];
+      return (ov && typeof ov.active === 'boolean') ? ov.active : it.active !== false;
+    });
     items.forEach(it => {
       const ov = overrides[it.id];
       it.stream = (ov && ov.stream) || DEFAULT_STREAM_BY_ID[it.id];
       it.acceptable = (ov && ov.acceptable) || [];
-      it.notAccepted = !!(ov && ov.notAccepted);
     });
   }
-
-  // Shared by buildBoard()/handleDrop()/startPhase(): an item is never a valid drop target
-  // anywhere, either globally (noCorrectBin — e.g. batteries) or for this one building only
-  // (notAccepted — an admin-chosen per-building exception, see applyEffectiveStreams()).
-  function neverCorrect(it){ return it.noCorrectBin || it.notAccepted; }
 
   // Only used for a building that actually has itemOverrides — the hand-curated decoyMap
   // above can't generalise to arbitrary per-building item counts per stream. Deterministic
@@ -2311,10 +2302,7 @@ try {
     streams.forEach(stream => { for (let i = 0; i < DECOY_CAP; i++) slots.push(stream); });
     const poolByStream = {};
     streams.forEach(stream => {
-      // A noCorrectBin/notAccepted item is a valid decoy for EVERY stream, including its own
-      // nominal one (buildBoard() already excludes it from ever being that stream's correct
-      // pile) — it has no real home to be naturally excluded from testing itself against.
-      poolByStream[stream] = items.filter(it => neverCorrect(it) || (it.stream !== stream && !it.acceptable.includes(stream)))
+      poolByStream[stream] = items.filter(it => it.stream !== stream && !it.acceptable.includes(stream))
         .slice().sort((a,b) => a.id.localeCompare(b.id));
     });
 
@@ -2350,16 +2338,9 @@ try {
   // Returns '' for every stream on a building with no overrides (DEFAULT_STREAM_BY_ID never
   // differs from item.stream in that case), so the note divs simply stay empty/hidden.
   function computeBuildingNotes(){
-    const movedOutOf = {}, movedInto = {}, acceptableIn = {}, blockedFrom = {};
+    const movedOutOf = {}, movedInto = {}, acceptableIn = {};
     items.forEach(it => {
       const from = DEFAULT_STREAM_BY_ID[it.id];
-      // A per-building notAccepted item has no destination stream to report — it's not
-      // "moved," it's excluded from all 5 — so it gets its own bucket, shown under its
-      // catalog-default stream's panel, and skips the moved/acceptable bucketing below.
-      if (it.notAccepted){
-        (blockedFrom[from] = blockedFrom[from] || []).push(it);
-        return;
-      }
       const to = it.stream;
       if (from !== to){
         (movedOutOf[from] = movedOutOf[from] || []).push({item: it, to});
@@ -2384,9 +2365,6 @@ try {
       }
       if (acceptableIn[s]){
         html += `<p>This building also accepts these items here, though it's not the ideal bin for them: ${acceptableIn[s].map(it => `${it.name} (ideally ${streamNames[it.stream]})`).join(', ')}.</p>`;
-      }
-      if (blockedFrom[s]){
-        html += `<p><b>These items aren't accepted in any bin at this building:</b> ${blockedFrom[s].map(it => it.name).join(', ')} — check with your Waste Champion for how to dispose of them here.</p>`;
       }
       notes[s] = html;
     });
@@ -2444,15 +2422,7 @@ try {
     // Three real outcomes, but only two ever get stored (see handleDrop) — "acceptable but
     // not ideal" is purely a feedback-text distinction, never a different scored result.
     let text;
-    if (item.noCorrectBin){
-      // "Belongs in [stream]" would be actively wrong here — there is no correct one of the 5.
-      text = `<span><b>Not quite.</b> ${item.explain}</span>`;
-    } else if (item.notAccepted){
-      // Building-specific exclusion — item.explain is the global material-property reason
-      // (e.g. "food waste, compostable"), which would be confusing here since it doesn't
-      // explain why THIS building doesn't take it in any of its 5 bins.
-      text = `<span><b>Not quite.</b> This building doesn't have a bin for this item in any of the 5 streams — check with your Waste Champion for how to dispose of it here.</span>`;
-    } else if (!correct){
+    if (!correct){
       text = `<span><b>Not quite</b> — belongs in ${streamNames[item.stream]}. ${item.explain}</span>`;
     } else if (targetStream !== item.stream){
       text = `<span><b>Correct — this works too.</b> ${streamNames[item.stream]} is the best fit for this item where available. ${item.explain}</span>`;
@@ -2502,11 +2472,7 @@ try {
   function handleDrop(card, item){
     if (phaseLocked || card.dataset.resolved) return;
     const targetStream = streams[phaseIndex];
-    // noCorrectBin/notAccepted items are never correct anywhere, even in their own nominal
-    // stream (e.g. a battery dropped into E-Waste — its own "category" for review/colour
-    // purposes — is still wrong, since the real correct answer isn't one of the 5 bins) — see
-    // neverCorrect().
-    const correct = !neverCorrect(item) && (item.stream === targetStream || item.acceptable.includes(targetStream));
+    const correct = item.stream === targetStream || item.acceptable.includes(targetStream);
 
     card.style.transition = 'none';
     card.style.transform = 'translate(0,0)';
@@ -2599,9 +2565,7 @@ try {
   }
 
   function buildBoard(stream){
-    // noCorrectBin/notAccepted items never belong in ANY phase's correct pile, no matter which
-    // stream is asking — they only ever appear as decoys (see currentDecoyMap, neverCorrect()).
-    const correct = items.filter(it => !neverCorrect(it) && (it.stream === stream || it.acceptable.includes(stream)));
+    const correct = items.filter(it => it.stream === stream || it.acceptable.includes(stream));
     const decoys = currentDecoyMap[stream].map(itemById);
     return shuffle([...correct, ...decoys]);
   }
@@ -2615,9 +2579,7 @@ try {
       card.tabIndex = 0;
       card.setAttribute('role', 'button');
       card.setAttribute('aria-label', item.name);
-      // A noCorrectBin/notAccepted item has no true "→ [stream]" answer to reveal — saying so
-      // would be actively wrong, not just imprecise (see buildBoard()/handleDrop()).
-      const revealText = item.noCorrectBin ? 'Own collection point' : item.notAccepted ? 'Not accepted here' : streamNames[item.stream];
+      const revealText = streamNames[item.stream];
       card.innerHTML = `<span class="item-icon">${item.icon}</span><span class="item-name">${item.name}</span><span class="reveal-badge" style="color:var(--${item.stream})">→ ${revealText}</span>`;
       itemBoard.appendChild(card);
       attachDrag(card, item);
@@ -2630,7 +2592,7 @@ try {
     sortedCount = 0;
     phaseLocked = false;
     const stream = streams[idx];
-    phaseCorrectTarget = items.filter(it => !neverCorrect(it) && (it.stream === stream || it.acceptable.includes(stream))).length;
+    phaseCorrectTarget = items.filter(it => it.stream === stream || it.acceptable.includes(stream)).length;
 
     document.getElementById('phaseLabel').textContent = `Phase ${idx+1} of 5 — ${streamNames[stream]}`;
     document.getElementById('phaseCounter').textContent = `Sorted 0 of ${phaseCorrectTarget}`;

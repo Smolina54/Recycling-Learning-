@@ -2418,18 +2418,24 @@ var qrcode = function() {
   .items-stream-section:last-child{margin-bottom:0;}
   .items-stream-head{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
   .items-stream-swatch{width:10px; height:22px; flex-shrink:0;}
-  .items-stream-swatch-blocked{background:repeating-linear-gradient(45deg, var(--ink-soft), var(--ink-soft) 3px, transparent 3px, transparent 6px);}
   .items-stream-head h4{margin:0; font-size:14px; text-transform:uppercase; letter-spacing:0.02em;}
   .items-card-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:10px;}
   .items-card{
     background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
     padding:10px 10px 8px; display:flex; flex-direction:column; gap:6px; font-size:12.5px;
   }
-  .items-card-locked{opacity:0.8;}
   .items-card-head{display:flex; align-items:center; gap:6px;}
   .items-card-icon{width:20px; height:20px; flex-shrink:0; display:inline-flex;}
   .items-card-icon svg, .items-card-icon img{width:20px; height:20px; object-fit:contain;}
-  .items-card-name{font-weight:600; line-height:1.25;}
+  .items-card-name{font-weight:600; line-height:1.25; flex:1;}
+  .items-card-inactive .items-card-icon, .items-card-inactive .items-card-name{opacity:0.45;}
+  .item-toggle{position:relative; display:inline-block; width:34px; height:20px; flex-shrink:0; cursor:pointer;}
+  .item-toggle input{position:absolute; inset:0; opacity:0; margin:0; cursor:pointer;}
+  .item-toggle-track{position:absolute; inset:0; background:var(--ink-soft); border-radius:20px; transition:background .15s ease;}
+  .item-toggle-thumb{position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; transition:transform .15s ease;}
+  .item-toggle input:checked + .item-toggle-track{background:var(--forest);}
+  .item-toggle input:checked + .item-toggle-track .item-toggle-thumb{transform:translateX(14px);}
+  .item-toggle input:focus-visible + .item-toggle-track{outline:2px solid var(--ink); outline-offset:2px;}
   .items-card select{
     font-family:var(--body); font-size:12px; padding:5px 6px; border:1.5px solid var(--line);
     background:var(--paper); border-radius:var(--radius); color:var(--ink);
@@ -3754,7 +3760,7 @@ try {
 		c-0.41,1.42-1.22,2.05-1.79,2.36c-1.72,0.92-3.78,1.36-5.83,1.33c-2.06,0.02-4.11-0.41-5.83-1.33c-0.58-0.31-1.38-0.94-1.79-2.36
 		c-0.08-0.28-0.07-0.97-0.43-0.32c-0.35,0.63-0.7,1.28-1.05,1.9c-0.9,1.58-0.12,3.33,1.03,4.45c2.01,1.95,5.13,2.85,8.08,2.85h0h0
 		c2.95,0,6.07-0.9,8.08-2.85C73.24,18.33,74.01,16.58,73.11,15.01z"/>
-</g></svg>`, noCorrectBin:true},
+</g></svg>`, active:false},
     'ew-cables': {name:'Tangled cables & charger', stream:'ew', icon:`<svg viewBox="0 0 128 128"><g>
 	<g>
 		<g>
@@ -3913,7 +3919,7 @@ try {
 	<path style="fill:#607D8B;" d="M66.96,85.5h-5.92c-1.36,0-2.47-1.1-2.47-2.47v-0.4c0-1.36,1.1-2.47,2.47-2.47h5.92
 		c1.36,0,2.47,1.1,2.47,2.47v0.4C69.43,84.4,68.32,85.5,66.96,85.5z"/>
 	<path style="fill:#212121;" d="M93.87,90.44H34.13c-2.94,0-5.32,2.38-5.32,5.32v0h70.37v0C99.19,92.82,96.8,90.44,93.87,90.44z"/>
-</g></svg>`, noCorrectBin:true},
+</g></svg>`, active:false},
     'ew-mouse': {name:'Computer mouse', stream:'ew', icon:`<svg viewBox="0 0 128 128"><g>
 	<path style="fill:#E0E0E0;" d="M103.07,37.67C103.07,16.11,85.55,4,64,4S24.93,16.11,24.93,37.67v47.27
 		C24.93,106.49,42.45,124,64,124s39.07-17.51,39.07-39.07V37.67z"/>
@@ -3936,7 +3942,32 @@ try {
 		C67.52,25.73,68.82,30.81,69.08,32.32z"/>
 	<path style="opacity:0.51;fill:#FFFFFF;" d="M51.78,10.01c4.88-1.9,6.33,2.44,6.37,3.39c0.05,1.56,1.22,7.45-1.44,9
 		c-6.25,3.63-4.79,8.34-8.15,9.73c-4.17,1.72-6.14-3.03-6.06-6.14C42.84,12.86,49.41,10.94,51.78,10.01z"/>
-</g></svg>`}
+</g></svg>`},
+    'gw-glass': {name:'Broken drinking glass', stream:'gw', icon:`<svg viewBox="0 0 24 24"><path d="M7 4h10l-1 14a3 3 0 01-3 3h-2a3 3 0 01-3-3z" fill="#EAF6F8" stroke="var(--ink)" stroke-width="1.2" stroke-linejoin="round"/><path d="M9 4l1.5 6-2 3 2 3.5" fill="none" stroke="var(--ink)" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 4l-1 5 2 2-1.5 4" fill="none" stroke="var(--ink)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/></svg>`, active:false},
+    'gw-napkin': {name:'Used paper napkin', stream:'gw', icon:`<svg viewBox="0 0 24 24"><path d="M4 5h16v14l-4-2-4 2-4-2-4 2z" fill="#F2EEE3" stroke="var(--ink)" stroke-width="1" stroke-linejoin="round"/><path d="M7 9h10M7 12.5h10" stroke="#DAD6C8" stroke-width="0.9" stroke-linecap="round"/></svg>`, active:false},
+    'gw-cutlery': {name:'Disposable plastic cutlery', stream:'gw', icon:`<svg viewBox="0 0 24 24"><path d="M7 3v8a2 2 0 002 2v8" fill="none" stroke="var(--ink)" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 3v5M9 3v5M11 3v5" stroke="var(--ink)" stroke-width="0.9" stroke-linecap="round"/><path d="M17 3c1.5 1 1.5 6 0 8-1 .8-1 1-1 2v8" fill="none" stroke="var(--ink)" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>`, active:false},
+    'gw-foam': {name:'Polystyrene foam container', stream:'gw', icon:`<svg viewBox="0 0 24 24"><path d="M6 8h12l-1.5 11a1.5 1.5 0 01-1.5 1.3H9a1.5 1.5 0 01-1.5-1.3z" fill="#F5F5F0" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><ellipse cx="12" cy="8" rx="6" ry="1.6" fill="#F5F5F0" stroke="var(--ink)" stroke-width="1.1"/><circle cx="10" cy="12" r="0.5" fill="#DAD6C8"/><circle cx="14" cy="13.5" r="0.5" fill="#DAD6C8"/><circle cx="11.5" cy="16" r="0.5" fill="#DAD6C8"/></svg>`, active:false},
+    'gw-wrap': {name:'Soft plastic wrap', stream:'gw', icon:`<svg viewBox="0 0 24 24"><path d="M4 6c3-1 5 1.2 8 0s5-1 8 0v12c-3-1-5 1.2-8 0s-5-1-8 0z" fill="#EAF3EF" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><circle cx="8" cy="10" r="1.1" fill="none" stroke="#B9CFC3" stroke-width="0.7"/><circle cx="12" cy="13" r="1.1" fill="none" stroke="#B9CFC3" stroke-width="0.7"/><circle cx="16" cy="10" r="1.1" fill="none" stroke="#B9CFC3" stroke-width="0.7"/><circle cx="10" cy="17" r="1.1" fill="none" stroke="#B9CFC3" stroke-width="0.7"/></svg>`, active:false},
+    'mr-detergent': {name:'Plastic detergent bottle', stream:'mr', icon:`<svg viewBox="0 0 24 24"><path d="M8 9h6l1 2v9a1.5 1.5 0 01-1.5 1.5h-5A1.5 1.5 0 017 20V11z" fill="#CFEFEA" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><rect x="9.5" y="5" width="3" height="4" fill="#CFEFEA" stroke="var(--ink)" stroke-width="1"/><rect x="9" y="4" width="4" height="1.6" rx="0.4" fill="var(--ink)"/><path d="M14 12h2.5a1 1 0 011 1v4a1 1 0 01-1 1H14" fill="none" stroke="var(--ink)" stroke-width="0.9"/></svg>`, active:false},
+    'mr-lid': {name:'Loose metal bottle cap', stream:'mr', icon:`<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="#D9D9D9" stroke="var(--ink)" stroke-width="1.2"/><circle cx="12" cy="12" r="5.2" fill="none" stroke="var(--ink)" stroke-width="0.8" stroke-dasharray="1.4 1.4"/></svg>`, active:false},
+    'mr-carton': {name:'Rinsed milk carton', stream:'mr', icon:`<svg viewBox="0 0 24 24"><path d="M7 9l1-4h8l1 4z" fill="#DCEBF7" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M6 9h12v10a1 1 0 01-1 1H7a1 1 0 01-1-1z" fill="#F2F8FC" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M9 5l3-2 3 2" fill="none" stroke="var(--ink)" stroke-width="1" stroke-linejoin="round"/></svg>`, active:false},
+    'mr-foiltray': {name:'Aluminium foil tray', stream:'mr', icon:`<svg viewBox="0 0 24 24"><path d="M4 8h16l-2 10a1.5 1.5 0 01-1.5 1.2h-9A1.5 1.5 0 016 18z" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M6.5 8.5c1-1 3-1.4 5.5-1.4s4.5 0.4 5.5 1.4" fill="none" stroke="var(--ink)" stroke-width="0.8"/></svg>`, active:false},
+    'mr-aerosol': {name:'Empty aerosol can', stream:'mr', icon:`<svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="13" rx="1.2" fill="#D6D9DC" stroke="var(--ink)" stroke-width="1.1"/><rect x="10" y="4" width="4" height="4" rx="0.6" fill="#B9BEC2" stroke="var(--ink)" stroke-width="1"/><circle cx="12" cy="3.2" r="0.9" fill="#B9BEC2" stroke="var(--ink)" stroke-width="0.8"/></svg>`, active:false},
+    'pc-magazine': {name:'Glossy magazine', stream:'pc', icon:`<svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="0.8" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1"/><rect x="7.5" y="6.5" width="9" height="6" fill="#DCEBF7" stroke="var(--ink)" stroke-width="0.7"/><path d="M7.5 15h9M7.5 17.3h6" stroke="#C7C2B2" stroke-width="0.9" stroke-linecap="round"/></svg>`, active:false},
+    'pc-junkmail': {name:'Junk mail flyer', stream:'pc', icon:`<svg viewBox="0 0 24 24"><path d="M4 8l8-4 8 4v10a1 1 0 01-1 1H5a1 1 0 01-1-1z" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 8l8 5 8-5" fill="none" stroke="var(--ink)" stroke-width="1"/></svg>`, active:false},
+    'pc-eggcarton': {name:'Cardboard egg carton', stream:'pc', icon:`<svg viewBox="0 0 24 24"><path d="M3 9h18v9a1 1 0 01-1 1H4a1 1 0 01-1-1z" fill="#E4D3B0" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><circle cx="7" cy="13.5" r="2.2" fill="none" stroke="var(--ink)" stroke-width="0.9"/><circle cx="12" cy="13.5" r="2.2" fill="none" stroke="var(--ink)" stroke-width="0.9"/><circle cx="17" cy="13.5" r="2.2" fill="none" stroke="var(--ink)" stroke-width="0.9"/><path d="M3 9l2-3h14l2 3" fill="none" stroke="var(--ink)" stroke-width="1"/></svg>`, active:false},
+    'pc-notebook': {name:'Spiral notebook', stream:'pc', icon:`<svg viewBox="0 0 24 24"><rect x="6" y="4" width="14" height="17" rx="0.8" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1"/><path d="M6 6.5c-1 0-1.6.6-1.6 1.3s.6 1.3 1.6 1.3M6 11c-1 0-1.6.6-1.6 1.3s.6 1.3 1.6 1.3M6 15.5c-1 0-1.6.6-1.6 1.3s.6 1.3 1.6 1.3" fill="none" stroke="var(--ink)" stroke-width="0.9"/><path d="M9 8h8M9 11.5h8M9 15h5" stroke="#C7C2B2" stroke-width="0.9" stroke-linecap="round"/></svg>`, active:false},
+    'pc-giftwrap': {name:'Plain paper gift wrap', stream:'pc', icon:`<svg viewBox="0 0 24 24"><path d="M4 9h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1z" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M4 9l4-5h8l4 5" fill="none" stroke="var(--ink)" stroke-width="1" stroke-linejoin="round"/><path d="M8 20V9M16 20V9" stroke="#C7C2B2" stroke-width="0.9" stroke-dasharray="1.6 1.6"/></svg>`, active:false},
+    'og-eggshell': {name:'Egg shells', stream:'og', icon:`<svg viewBox="0 0 24 24"><path d="M12 4c3.5 0 5.5 5 5.5 9.5S15.5 20 12 20s-5.5-2-5.5-6.5S8.5 4 12 4z" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1"/><path d="M9 10.5l2 1.5-1.5 2 2.5 1" fill="none" stroke="#DAD6C8" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`, active:false},
+    'og-breadcrust': {name:'Stale bread crust', stream:'og', icon:`<svg viewBox="0 0 24 24"><path d="M4 12c0-4.5 3.5-8 8-8s8 3.5 8 8-3 6-8 6-8-1.5-8-6z" fill="#D9A45C" stroke="var(--ink)" stroke-width="1.1"/><path d="M8 9c1-1 2-1.5 4-1.5s3 .5 4 1.5" fill="none" stroke="#B9803D" stroke-width="0.9" stroke-linecap="round"/><circle cx="9" cy="13" r="0.5" fill="#B9803D"/><circle cx="13" cy="14.5" r="0.5" fill="#B9803D"/><circle cx="15.5" cy="12" r="0.5" fill="#B9803D"/></svg>`, active:false},
+    'og-veggie': {name:'Vegetable peelings', stream:'og', icon:`<svg viewBox="0 0 24 24"><path d="M6 6c4-2 10-2 12 2-2 6-8 10-14 8 0-4 0-8 2-10z" fill="#8FAE55" stroke="var(--ink)" stroke-width="1.1" stroke-linejoin="round"/><path d="M7 8c2 3 3 6 2 10" fill="none" stroke="#6C8A3C" stroke-width="0.9" stroke-linecap="round"/></svg>`, active:false},
+    'og-flowers': {name:'Wilted flowers', stream:'og', icon:`<svg viewBox="0 0 24 24"><path d="M12 10v10" stroke="#6C8A3C" stroke-width="1.1" stroke-linecap="round"/><path d="M12 10c-1.5-1-2-3-1-4.5 1.5.5 2.5 2 2 3.8M12 10c1.5-1 2-3 1-4.5-1.5.5-2.5 2-2 3.8" fill="#B8CE84" stroke="var(--ink)" stroke-width="0.9"/><circle cx="12" cy="6.5" r="2.2" fill="#E8B8CE" stroke="var(--ink)" stroke-width="0.9"/></svg>`, active:false},
+    'og-ricepasta': {name:'Leftover rice or pasta', stream:'og', icon:`<svg viewBox="0 0 24 24"><ellipse cx="12" cy="15" rx="8" ry="4" fill="#F0E6C8" stroke="var(--ink)" stroke-width="1.1"/><path d="M8 13.5c1.5-1 2.5.5 4-.3s2.5.6 4-.2" fill="none" stroke="#D6C79A" stroke-width="0.9" stroke-linecap="round"/><path d="M8.5 15.8c1.5-1 2.5.5 4-.3s2.5.6 3.5-.1" fill="none" stroke="#D6C79A" stroke-width="0.9" stroke-linecap="round"/></svg>`, active:false},
+    'ew-keyboard': {name:'Computer keyboard', stream:'ew', icon:`<svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="10" rx="1" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><rect x="5" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="8" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="11" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="14" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="17" y="10" width="2" height="1.6" fill="var(--ink)" opacity="0.5"/><rect x="6" y="14" width="12" height="1.6" fill="var(--ink)" opacity="0.5"/></svg>`},
+    'ew-remote': {name:'Broken remote control', stream:'ew', icon:`<svg viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="18" rx="2" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><circle cx="12" cy="7" r="1.1" fill="var(--ink)" opacity="0.5"/><rect x="10" y="10" width="4" height="2" fill="var(--ink)" opacity="0.4"/><rect x="10" y="13.5" width="4" height="2" fill="var(--ink)" opacity="0.4"/><rect x="10" y="17" width="4" height="2" fill="var(--ink)" opacity="0.4"/></svg>`, active:false},
+    'ew-headphones': {name:'Broken headphones', stream:'ew', icon:`<svg viewBox="0 0 24 24"><path d="M5 13v-2a7 7 0 0114 0v2" fill="none" stroke="var(--ink)" stroke-width="1.2" stroke-linecap="round"/><rect x="3.3" y="12" width="3.4" height="6" rx="1.5" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><rect x="17.3" y="12" width="3.4" height="6" rx="1.5" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/></svg>`, active:false},
+    'ew-speaker': {name:'Desktop speaker', stream:'ew', icon:`<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="1.5" fill="#DCE3E6" stroke="var(--ink)" stroke-width="1.1"/><circle cx="12" cy="9" r="3.2" fill="none" stroke="var(--ink)" stroke-width="1"/><circle cx="12" cy="9" r="1.1" fill="var(--ink)" opacity="0.5"/><circle cx="12" cy="16" r="1.8" fill="none" stroke="var(--ink)" stroke-width="0.9"/></svg>`, active:false},
+    'ew-powerboard': {name:'Power board', stream:'ew', icon:`<svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="1.5" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><circle cx="7" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><circle cx="12" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><circle cx="17" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><path d="M3 12H1M21 12c1 0 2 1 2 3" fill="none" stroke="var(--ink)" stroke-width="1.1" stroke-linecap="round"/></svg>`}
   };
   // AUTO-GENERATED CATALOG END
 
@@ -4480,13 +4511,18 @@ try {
   // items with a DIFFERENT effective stream available to draw decoys from (see validateDraftOverrides()).
   const DECOY_CAP = 5;
 
-  // '__blocked__' is a sentinel, never a real stream — it means "not accepted in any of the
-  // 5 bins, for this building" (see setDraftOverride()). It never matches any entry in the
-  // real `streams` array, so computeClaimedCounts()/validateDraftOverrides() below already
-  // exclude a blocked item from every stream's claimed count with no extra code needed.
+  // An item's effective state for this building is three independent, optional overrides —
+  // active, stream, acceptable — each falling back to the catalog default when absent, so the
+  // override map stays sparse (only the fields that actually differ get written).
+  function activeCatalogDefault(itemId){ return catalog[itemId].active !== false; }
+
+  function effectiveActiveInDraft(itemId){
+    const ov = draftItemOverrides && draftItemOverrides[itemId];
+    return (ov && typeof ov.active === 'boolean') ? ov.active : activeCatalogDefault(itemId);
+  }
+
   function effectiveStreamInDraft(itemId){
     const ov = draftItemOverrides && draftItemOverrides[itemId];
-    if (ov && ov.notAccepted) return '__blocked__';
     return (ov && ov.stream) || catalog[itemId].stream;
   }
 
@@ -4495,32 +4531,47 @@ try {
     return (ov && ov.acceptable) || [];
   }
 
-  // Single write path for the draft so every caller (stream select, acceptable checkboxes,
-  // quick-merge) cleans up the same way: an item back at its full catalog default (primary
-  // AND no acceptable extras) has its override entry removed entirely, keeping the map sparse.
-  function setDraftOverride(itemId, stream, acceptable){
-    if (stream === '__blocked__'){
-      draftItemOverrides[itemId] = { notAccepted: true };
-      return;
-    }
-    const cleanAcceptable = acceptable.filter(s => s !== stream);
-    if (stream === catalog[itemId].stream && cleanAcceptable.length === 0) delete draftItemOverrides[itemId];
-    else draftItemOverrides[itemId] = { stream, acceptable: cleanAcceptable };
+  // Deletes the whole override entry once none of its fields differ from the catalog default
+  // anymore — keeps the map sparse regardless of which of the 3 fields was last touched.
+  function pruneDraftOverrideIfDefault(itemId){
+    const ov = draftItemOverrides[itemId];
+    if (!ov) return;
+    const activeMatches = !('active' in ov) || ov.active === activeCatalogDefault(itemId);
+    const streamMatches = !ov.stream || ov.stream === catalog[itemId].stream;
+    const acceptableEmpty = !ov.acceptable || ov.acceptable.length === 0;
+    if (activeMatches && streamMatches && acceptableEmpty) delete draftItemOverrides[itemId];
   }
 
-  // Counts, per stream, how many items are effective there — as primary/ideal OR as an
+  // Single write path for the on/off toggle.
+  function setDraftActive(itemId, active){
+    const ov = draftItemOverrides[itemId] || {};
+    if (active === activeCatalogDefault(itemId)) delete ov.active; else ov.active = active;
+    draftItemOverrides[itemId] = ov;
+    pruneDraftOverrideIfDefault(itemId);
+  }
+
+  // Single write path for the stream select + acceptable checkboxes (quick-merge included) —
+  // preserves any existing `active` override on the same item.
+  function setDraftOverride(itemId, stream, acceptable){
+    const ov = draftItemOverrides[itemId] || {};
+    const cleanAcceptable = acceptable.filter(s => s !== stream);
+    if (stream === catalog[itemId].stream) delete ov.stream; else ov.stream = stream;
+    if (cleanAcceptable.length === 0) delete ov.acceptable; else ov.acceptable = cleanAcceptable;
+    draftItemOverrides[itemId] = ov;
+    pruneDraftOverrideIfDefault(itemId);
+  }
+
+  // Counts, per stream, how many ACTIVE items are effective there — as primary/ideal OR as an
   // "also acceptable" pick. Both make an item ineligible as that stream's decoy in the game
   // (see buildDecoyPlan() in recycling-training.html), and both count toward that stream
   // actually getting a non-zero phase target — so both need to be counted the same way here.
+  // An inactive item (backup left off, or battery/toner at their off-by-default state) never
+  // claims a stream at all.
   function computeClaimedCounts(){
     const claimed = {};
     streams.forEach(s => { claimed[s] = 0; });
     Object.keys(catalog).forEach(id => {
-      // Globally noCorrectBin items (battery, toner) are permanently pinned in "Not accepted
-      // anywhere" (see renderItemStreamsEditorHtml()) and never actually claim a real stream —
-      // counting them against E-Waste here would be a stale leftover from before that lock
-      // existed, not a real claim on that stream's decoy pool.
-      if (catalog[id].noCorrectBin) return;
+      if (!effectiveActiveInDraft(id)) return;
       const primary = effectiveStreamInDraft(id);
       const acceptable = effectiveAcceptableInDraft(id);
       streams.forEach(s => { if (s === primary || acceptable.includes(s)) claimed[s]++; });
@@ -4528,16 +4579,58 @@ try {
     return claimed;
   }
 
-  // Guarantees the game's decoy generator can always find DECOY_CAP genuinely-wrong items
-  // for every phase, for any config that can actually be saved — no stream may be the
-  // effective home of more than 25-DECOY_CAP items, or the streams pointing elsewhere
-  // would have fewer than DECOY_CAP items left to draw decoys from.
+  // Mirrors buildDecoyPlan() in recycling-training.html exactly (same bipartite matching,
+  // same augmenting-path algorithm) but over this building's DRAFT config, so Save can prove
+  // — not just estimate — that the game will be able to fill every phase's decoys. Returns how
+  // many of each stream's DECOY_CAP slots the matching actually managed to fill; anything short
+  // of DECOY_CAP for a stream means that phase can't be built as configured.
+  function tryFillDecoySlots(){
+    const activeIds = Object.keys(catalog).filter(effectiveActiveInDraft);
+    const slots = [];
+    streams.forEach(stream => { for (let i = 0; i < DECOY_CAP; i++) slots.push(stream); });
+    const poolByStream = {};
+    streams.forEach(stream => {
+      poolByStream[stream] = activeIds.filter(id =>
+        effectiveStreamInDraft(id) !== stream && !effectiveAcceptableInDraft(id).includes(stream));
+    });
+    const matchItemToSlot = new Map();
+    function tryAssign(slotIndex, visited){
+      const stream = slots[slotIndex];
+      for (const id of poolByStream[stream]){
+        if (visited.has(id)) continue;
+        visited.add(id);
+        const currentSlot = matchItemToSlot.get(id);
+        if (currentSlot === undefined || tryAssign(currentSlot, visited)){
+          matchItemToSlot.set(id, slotIndex);
+          return true;
+        }
+      }
+      return false;
+    }
+    slots.forEach((_, slotIndex) => tryAssign(slotIndex, new Set()));
+    const filled = {};
+    streams.forEach(s => { filled[s] = 0; });
+    matchItemToSlot.forEach(slotIndex => { filled[slots[slotIndex]]++; });
+    return filled;
+  }
+
+  // Two independent checks: (1) a stream's own correct-item count must be a number that
+  // actually looks right in the game — 0 (deliberately merged away with Quick-merge) or at
+  // least DECOY_CAP, never a partial number like 3; (2) a real trial run of the game's own
+  // decoy-matching algorithm, so "this saves fine" is proven, not just estimated from a
+  // simplified per-stream ceiling (which is exactly the kind of shortcut that hid a real bug
+  // in buildDecoyPlan() earlier this project).
   function validateDraftOverrides(){
     const claimed = computeClaimedCounts();
-    const maxClaimed = Object.keys(catalog).length - DECOY_CAP;
     for (const s of streams){
-      if (claimed[s] > maxClaimed){
-        return `Too many items are assigned to ${streamNames[s]} — at least ${DECOY_CAP} items must stay outside it so the game always has enough decoys for every other stream's phase.`;
+      if (claimed[s] > 0 && claimed[s] < DECOY_CAP){
+        return `${streamNames[s]} only has ${claimed[s]} correct item${claimed[s] === 1 ? '' : 's'} — needs at least ${DECOY_CAP} (or merge it away entirely with Quick-merge).`;
+      }
+    }
+    const filled = tryFillDecoySlots();
+    for (const s of streams){
+      if (filled[s] < DECOY_CAP){
+        return `${streamNames[s]}'s phase wouldn't have enough decoys (${filled[s]} of ${DECOY_CAP}) — too many items are claimed by other streams. Turn a few more items on, or move some out of the streams claiming the most.`;
       }
     }
     return '';
@@ -4551,70 +4644,52 @@ try {
     if (empty.length){
       text += ` ${empty.map(s => streamNames[s]).join(', ')} — no items here, won't get a game phase to sort into, but the walkthrough panel stays visible as general info.`;
     }
-    // Count ordinary items an admin chose to block for this building — excludes the 2
-    // permanently-fixed noCorrectBin ones (battery, toner), which are always blocked
-    // everywhere and aren't a building-specific choice worth calling out here.
-    const blockedCount = Object.keys(catalog)
-      .filter(id => !catalog[id].noCorrectBin && effectiveStreamInDraft(id) === '__blocked__').length;
-    if (blockedCount > 0){
-      text += ` Not accepted anywhere: ${blockedCount} item${blockedCount === 1 ? '' : 's'} (aside from the 2 fixed ones).`;
-    }
     return text;
   }
 
   function renderItemStreamsEditorHtml(){
-    // '__blocked__' is a 6th, virtual "section" alongside the 5 real streams — items not
-    // accepted in any bin at this building. Globally noCorrectBin items (battery, toner) are
-    // always pinned here, locked, regardless of any draft override — reassigning them to a
-    // real stream would be meaningless (the game marks them wrong everywhere anyway) and used
-    // to produce a misleading walkthrough note claiming otherwise. Every other item's group
-    // reflects its own draft override, including a building-specific "not accepted" choice.
-    const GROUPS = [...streams, '__blocked__'];
-    const groupNames = Object.assign({}, streamNames, {__blocked__: 'Not accepted anywhere'});
+    // Every one of the 50 catalog items (25 in rotation + 25 backups) shows up here, grouped
+    // by its effective stream, with an on/off toggle — an admin can personalize any of them
+    // per building, including turning on a backup or turning off a normally-active item.
     const grouped = {};
-    GROUPS.forEach(s => { grouped[s] = []; });
-    Object.keys(catalog).forEach(id => {
-      const group = catalog[id].noCorrectBin ? '__blocked__' : effectiveStreamInDraft(id);
-      grouped[group].push(id);
-    });
+    streams.forEach(s => { grouped[s] = []; });
+    Object.keys(catalog).forEach(id => { grouped[effectiveStreamInDraft(id)].push(id); });
 
-    const sectionsHtml = GROUPS.map(s => {
+    const sectionsHtml = streams.map(s => {
       const ids = grouped[s].slice().sort((a,b) => catalog[a].name.localeCompare(catalog[b].name));
       const cardsHtml = ids.map(id => {
+        const active = effectiveActiveInDraft(id);
         const iconHtml = catalog[id].icon ? `<span class="items-card-icon">${catalog[id].icon}</span>` : '';
-        const headHtml = `<div class="items-card-head">${iconHtml}<span class="items-card-name">${esc(catalog[id].name)}</span></div>`;
-        if (catalog[id].noCorrectBin){
-          return `
-          <div class="items-card items-card-locked">
-            ${headHtml}
-            <p class="block-sub">Fixed — always excluded from every bin, in every building.</p>
-          </div>`;
-        }
-        const acceptable = s === '__blocked__' ? [] : effectiveAcceptableInDraft(id);
+        const toggleHtml = `
+          <label class="item-toggle">
+            <input type="checkbox" class="item-active-toggle" data-item-id="${id}"${active ? ' checked' : ''}>
+            <span class="item-toggle-track"><span class="item-toggle-thumb"></span></span>
+          </label>`;
+        const headHtml = `<div class="items-card-head">${iconHtml}<span class="items-card-name">${esc(catalog[id].name)}</span>${toggleHtml}</div>`;
+        const acceptable = effectiveAcceptableInDraft(id);
         const checkboxesHtml = streams.filter(opt => opt !== s).map(opt => `
           <label class="acceptable-checkbox-label">
             <input type="checkbox" class="item-acceptable-checkbox" data-item-id="${id}" value="${opt}"${acceptable.includes(opt) ? ' checked' : ''}>
             ${streamNames[opt]}
           </label>`).join('');
         return `
-        <div class="items-card">
+        <div class="items-card${active ? '' : ' items-card-inactive'}">
           ${headHtml}
           <select class="item-stream-select" data-item-id="${id}">
             ${streams.map(opt => `<option value="${opt}"${opt === s ? ' selected' : ''}>${streamNames[opt]}</option>`).join('')}
-            <option value="__blocked__"${s === '__blocked__' ? ' selected' : ''}>Not accepted anywhere</option>
           </select>
-          ${s === '__blocked__' ? '' : `
+          ${active ? `
           <details class="acceptable-details"${acceptable.length ? ' open' : ''}>
             <summary class="block-sub">Also acceptable in…${acceptable.length ? ` (${acceptable.length})` : ''}</summary>
             <div class="acceptable-checkbox-group">${checkboxesHtml}</div>
-          </details>`}
+          </details>` : ''}
         </div>`;
       }).join('');
       return `
-        <div class="items-stream-section${s === '__blocked__' ? ' items-stream-section-blocked' : ''}">
+        <div class="items-stream-section">
           <div class="items-stream-head">
-            <span class="items-stream-swatch${s === '__blocked__' ? ' items-stream-swatch-blocked' : ''}"${s === '__blocked__' ? '' : ` style="background:var(--${s});"`}></span>
-            <h4>${groupNames[s]} <span class="block-sub" style="font-weight:400;">(${ids.length})</span></h4>
+            <span class="items-stream-swatch" style="background:var(--${s});"></span>
+            <h4>${streamNames[s]} <span class="block-sub" style="font-weight:400;">(${ids.length})</span></h4>
           </div>
           <div class="items-card-grid">${cardsHtml || '<p class="block-sub">Nothing here for this building.</p>'}</div>
         </div>`;
@@ -4977,9 +5052,9 @@ try {
       const toStream = row.querySelector('.quick-merge-to').value;
       if (fromStream === toStream){ alert('Choose two different streams to merge.'); return; }
       Object.keys(catalog).forEach(id => {
-        // Globally noCorrectBin items are pinned permanently in "Not accepted anywhere" (see
-        // renderItemStreamsEditorHtml()) — never move them via a bulk merge action either.
-        if (catalog[id].noCorrectBin) return;
+        // Only items actually active in the "from" stream get swept into the merge — an
+        // inactive item sitting there nominally isn't really "in" that stream for a trainee.
+        if (!effectiveActiveInDraft(id)) return;
         if (effectiveStreamInDraft(id) !== fromStream) return;
         setDraftOverride(id, toStream, effectiveAcceptableInDraft(id));
       });
@@ -5192,6 +5267,14 @@ try {
   });
 
   document.getElementById('buildingsList').addEventListener('change', async (e) => {
+    const activeToggle = e.target.closest('.item-active-toggle');
+    if (activeToggle){
+      setDraftActive(activeToggle.dataset.itemId, activeToggle.checked);
+      itemsEditorError = '';
+      refreshBuildingsView();
+      return;
+    }
+
     const itemStreamSelect = e.target.closest('.item-stream-select');
     if (itemStreamSelect){
       const itemId = itemStreamSelect.dataset.itemId;
