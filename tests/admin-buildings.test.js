@@ -453,6 +453,10 @@ async function runFlow(page){
   check('an ordinary item marked "not accepted anywhere" persists after reload',
     fishBlockedValue === '__blocked__', fishBlockedValue);
 
+  const summaryWithBlocked = await page.$eval(`${itemsBuildingSelector} .items-editor-summary`, el => el.textContent).catch(() => '');
+  check('the editor summary mentions the blocked item count, excluding the 2 fixed battery/toner ones',
+    summaryWithBlocked.includes('Not accepted anywhere: 1 item'), summaryWithBlocked);
+
   // Moving it back to a real stream should round-trip cleanly (the override entry is replaced,
   // not left behind as a stale {notAccepted:true} alongside a new {stream,...} shape).
   await page.select(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-fish"]`, 'og');

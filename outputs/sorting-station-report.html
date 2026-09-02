@@ -4516,6 +4516,11 @@ try {
     const claimed = {};
     streams.forEach(s => { claimed[s] = 0; });
     Object.keys(catalog).forEach(id => {
+      // Globally noCorrectBin items (battery, toner) are permanently pinned in "Not accepted
+      // anywhere" (see renderItemStreamsEditorHtml()) and never actually claim a real stream —
+      // counting them against E-Waste here would be a stale leftover from before that lock
+      // existed, not a real claim on that stream's decoy pool.
+      if (catalog[id].noCorrectBin) return;
       const primary = effectiveStreamInDraft(id);
       const acceptable = effectiveAcceptableInDraft(id);
       streams.forEach(s => { if (s === primary || acceptable.includes(s)) claimed[s]++; });
@@ -4545,6 +4550,14 @@ try {
     let text = `Active bins for this building: ${active.map(s => streamNames[s]).join(', ')} (${active.length} of ${streams.length}).`;
     if (empty.length){
       text += ` ${empty.map(s => streamNames[s]).join(', ')} — no items here, won't get a game phase to sort into, but the walkthrough panel stays visible as general info.`;
+    }
+    // Count ordinary items an admin chose to block for this building — excludes the 2
+    // permanently-fixed noCorrectBin ones (battery, toner), which are always blocked
+    // everywhere and aren't a building-specific choice worth calling out here.
+    const blockedCount = Object.keys(catalog)
+      .filter(id => !catalog[id].noCorrectBin && effectiveStreamInDraft(id) === '__blocked__').length;
+    if (blockedCount > 0){
+      text += ` Not accepted anywhere: ${blockedCount} item${blockedCount === 1 ? '' : 's'} (aside from the 2 fixed ones).`;
     }
     return text;
   }
