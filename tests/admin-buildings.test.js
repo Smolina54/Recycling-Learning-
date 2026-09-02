@@ -645,6 +645,10 @@ async function runFlow(page){
   check('signing in through the real email/password form works for a Firestore-granted admin',
     await page.$eval('#adminTabs', el => getComputedStyle(el).display !== 'none'),
     authStatusAfterEmailSignIn);
+  check('the email/password form collapses back after a successful sign-in (not left sitting on screen)',
+    await page.$eval('#emailSignInForm', el => getComputedStyle(el).display === 'none'));
+  check('the "Sign in with email" button also hides once signed in',
+    await page.$eval('#showEmailSignInBtn', el => getComputedStyle(el).display === 'none'));
 }
 
 async function finishAndReport(page, browser, consoleErrors, seedEnv){

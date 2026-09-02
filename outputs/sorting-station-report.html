@@ -5299,7 +5299,11 @@ try {
     onAuthStateChanged(auth, (user) => {
       document.getElementById('signInBtn').style.display = user ? 'none' : 'inline-flex';
       document.getElementById('signOutBtn').style.display = user ? 'inline-flex' : 'none';
-      if (user) loadLiveData();
+      if (user){
+        document.getElementById('showEmailSignInBtn').style.display = 'none';
+        document.getElementById('emailSignInForm').style.display = 'none';
+        loadLiveData();
+      }
       else {
         // Real names/emails/scores were on screen the moment before this — signing out has to
         // actually clear them, not just hide the Buildings tab. Previously reportSection (KPIs,
