@@ -399,8 +399,8 @@ async function runFlow(page){
   // Every catalog item (both the 25 in rotation and the 25 backups) shows up here now — an
   // admin can personalize any of them per building via the on/off toggle.
   const totalItemCards = await page.$$eval(`${itemsBuildingSelector} .items-card`, els => els.length);
-  check('the editor shows all 50 catalog items, backups included',
-    totalItemCards === 50, totalItemCards);
+  check('the editor shows all 52 catalog items, backups included',
+    totalItemCards === 52, totalItemCards);
   const benchItemInactive = await page.$eval(`${itemsBuildingSelector} .item-active-toggle[data-item-id="gw-glass"]`,
     el => !el.checked).catch(() => null);
   check('a specific bench item (gw-glass) is present but shown off by default', benchItemInactive === true);
@@ -480,7 +480,7 @@ async function runFlow(page){
   // Turning on a backup item to compensate brings Organics back to a valid count (5) and the
   // save succeeds — this is the actual "swap which items count toward the 5" workflow Sergio
   // described.
-  await page.click(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-eggshell"]`);
+  await page.click(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-breadcrust"]`);
   await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
   await new Promise(r => setTimeout(r, 600));
 
@@ -488,13 +488,13 @@ async function runFlow(page){
   await row.$eval('.configure-items-btn', el => el.click());
   await new Promise(r => setTimeout(r, 200));
   const fishOffAfterReload = await page.$eval(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-fish"]`, el => !el.checked);
-  const eggshellOnAfterReload = await page.$eval(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-eggshell"]`, el => el.checked);
-  check('the compensated swap (fish off, eggshell on) persists after reload',
-    fishOffAfterReload && eggshellOnAfterReload);
+  const breadcrustOnAfterReload = await page.$eval(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-breadcrust"]`, el => el.checked);
+  check('the compensated swap (fish off, bread crust on) persists after reload',
+    fishOffAfterReload && breadcrustOnAfterReload);
 
   // Reset both items back to their defaults for the rest of the flow.
   await page.click(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-fish"]`);
-  await page.click(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-eggshell"]`);
+  await page.click(`${itemsBuildingSelector} .item-active-toggle[data-item-id="og-breadcrust"]`);
   await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
   await new Promise(r => setTimeout(r, 600));
   row = await findBuildingRow(page, buildingName);
@@ -502,29 +502,31 @@ async function runFlow(page){
   await new Promise(r => setTimeout(r, 200));
 
   // --- "Also acceptable in" checkboxes (Milestone 4: ideal-vs-acceptable) ---
-  // og-teabag keeps its default primary (og) but gains gw as an "also acceptable" pick.
-  const teabagCheckboxSelector = `${itemsBuildingSelector} .item-acceptable-checkbox[data-item-id="og-teabag"][value="gw"]`;
-  await page.$eval(teabagCheckboxSelector, el => el.click());
+  // og-apple keeps its default primary (og) but gains gw as an "also acceptable" pick.
+  // (Not og-teabag — its own primary is 'gw' now after the 2026-09-02 reclassification, so
+  // 'gw' is no longer offered as an "also acceptable" option for it.)
+  const appleCheckboxSelector = `${itemsBuildingSelector} .item-acceptable-checkbox[data-item-id="og-apple"][value="gw"]`;
+  await page.$eval(appleCheckboxSelector, el => el.click());
   await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
   await new Promise(r => setTimeout(r, 600));
 
   row = await findBuildingRow(page, buildingName);
   await row.$eval('.configure-items-btn', el => el.click());
   await new Promise(r => setTimeout(r, 200));
-  const teabagPrimaryValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-teabag"]`, el => el.value);
-  const teabagAcceptableChecked = await page.$eval(teabagCheckboxSelector, el => el.checked);
+  const applePrimaryValue = await page.$eval(`${itemsBuildingSelector} .item-stream-select[data-item-id="og-apple"]`, el => el.value);
+  const appleAcceptableChecked = await page.$eval(appleCheckboxSelector, el => el.checked);
   check('an "also acceptable in" checkbox persists after reload without disturbing the item\'s primary stream',
-    teabagPrimaryValue === 'og' && teabagAcceptableChecked === true, `primary=${teabagPrimaryValue} acceptableChecked=${teabagAcceptableChecked}`);
+    applePrimaryValue === 'og' && appleAcceptableChecked === true, `primary=${applePrimaryValue} acceptableChecked=${appleAcceptableChecked}`);
 
   // Unchecking it should fully clear that item's acceptable list again.
-  await page.$eval(teabagCheckboxSelector, el => el.click());
+  await page.$eval(appleCheckboxSelector, el => el.click());
   await page.$eval(`${itemsBuildingSelector} .save-items-btn`, el => el.click());
   await new Promise(r => setTimeout(r, 600));
   row = await findBuildingRow(page, buildingName);
   await row.$eval('.configure-items-btn', el => el.click());
   await new Promise(r => setTimeout(r, 200));
-  const teabagAcceptableAfterUncheck = await page.$eval(teabagCheckboxSelector, el => el.checked);
-  check('unchecking "also acceptable in" and saving clears it', teabagAcceptableAfterUncheck === false);
+  const appleAcceptableAfterUncheck = await page.$eval(appleCheckboxSelector, el => el.checked);
+  check('unchecking "also acceptable in" and saving clears it', appleAcceptableAfterUncheck === false);
 
   // Reset to default, save, confirm the badge disappears.
   await page.$eval(`${itemsBuildingSelector} .reset-items-btn`, el => el.click());

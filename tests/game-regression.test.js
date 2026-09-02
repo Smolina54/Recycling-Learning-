@@ -38,11 +38,13 @@ async function resolvePhase(page){
   return await page.$eval('#nextPhaseBtn', el => getComputedStyle(el).display !== 'none').catch(() => false);
 }
 
-// Deliberately presses Enter on every one of the 10 board items (not just until 5/5),
-// so both a real "correct, collected into the bin" and a real "wrong, stays on the
-// board" case are guaranteed to happen at least once — used only for phase 0.
-async function resolveAllTenItems(page){
-  for (let i = 0; i < 10; i++){
+// Deliberately presses Enter on every board item (not just until the phase target is
+// reached), so both a real "correct, collected into the bin" and a real "wrong, stays on
+// the board" case are guaranteed to happen at least once — used only for phase 0. Not
+// hardcoded to a specific board size — General Waste's board grows/shrinks with its catalog
+// roster (e.g. it picked up "Used tea bag" in the 2026-09-02 content correction).
+async function resolveAllBoardItems(page){
+  for (let i = 0; i < 30; i++){
     const card = await page.$('.board-item:not([data-test-clicked])');
     if (!card) break;
     await card.evaluate(el => el.setAttribute('data-test-clicked', '1'));
@@ -149,9 +151,9 @@ async function runFlow(page){
   // Phase 0: press every card (not just until 5/5) so both outcomes are exercised,
   // then check the new "collected tray" + "wrong items stay on the board" behavior
   // before moving on.
-  await resolveAllTenItems(page);
+  await resolveAllBoardItems(page);
   const collectedCount = await page.$$eval('#binCollected .collected-icon', els => els.length);
-  check('collected tray shows 5 mini-icons for the 5 correctly-sorted items', collectedCount === 5, collectedCount);
+  check('collected tray shows 6 mini-icons for the 6 correctly-sorted items (General Waste, including the reclassified tea bag)', collectedCount === 6, collectedCount);
 
   const resolvedWrongCount = await page.$$eval('.board-item.resolved-wrong', els => els.length);
   check('at least one wrongly-dropped item stays on the board (does not disappear)', resolvedWrongCount > 0, resolvedWrongCount);
@@ -212,18 +214,23 @@ async function runFlow(page){
   const breakdownRows = await page.$$eval('#streamBreakdown .breakdown-row', els => els.length).catch(() => 0);
   check('per-stream breakdown rendered 5 rows', breakdownRows === 5, breakdownRows);
   // Review list redesign (2026-08-28): one compact card per stream instead of one flat
-  // 25-row list — 5 cards, each covering exactly 5 decoys (correct ones as an icon-only row,
-  // wrong ones with a short "where it goes" + a 3-4 word reason).
+  // list — 5 cards, each covering that stream's own decoy count (correct ones as an
+  // icon-only row, wrong ones with a short "where it goes" + a 3-4 word reason).
   const reviewCards = await page.$$eval('#reviewList .review-stream-card', els => els.length).catch(() => 0);
-  check('review list rendered 5 per-stream cards (not one flat 25-row list)', reviewCards === 5, reviewCards);
+  check('review list rendered 5 per-stream cards (not one flat list)', reviewCards === 5, reviewCards);
 
   const cardCounts = await page.$$eval('#reviewList .review-stream-card', cards => cards.map(card => {
     const correctIcons = card.querySelectorAll('.review-correct-row .item-thumb').length;
     const wrongItems = card.querySelectorAll('.review-wrong-item').length;
     return correctIcons + wrongItems;
   }));
-  check('each stream card accounts for exactly 5 items (its 5 decoys)',
-    cardCounts.every(n => n === 5), cardCounts.join(','));
+  // decoyMap's own per-phase lists are still 5-and-5 everywhere (score total stays 25), but
+  // this review screen groups each decoy by its OWN current category for display, not by
+  // which phase tested it (a real bug fix from an earlier session) — so General Waste's card
+  // gains the reclassified "Used tea bag" (now 6) and Organics's loses it (now 4), even
+  // though it's still physically tested during Mixed Recycling's phase.
+  check('each stream card accounts for its real category\'s decoys (6,5,5,4,5 — tea bag now displays under General Waste)',
+    JSON.stringify(cardCounts) === JSON.stringify([6, 5, 5, 4, 5]), cardCounts.join(','));
 
   // Real bug Sergio caught: cards were grouped by which phase an item was decoy-tested in,
   // not by the item's own real category — so "Paper & Cardboard" could show a phone or coffee

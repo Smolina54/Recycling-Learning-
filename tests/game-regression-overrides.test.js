@@ -29,20 +29,20 @@ const ACCEPTABLE_ITEM_OVERRIDES = {
   'pc-box': { stream: 'pc', acceptable: ['mr'] },
 };
 
-// A third building: og-teabag is turned OFF for this one building only — the per-building
+// A third building: og-fish is turned OFF for this one building only — the per-building
 // on/off toggle that replaced both the old global noCorrectBin flag and the earlier
 // "Not accepted anywhere" feature (2026-09-02 redesign, see the plan). An inactive item is
 // simply absent from that building's game entirely — not a decoy, no special message.
 const BLOCKED_BUILDING_ID = 'test-tower-blocked';
 const BLOCKED_TENANT_ID = 'test-tenant-blocked';
 const BLOCKED_GAME_URL = `${url.pathToFileURL(GAME_PATH).href}?b=${BLOCKED_BUILDING_ID}&emulator=1`;
-// Paired with turning on an og backup (og-eggshell) so the total active pool stays at 25 and
-// Organics stays at a valid 5 correct items — an admin turning an item off for real always has
-// to keep every stream at 0-or-≥5 (see validateDraftOverrides() in sorting-station-report.html),
-// so this is the actual reachable shape of a "toggle an item off" config, not an isolated flip.
+// Paired with turning on an og backup (og-breadcrust) so Organics stays at a valid 5 correct
+// items — an admin turning an item off for real always has to keep every stream at 0-or-≥5
+// (see validateDraftOverrides() in sorting-station-report.html), so this is the actual
+// reachable shape of a "toggle an item off" config, not an isolated flip.
 const BLOCKED_ITEM_OVERRIDES = {
-  'og-teabag': { active: false },
-  'og-eggshell': { active: true },
+  'og-fish': { active: false },
+  'og-breadcrust': { active: true },
 };
 
 // A fourth building: full Paper & Cardboard -> Organics merge — a real config discovered (via
@@ -393,17 +393,17 @@ async function runBlockedFlow(browser, consoleErrors){
   await new Promise(r => setTimeout(r, 300));
 
   let ogCorrectTarget = null;
-  let teabagAppearances = 0;
-  let eggshellInOgPhase = false;
+  let fishAppearances = 0;
+  let breadcrustInOgPhase = false;
 
   for (let i = 0; i < 5; i++){
     const stream = STREAM_ORDER[i];
     const boardIds = await page.$$eval('.board-item', els => els.map(el => el.dataset.id));
     if (stream === 'og'){
       ogCorrectTarget = await page.$eval('#phaseCounter', el => el.textContent).catch(() => '');
-      eggshellInOgPhase = boardIds.includes('og-eggshell');
+      breadcrustInOgPhase = boardIds.includes('og-breadcrust');
     }
-    if (boardIds.includes('og-teabag')) teabagAppearances++;
+    if (boardIds.includes('og-fish')) fishAppearances++;
 
     const reached = await resolvePhase(page, 25);
     if (!reached) break;
@@ -412,12 +412,12 @@ async function runBlockedFlow(browser, consoleErrors){
     await new Promise(r => setTimeout(r, 300));
   }
 
-  check('Organics still has 5 correct items (teabag swapped out, eggshell swapped in)',
+  check('Organics still has 5 correct items (fish swapped out, bread crust swapped in)',
     ogCorrectTarget === 'Sorted 0 of 5', ogCorrectTarget);
   check('the toggled-off item never appears on any board — not correct, not a decoy',
-    teabagAppearances === 0, teabagAppearances);
+    fishAppearances === 0, fishAppearances);
   check('the toggled-on backup appears on Organics\'s own board as one of its correct items',
-    eggshellInOgPhase === true);
+    breadcrustInOgPhase === true);
 
   await new Promise(r => setTimeout(r, 300));
   const scoreOfText = await page.$eval('#scoreOf', el => el.textContent.trim()).catch(() => '');
@@ -463,16 +463,17 @@ async function runFullMergeFlow(browser, consoleErrors){
   }
 
   // pc has 0 correct items here (fully merged away), og has 10 (5 native + 5 absorbed) — so
-  // board sizes are correct-target + DECOY_CAP: pc=0+5=5, og=10+5=15, gw/mr/ew=5+5=10 (E-Waste
-  // is back to its full 5 correct items — keyboard/powerboard replaced battery/toner's old
-  // slot in the 2026-09-02 redesign). The point of this check is specifically that NONE of
-  // them fall short of their expected DECOY_CAP=5.
+  // board sizes are correct-target + DECOY_CAP: pc=0+5=5, og=10+5=15, mr=5+5=10. gw=11 and
+  // ew=12 (not 10) because the 2026-09-02 content correction gave each of them an extra
+  // correct item of their own (gw picked up the reclassified "Used tea bag"; ew picked up
+  // printer + monitor) — DECOY_CAP stays 5 regardless. The point of this check is specifically
+  // that NONE of them fall short of their expected DECOY_CAP=5.
   check('the redirected stream (pc) still gets its full 5 decoys despite having 0 correct items',
     boardCountsByStream.pc === 5, boardCountsByStream.pc);
   check('the absorbing stream (og) still gets its full 5 decoys on top of its 10 correct items (not fewer, not zero)',
     boardCountsByStream.og === 15, boardCountsByStream.og);
-  check('gw/mr/ew (unaffected by the merge) keep their normal boards (10, 10, 10)',
-    boardCountsByStream.gw === 10 && boardCountsByStream.mr === 10 && boardCountsByStream.ew === 10,
+  check('gw/mr/ew (unaffected by the merge) keep their normal boards (11, 10, 12)',
+    boardCountsByStream.gw === 11 && boardCountsByStream.mr === 10 && boardCountsByStream.ew === 12,
     JSON.stringify(boardCountsByStream));
 
   await new Promise(r => setTimeout(r, 300));

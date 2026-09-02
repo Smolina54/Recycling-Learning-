@@ -462,6 +462,7 @@
             <li>Broken ceramics, glass, or mirrors</li>
             <li>Used tissues and disposable non-recyclable cups</li>
             <li>Disposable PPE (masks, gloves)</li>
+            <li>Used tea bags (the plastic mesh inside contaminates compost)</li>
           </ul>
         </div>
         <div class="rule-card no">
@@ -520,7 +521,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--pc)" stroke-width="2"><rect x="4" y="6" width="16" height="14" rx="1"/><path d="M4 10h16M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke-linecap="round"/></svg>
         </div>
         <div class="detail-title-group">
-          <div class="stream-code">Stream 03 — Fibre</div>
+          <div class="stream-code">Stream 03 — Paper & Cardboard</div>
           <h2>Paper &amp; Cardboard</h2>
         </div>
       </div>
@@ -603,6 +604,7 @@
         <div class="rule-card yes">
           <h3>✓ Goes in</h3>
           <ul>
+            <li>Printers, monitor screens</li>
             <li>Cables, chargers, adaptors</li>
             <li>Phones, laptops, small electronics</li>
           </ul>
@@ -611,7 +613,6 @@
           <h3>✕ Never goes in</h3>
           <ul>
             <li>Batteries — need their own dedicated battery point, not this one (ask your Waste Champion or Building Management where it is)</li>
-            <li>Printer and toner cartridges — most manufacturers run their own take-back program for these, separate from this point (ask your Waste Champion or Building Management where it is)</li>
             <li>Any general waste or recycling bin</li>
             <li>Bulk furniture or large appliances (arrange separate pickup)</li>
           </ul>
@@ -1857,10 +1858,10 @@ try {
 	c-2.92-3.78-5.83-3.89-5.83-3.89s3.85-3.14,11.2-3.22C93.5,62.69,96.96,63.56,100.39,68.46z"/></svg>`,
       explain:"Food scraps like this break down naturally instead of sitting sealed in landfill for years — that's the whole point of a compost stream.",
       shortWhy:"Compostable, not landfill waste" },
-    { id:'og-teabag', name:'Used tea bag', stream:'og',
+    { id:'og-teabag', name:'Used tea bag', stream:'gw',
       icon:`<svg viewBox="0 0 24 24"><path d="M12 3v3.5" stroke="var(--ink)" stroke-width="1" stroke-linecap="round"/><path d="M12 6.5c2 1 3 1 3.5 3" stroke="var(--ink)" stroke-width="0.9" fill="none" stroke-linecap="round"/><rect x="9.3" y="1.3" width="5.4" height="3.2" rx="0.6" fill="#F2EEE3" stroke="var(--ink)" stroke-width="1"/><path d="M7 9c0-1.4 1.2-1.6 2.5-1.6h5c1.3 0 2.5.2 2.5 1.6-.3 3-.5 7-2 8.6a4 4 0 01-6 0C7.5 16 7.3 12 7 9z" fill="#8B6F47" stroke="var(--ink)" stroke-width="1.2" stroke-linejoin="round"/></svg>`,
-      explain:"Tea bags and coffee grounds are compostable food waste — they break down naturally, unlike the packaging or containers around them.",
-      shortWhy:"Not a recyclable container" },
+      explain:"Most tea bags contain a fine plastic mesh that doesn't break down, which contaminates a compost batch — since the two aren't separated before disposal, the whole bag goes to general waste, not the organics bin.",
+      shortWhy:"Plastic mesh contaminates compost" },
     { id:'og-apple', name:'Apple core', stream:'og',
       icon:`<svg viewBox="0 0 128 128"><path style="fill:#DC0D28;" d="M45.43,68.14l-5.45-13.51l0.15-21.87c0,0,14.68-2.2,22.39-3.26s23.04-7.52,37.02-1.33
 	c15.88,7.03,24.3,23.3,20.06,48.1s-22.83,44.87-39.57,47.03c-8.29,1.07-9.77-2.15-16.12-1.69c-5.14,0.37-4.86,3.04-13.63,2.59
@@ -2190,7 +2191,7 @@ try {
       shortWhy:"Plain paper, tape removed first" },
 
     // Organics backups
-    { id:'og-eggshell', name:'Egg shells', stream:'og', active:false,
+    { id:'og-eggshell', name:'Egg shells', stream:'og',
       icon:`<svg viewBox="0 0 24 24"><path d="M12 4c3.5 0 5.5 5 5.5 9.5S15.5 20 12 20s-5.5-2-5.5-6.5S8.5 4 12 4z" fill="#F5F1E6" stroke="var(--ink)" stroke-width="1.1"/><path d="M9 10.5l2 1.5-1.5 2 2.5 1" fill="none" stroke="#DAD6C8" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
       explain:"Egg shells break down quickly and add useful minerals to compost — crushing them first helps them decompose even faster.",
       shortWhy:"Breaks down fast, adds minerals" },
@@ -2231,19 +2232,32 @@ try {
     { id:'ew-powerboard', name:'Power board', stream:'ew',
       icon:`<svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="1.5" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1.1"/><circle cx="7" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><circle cx="12" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><circle cx="17" cy="12" r="1" fill="var(--ink)" opacity="0.5"/><path d="M3 12H1M21 12c1 0 2 1 2 3" fill="none" stroke="var(--ink)" stroke-width="1.1" stroke-linecap="round"/></svg>`,
       explain:"A power board or extension cord is electrical wiring and switches, the same category as chargers and cables — it needs dedicated e-waste recovery, not the general bin.",
-      shortWhy:"Wiring and switches, not general bin" }
+      shortWhy:"Wiring and switches, not general bin" },
+    { id:'ew-printer', name:'Printer', stream:'ew',
+      icon:`<svg viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="8" rx="1" fill="#DCE3E6" stroke="var(--ink)" stroke-width="1.1"/><rect x="6" y="4" width="12" height="5" fill="#E4E7E9" stroke="var(--ink)" stroke-width="1"/><rect x="7" y="16" width="10" height="4" fill="#F2EEE3" stroke="var(--ink)" stroke-width="1"/><circle cx="16" cy="11" r="0.8" fill="var(--ink)" opacity="0.5"/></svg>`,
+      explain:"A printer is an electronic device with circuitry and moving parts inside, the same category as other office electronics — it needs dedicated e-waste recovery, not the general bin.",
+      shortWhy:"Electronic device, needs e-waste recovery" },
+    { id:'ew-monitor', name:'Computer monitor', stream:'ew',
+      icon:`<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1" fill="#DCE3E6" stroke="var(--ink)" stroke-width="1.1"/><rect x="10" y="16" width="4" height="3" fill="var(--ink)" opacity="0.4"/><rect x="7" y="19" width="10" height="1.6" rx="0.8" fill="var(--ink)" opacity="0.5"/></svg>`,
+      explain:"A computer monitor contains circuitry and screen components, the same category as other electronics — it needs dedicated e-waste recovery, not the general bin.",
+      shortWhy:"Screen electronics, needs recovery" }
   ];
 
   // `items` is the CURRENT BUILDING's active set — recomputed by applyEffectiveStreams()
   // once that building's itemOverrides load (a building can turn any catalog item, including
-  // a backup, on or off for itself). This starting value is only the default (25 active items,
+  // a backup, on or off for itself). This starting value is only the default (28 active items,
   // used by itemById()/etc. before any building has loaded, e.g. during early preview setup).
   let items = ALL_ITEMS.filter(it => it.active !== false);
 
   // Default, hand-curated decoy pairings — kept exactly as-is and used unmodified for any
   // building with no itemOverrides, so the default experience never changes (see
-  // buildDecoyPlan() below for the per-building-override case). Every one of the 25
-  // default-active items appears as a decoy exactly once, in a stream other than its own.
+  // buildDecoyPlan() below for the per-building-override case). Fixed at 5 decoys per stream
+  // (25 total) on purpose — this is the score-comparability invariant tested elsewhere ("total
+  // stays exactly 25, same as every other building"), so it does NOT grow just because a
+  // stream picked up more correct items of its own (og-teabag moving to gw, or ew-printer/
+  // ew-monitor/og-eggshell going active in the 2026-09-02 content correction) — those 3 new/
+  // moved items simply aren't tested as a decoy in the default config, which is fine; nothing
+  // requires every active item to also pull decoy duty.
   const decoyMap = {
     gw: ['mr-bottle','mr-jar','pc-box','og-banana','ew-keyboard'],
     mr: ['gw-pizza','pc-paper','pc-envelope','og-teabag','ew-cables'],
