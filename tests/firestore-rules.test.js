@@ -90,6 +90,25 @@ async function main(){
     const bad = { ...validSubmission }; delete bad.programId;
     return assertFails(addDoc(collection(anon, 'submissions'), bad));
   });
+  await record('anon can create a submission carrying a linkId with no expiresAt (permanent link)', () =>
+    testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'links', 'link-no-expiry'), { programId: 'recycling-sorting', buildingId: 'building-1', tenantId: null });
+    }).then(() => assertSucceeds(addDoc(collection(anon, 'submissions'), { ...validSubmission, linkId: 'link-no-expiry' }))));
+  await record('anon can create a submission carrying a linkId that has not expired yet', () =>
+    testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'links', 'link-future'), { programId: 'recycling-sorting', buildingId: 'building-1', tenantId: null, expiresAt: new Date(Date.now() + 3600000) });
+    }).then(() => assertSucceeds(addDoc(collection(anon, 'submissions'), { ...validSubmission, linkId: 'link-future' }))));
+  await record('anon CANNOT create a submission carrying a linkId that already expired', () =>
+    testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'links', 'link-past'), { programId: 'recycling-sorting', buildingId: 'building-1', tenantId: null, expiresAt: new Date(Date.now() - 3600000) });
+    }).then(() => assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, linkId: 'link-past' }))));
+  await record('allowlisted user CAN revoke a link early by setting expiresAt to now, blocking further submissions against it', () =>
+    testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'links', 'link-to-revoke'), { programId: 'recycling-sorting', buildingId: 'building-1', tenantId: null, expiresAt: new Date(Date.now() + 3600000) });
+    })
+      .then(() => assertSucceeds(updateDoc(doc(allowedUser, 'links', 'link-to-revoke'), { expiresAt: new Date(Date.now() - 1000) })))
+      .then(() => assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, linkId: 'link-to-revoke' }))));
+
   await record('anon CANNOT read submissions', () =>
     assertFails(getDocs(collection(anon, 'submissions'))));
   await record('non-allowlisted signed-in user CANNOT read submissions', () =>
@@ -136,6 +155,46 @@ async function main(){
     assertFails(deleteDoc(doc(otherUser, 'submissions', targetId2))));
   await record('allowlisted user CANNOT update a submission (updates always denied)', () =>
     assertFails(updateDoc(doc(allowedUser, 'submissions', targetId2), { score: 100 })));
+
+  // ---- Program catalog ----
+  await record('anon can read programs (public catalog)', () =>
+    assertSucceeds(getDoc(doc(anon, 'programs', 'recycling-sorting'))));
+  await record('anon CANNOT write to programs', () =>
+    assertFails(setDoc(doc(anon, 'programs', 'hacked'), { name: 'Hacked', status: 'active' })));
+  await record('non-allowlisted signed-in user CANNOT write to programs', () =>
+    assertFails(setDoc(doc(otherUser, 'programs', 'hacked'), { name: 'Hacked', status: 'active' })));
+  await record('allowlisted user CAN create a program', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'programs', 'organics-focus'), { name: 'Organics Focus', file: 'organics-training.html', kind: 'game', status: 'active' })));
+  await record('allowlisted user CAN archive a program', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'programs', 'organics-focus'), { status: 'archived' }, { merge: true })));
+
+  // ---- Enrollments (building <-> program) ----
+  await record('anon can read enrollments (id-gate needs this before showing the form)', () =>
+    testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'enrollments', 'recycling-sorting__building-1'), { programId: 'recycling-sorting', buildingId: 'building-1' });
+    }).then(() => assertSucceeds(getDoc(doc(anon, 'enrollments', 'recycling-sorting__building-1')))));
+  await record('anon CANNOT write to enrollments', () =>
+    assertFails(setDoc(doc(anon, 'enrollments', 'recycling-sorting__building-1'), { programId: 'recycling-sorting', buildingId: 'building-1' })));
+  await record('non-allowlisted signed-in user CANNOT write to enrollments', () =>
+    assertFails(setDoc(doc(otherUser, 'enrollments', 'recycling-sorting__building-1'), { programId: 'recycling-sorting', buildingId: 'building-1' })));
+  await record('allowlisted user CAN create an enrollment', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'enrollments', 'recycling-sorting__building-1'), { programId: 'recycling-sorting', buildingId: 'building-1', itemOverrides: {} })));
+  await record('allowlisted user CAN deactivate an enrollment (soft-delete, not a real delete)', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'enrollments', 'recycling-sorting__building-1'), { active: false }, { merge: true })));
+
+  // ---- Distribution links (tenant-scoped / expiring) ----
+  await record('anon can read a link (must resolve it before the id-gate knows the building)', () =>
+    testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'links', 'link-1'), { programId: 'recycling-sorting', buildingId: 'building-1', tenantId: null });
+    }).then(() => assertSucceeds(getDoc(doc(anon, 'links', 'link-1')))));
+  await record('anon CANNOT create a link', () =>
+    assertFails(setDoc(doc(anon, 'links', 'link-hacked'), { programId: 'recycling-sorting', buildingId: 'building-1' })));
+  await record('allowlisted user CAN create a link', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'links', 'link-2'), { programId: 'recycling-sorting', buildingId: 'building-1', tenantId: 'tenant-1' })));
+  await record('allowlisted user CAN revoke a link by updating expiresAt', () =>
+    assertSucceeds(updateDoc(doc(allowedUser, 'links', 'link-2'), { expiresAt: new Date() })));
+  await record('nobody, not even the allowlisted user, can delete a link', () =>
+    assertFails(deleteDoc(doc(allowedUser, 'links', 'link-2'))));
 
   // ---- Dynamic admins: granting/revoking access via the /admins collection ----
   // (mirrors what the report's Admins panel does — no rules edit/redeploy for this)

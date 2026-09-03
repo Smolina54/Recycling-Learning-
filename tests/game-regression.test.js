@@ -71,6 +71,11 @@ async function seedTestBuilding(){
     const db = context.firestore();
     await setDoc(doc(db, 'buildings', TEST_BUILDING_ID), { name: 'Test Tower' });
     await setDoc(doc(db, 'buildings', TEST_BUILDING_ID, 'tenants', TEST_TENANT_ID), { name: 'Test Co', levels: ['Level 4', 'Level 5'] });
+    // A building needs an enrollment doc to be treated as enrolled at all — initIdGate()
+    // now gates access on this, not just on the building doc existing.
+    await setDoc(doc(db, 'enrollments', `recycling-sorting__${TEST_BUILDING_ID}`), {
+      programId: 'recycling-sorting', buildingId: TEST_BUILDING_ID, itemOverrides: {},
+    });
   });
   return testEnv;
 }
@@ -112,7 +117,14 @@ async function runFlow(page){
 
   // --- Real gate flow with a seeded, valid building ---
   await page.goto(GAME_URL, { waitUntil: 'domcontentloaded' });
-  await new Promise(r => setTimeout(r, 500));
+  // initIdGate() now does an extra Firestore round-trip (the enrollment-gate check added by
+  // the multi-program retrofit) before the form is populated — same reasoning as the
+  // 400ms->1200ms fix just above for the invalid-link case: wait for the real tenant option
+  // to actually exist rather than guessing how long the round-trip takes.
+  await page.waitForFunction(
+    () => document.querySelector('#idTenant option[value]:not([value=""])') !== null,
+    { timeout: 10000 }
+  );
   check('id-gate form is shown for a valid, seeded building',
     await page.$eval('#idCardForm', el => getComputedStyle(el).display !== 'none'));
   const buildingNameShown = await page.$eval('#idBuildingNameInline', el => el.textContent.trim());

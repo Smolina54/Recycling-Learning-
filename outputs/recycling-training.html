@@ -359,9 +359,9 @@
   </div>
 
   <div class="id-card" id="idCardInvalid" style="display:none;">
-    <p class="eyebrow">Link not recognised</p>
-    <h1 class="headline">This link isn't set up yet.</h1>
-    <p class="hero-sub">Check with your building contact for the correct training link.</p>
+    <p class="eyebrow" id="idCardInvalidEyebrow">Link not recognised</p>
+    <h1 class="headline" id="idCardInvalidHeadline">This link isn't set up yet.</h1>
+    <p class="hero-sub" id="idCardInvalidSub">Check with your building contact for the correct training link.</p>
   </div>
 
   <div class="id-card" id="idCardForm" style="display:none;">
@@ -759,7 +759,7 @@ try {
   if (isPreviewMode) document.getElementById('previewBanner').style.display = 'block';
 
   // ---------------- Identification gate ----------------
-  const siteContext = {buildingId:'', buildingName:'', tenantId:'', tenantName:'', level:'', name:'', email:''};
+  const siteContext = {buildingId:'', buildingName:'', tenantId:'', tenantName:'', level:'', name:'', email:'', linkId:''};
   let tenantsCache = [];
 
   const idCardLoading = document.getElementById('idCardLoading');
@@ -769,10 +769,22 @@ try {
   const idLevelSelect = document.getElementById('idLevel');
   const idLevelField = document.getElementById('idLevelField');
 
-  function showInvalidLink(){
+  // reason 'expired' distinguishes a link that resolved fine but is past its expiresAt (see
+  // the multi-program plan's tenant-scoped/expiring links) from the default "not recognised
+  // at all" case — same fallback screen, different explanation of what actually happened.
+  function showInvalidLink(reason){
     idCardLoading.style.display = 'none';
     idCardForm.style.display = 'none';
     idCardInvalid.style.display = 'block';
+    if (reason === 'expired'){
+      document.getElementById('idCardInvalidEyebrow').textContent = 'Link expired';
+      document.getElementById('idCardInvalidHeadline').textContent = 'This link is no longer active.';
+      document.getElementById('idCardInvalidSub').textContent = 'Ask your building contact for a current training link.';
+    } else {
+      document.getElementById('idCardInvalidEyebrow').textContent = 'Link not recognised';
+      document.getElementById('idCardInvalidHeadline').textContent = "This link isn't set up yet.";
+      document.getElementById('idCardInvalidSub').textContent = 'Check with your building contact for the correct training link.';
+    }
   }
 
   function populateLevelsForTenant(tenantId){
@@ -795,8 +807,33 @@ try {
     }
   }
 
+  // Resolves a ?l= distribution link (tenant-scoped and/or time-limited — see the multi-program
+  // plan) into the buildingId/tenantId it actually stands for. Returns null on any problem
+  // (caller shows the appropriate invalid/expired screen) or {buildingId, lockedTenantId}.
+  // Server-side expiry is enforced independently in firestore.rules (isValidLinkIfPresent) —
+  // this check is for UX (a clear message before the trainee fills out the form), not security.
+  async function resolveDistributionLink(linkId){
+    const linkSnap = await getDoc(doc(db, 'links', linkId));
+    if (!linkSnap.exists()) return { error: 'not-found' };
+    const linkData = linkSnap.data();
+    if (linkData.programId !== PROGRAM_ID) return { error: 'not-found' };
+    if (linkData.expiresAt && linkData.expiresAt.toMillis() <= Date.now()) return { error: 'expired' };
+    return { buildingId: linkData.buildingId, lockedTenantId: linkData.tenantId || null };
+  }
+
   async function initIdGate(){
-    const buildingId = new URLSearchParams(window.location.search).get('b');
+    const params = new URLSearchParams(window.location.search);
+    let buildingId = params.get('b');
+    let lockedTenantId = null;
+    const linkId = params.get('l');
+    if (linkId){
+      if (!db){ showInvalidLink(); return; }
+      const resolved = await resolveDistributionLink(linkId);
+      if (resolved.error){ showInvalidLink(resolved.error === 'expired' ? 'expired' : undefined); return; }
+      buildingId = resolved.buildingId;
+      lockedTenantId = resolved.lockedTenantId;
+      siteContext.linkId = linkId;
+    }
 
     // The report's general "Preview the training →" button (not tied to any building) links
     // here with ?preview=1 and no ?b= at all — there's no real building/tenant to fetch, so
@@ -821,13 +858,24 @@ try {
 
     try {
       const buildingSnap = await getDoc(doc(db, 'buildings', buildingId));
-      if (!buildingSnap.exists()){ showInvalidLink(); return; }
+      // active === false means the building was "deleted" from the admin panel — soft-deleted,
+      // not actually removed, so its history stays intact, but its links must stop working,
+      // same as a real delete would look like to a trainee.
+      if (!buildingSnap.exists() || buildingSnap.data().active === false){ showInvalidLink(); return; }
+
+      // The enrollment doc is the real access gate, not just admin-side config: if this
+      // building was never enrolled in Recycling (or was un-enrolled/soft-deleted), there's
+      // nothing to show — a ?b= that happens to be valid for some OTHER program must not
+      // silently work here too.
+      const enrollmentSnap = await getDoc(doc(db, 'enrollments', `${PROGRAM_ID}__${buildingId}`));
+      if (!enrollmentSnap.exists() || enrollmentSnap.data().active === false){ showInvalidLink(); return; }
+      const enrollment = enrollmentSnap.data();
 
       siteContext.buildingId = buildingId;
       siteContext.buildingName = buildingSnap.data().name || '';
       document.getElementById('idBuildingNameInline').textContent = siteContext.buildingName;
 
-      itemOverrides = buildingSnap.data().itemOverrides || {};
+      itemOverrides = enrollment.itemOverrides || {};
       hasOverrides = Object.keys(itemOverrides).length > 0;
       applyEffectiveStreams(itemOverrides);
       currentDecoyMap = hasOverrides ? buildDecoyPlan() : decoyMap;
@@ -835,12 +883,31 @@ try {
       applyBuildingNotes();
 
       const tenantsSnap = await getDocs(collection(db, 'buildings', buildingId, 'tenants'));
-      tenantsCache = tenantsSnap.docs.map(d => ({id: d.id, ...d.data()}));
+      // enabledTenantIds: absent/null = every tenant enabled (today's default); an array
+      // (even an empty one, meaning "none") restricts the id-gate's dropdown to just those.
+      const enabledTenantIds = enrollment.enabledTenantIds;
+      const allTenants = tenantsSnap.docs
+        .map(d => ({id: d.id, ...d.data()}))
+        .filter(t => t.active !== false);
+      tenantsCache = Array.isArray(enabledTenantIds)
+        ? allTenants.filter(t => enabledTenantIds.includes(t.id))
+        : allTenants;
+      // A tenant-scoped ?l= link (see resolveDistributionLink above) further narrows the
+      // dropdown to just that one tenant, same handling as an enabledTenantIds restriction —
+      // if that tenant isn't even valid for this building anymore, treat the link as broken
+      // rather than silently falling back to letting the trainee pick any tenant.
+      if (lockedTenantId){
+        tenantsCache = tenantsCache.filter(t => t.id === lockedTenantId);
+      }
       if (tenantsCache.length === 0){ showInvalidLink(); return; }
 
-      idTenantSelect.innerHTML = '<option value="" disabled selected>Select your company…</option>' +
-        tenantsCache.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+      idTenantSelect.innerHTML = lockedTenantId
+        ? tenantsCache.map(t => `<option value="${t.id}" selected>${esc(t.name)}</option>`).join('')
+        : '<option value="" disabled selected>Select your company…</option>' +
+          tenantsCache.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+      if (lockedTenantId) idTenantSelect.disabled = true;
       idTenantSelect.addEventListener('change', () => populateLevelsForTenant(idTenantSelect.value));
+      if (lockedTenantId) populateLevelsForTenant(lockedTenantId);
 
       idCardLoading.style.display = 'none';
       idCardForm.style.display = 'block';
@@ -2669,6 +2736,11 @@ try {
       tenantId: siteContext.tenantId, tenantName: siteContext.tenantName,
       level: siteContext.level, name: siteContext.name, email: siteContext.email,
       programId: PROGRAM_ID,
+      // Only present when this session came in via a ?l= distribution link — firestore.rules'
+      // isValidLinkIfPresent() looks this field up by exact key ('linkId' in data), so an
+      // always-present-but-empty string would wrongly try to resolve a links/"" doc and reject
+      // every plain ?b= submission. Omit entirely instead of sending ''.
+      ...(siteContext.linkId ? { linkId: siteContext.linkId } : {}),
       itemOverridesSnapshot: JSON.stringify(itemOverrides),
       startedAt: serverTimestamp()
     });
@@ -2800,6 +2872,7 @@ try {
       name: siteContext.name,
       email: siteContext.email,
       programId: PROGRAM_ID,
+      ...(siteContext.linkId ? { linkId: siteContext.linkId } : {}),
       itemOverridesSnapshot: JSON.stringify(itemOverrides),
       score: pct,
       avoided: avoidedCount,

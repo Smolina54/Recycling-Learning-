@@ -27,6 +27,11 @@ async function seedTestBuilding(){
     const db = context.firestore();
     await setDoc(doc(db, 'buildings', TEST_BUILDING_ID), { name: 'Preview Test Tower' });
     await setDoc(doc(db, 'buildings', TEST_BUILDING_ID, 'tenants', TEST_TENANT_ID), { name: 'Preview Test Co', levels: ['Level 1'] });
+    // A building needs an enrollment doc to be treated as enrolled at all — initIdGate()
+    // now gates access on this, not just on the building doc existing.
+    await setDoc(doc(db, 'enrollments', `recycling-sorting__${TEST_BUILDING_ID}`), {
+      programId: 'recycling-sorting', buildingId: TEST_BUILDING_ID, itemOverrides: {},
+    });
   });
   return testEnv;
 }
@@ -87,7 +92,13 @@ async function runFlow(page, seedEnv){
 
   const previewUrl = `${url.pathToFileURL(GAME_PATH).href}?b=${TEST_BUILDING_ID}&preview=1&emulator=1`;
   await page.goto(previewUrl, { waitUntil: 'domcontentloaded' });
-  await new Promise(r => setTimeout(r, 800));
+  // initIdGate() now does an extra Firestore round-trip (the enrollment-gate check added by
+  // the multi-program retrofit) before the form is populated — wait for the real tenant
+  // option to actually exist rather than a fixed sleep guessing how long that takes.
+  await page.waitForFunction(
+    () => document.querySelector('#idTenant option[value]:not([value=""])') !== null,
+    { timeout: 10000 }
+  );
   check('building-scoped preview still shows the real id-gate form (real building/tenant data)',
     await page.$eval('#idCardForm', el => getComputedStyle(el).display !== 'none'));
   check('the preview banner is visible here too',

@@ -9,6 +9,10 @@
     "test:preview": "firebase emulators:exec --only firestore \"node tests/preview-mode.test.js\"",
     "test:report": "node tests/report-ui.test.js",
     "test:admin": "firebase emulators:exec --only firestore,auth \"node tests/admin-buildings.test.js\"",
+    "test:catalog-admin": "firebase emulators:exec --only firestore,auth \"node tests/admin-catalog.test.js\"",
+    "test:organics": "firebase emulators:exec --only firestore \"node tests/organics-training.test.js\"",
+    "test:battery": "firebase emulators:exec --only firestore \"node tests/battery-training.test.js\"",
+    "test:links": "firebase emulators:exec --only firestore \"node tests/distribution-links.test.js\"",
     "test:catalog": "node tests/catalog-sync.test.js",
     "sync-catalog": "node tools/sync-catalog.js"
   },

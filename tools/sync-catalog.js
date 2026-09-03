@@ -57,7 +57,14 @@ function computeUpdatedReport(){
 
   const before = reportHtml.slice(0, startIdx);
   const after = reportHtml.slice(endIdx + END_MARKER.length);
-  return { reportHtml, updated: before + buildCatalogBlock(catalog) + after, catalogCount: catalog.length };
+  // The file is CRLF on disk (Windows); buildCatalogBlock() writes plain LF. Left as-is, the
+  // very next edit to this file (any editor/tool that normalizes line endings) turns the
+  // freshly-written block's LF into CRLF — which then looks "out of sync" again the next time
+  // this runs, even though not a single byte of catalog data actually changed. Match whatever
+  // convention already surrounds the markers instead of assuming LF.
+  const usesCRLF = before.includes('\r\n');
+  const catalogBlock = usesCRLF ? buildCatalogBlock(catalog).replace(/\n/g, '\r\n') : buildCatalogBlock(catalog);
+  return { reportHtml, updated: before + catalogBlock + after, catalogCount: catalog.length };
 }
 
 function main(){

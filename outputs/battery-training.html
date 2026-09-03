@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Battery Disposal</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232F6F4E'/%3E%3Cpath d='M16 6 L26 16 L16 26 L6 16 Z' fill='%23EEEBE1'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#EEEBE1;
+    --panel:#F7F5EE;
+    --ink:#1E2A22;
+    --ink-soft:#4A5850;
+    --line: rgba(30,42,34,0.14);
+    --forest:#2F6F4E;
+    --forest-dark:#1F4A34;
+
+    --gw: #8C2F39;   /* General Waste - maroon */
+    --gw-tint: #F3E1E1;
+    --mr: #C98E12;   /* Mixed Recycling - yellow/ochre */
+    --mr-tint: #F6ECD3;
+    --pc: #2B5C8A;   /* Paper & Cardboard - blue */
+    --pc-tint: #DEE7EE;
+    --og: #5C7A29;   /* Organics - olive green */
+    --og-tint: #E5EAD8;
+    --ew: #5B4B8A;   /* E-Waste - violet */
+    --ew-tint: #E4E0EF;
+
+    --radius: 4px;
+    --display: 'Oswald', sans-serif;
+    --body: 'Inter', sans-serif;
+    --mono: 'Space Mono', monospace;
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--body);
+    line-height:1.5;
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:0.01ms !important; transition-duration:0.01ms !important;}
+    html{scroll-behavior:auto;}
+  }
+
+  .wrap{max-width:960px; margin:0 auto; padding:0 24px;}
+
+  /* ---------- Identification gate ---------- */
+  .id-gate{
+    min-height:100vh; min-height:100dvh; max-height:100vh; max-height:100dvh; overflow-y:auto;
+    display:flex; align-items:center; justify-content:center; padding:40px 24px;
+  }
+  .id-card{max-width:440px; width:100%; background:var(--panel); border:1px solid var(--line); padding:44px 36px;}
+  .id-card .headline{font-size:clamp(26px,5vw,36px); margin-bottom:16px;}
+  .id-form{margin-top:8px;}
+  .id-field{display:flex; flex-direction:column; gap:6px; margin-bottom:18px;}
+  .id-field span{font-family:var(--mono); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink-soft);}
+  .id-field input, .id-field select{
+    font-family:var(--body); font-size:15px; padding:11px 14px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink); width:100%;
+  }
+  .id-field input:focus-visible, .id-field select:focus-visible{outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);}
+  .id-form .btn{width:100%; justify-content:center; margin-top:10px;}
+
+  /* ---------- Top bar ---------- */
+  .topbar{
+    position:sticky; top:0; z-index:40;
+    background:var(--paper);
+    border-bottom:1px solid var(--line);
+  }
+  .topbar-inner{
+    max-width:960px; margin:0 auto; padding:14px 24px;
+    display:flex; align-items:center; justify-content:space-between; gap:16px;
+  }
+  .brand{
+    font-family:var(--mono); font-size:12px; letter-spacing:0.14em; text-transform:uppercase;
+    color:var(--ink-soft);
+    display:flex; align-items:center; gap:8px;
+  }
+  .brand b{color:var(--ink); font-weight:700;}
+  .progress-rail{
+    flex:1; max-width:280px; height:8px; background:var(--line); border-radius:2px; overflow:hidden;
+    border:1px solid var(--line);
+  }
+  .progress-fill{
+    height:100%; width:0%; background:var(--forest);
+    transition:width .4s ease;
+  }
+  .progress-label{font-family:var(--mono); font-size:11px; color:var(--ink-soft); white-space:nowrap;}
+
+  /* ---------- Hero ---------- */
+  .hero{
+    padding:64px 0 40px;
+    border-bottom:1px solid var(--line);
+  }
+  .eyebrow{
+    font-family:var(--mono); font-size:12px; letter-spacing:0.16em; text-transform:uppercase;
+    color:var(--forest-dark); margin:0 0 14px;
+  }
+  h1.headline{
+    font-family:var(--display); font-weight:700; text-transform:uppercase;
+    font-size:clamp(36px, 6vw, 62px); line-height:0.98; letter-spacing:0.01em;
+    margin:0 0 20px; color:var(--ink);
+  }
+  h1.headline em{font-style:normal; color:var(--forest);}
+  .hero-sub{
+    font-size:17px; color:var(--ink-soft); max-width:560px; margin:0 0 28px;
+  }
+  .btn{
+    font-family:var(--body); font-weight:600; font-size:15px;
+    padding:13px 26px; border-radius:var(--radius); border:none; cursor:pointer;
+    background:var(--ink); color:var(--paper);
+    transition:transform .15s ease, background .15s ease;
+    display:inline-flex; align-items:center; gap:10px;
+  }
+  .btn:hover{background:var(--forest-dark); transform:translateY(-1px);}
+  .btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+  .btn.secondary{background:transparent; color:var(--ink); border:1.5px solid var(--ink);}
+  .btn.secondary:hover{background:var(--ink); color:var(--paper);}
+  .btn:disabled{opacity:0.35; cursor:not-allowed; transform:none;}
+
+  /* Sorting station strip — signature element */
+  .preview-banner{
+    position:fixed; top:0; left:0; right:0; z-index:9999;
+    background:var(--ink); color:var(--paper); text-align:center;
+    font-family:var(--mono); font-size:12.5px; letter-spacing:0.03em;
+    padding:8px 12px;
+  }
+  .station{
+    display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:2px;
+    margin-top:36px; border:1px solid var(--line); background:var(--line);
+  }
+  @media (max-width:640px){.station{grid-template-columns:repeat(3,1fr);}}
+  .bin-tab{
+    background:var(--panel); padding:18px 10px 14px; cursor:pointer; border:none;
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    font-family:var(--body); text-align:center;
+    position:relative; transition:background .2s ease;
+  }
+  .bin-tab:hover{background:#FDFCF8;}
+  .bin-tab:focus-visible{outline:3px solid var(--forest); outline-offset:-3px;}
+  .bin-tab .code{font-family:var(--mono); font-size:11px; letter-spacing:0.08em; color:var(--ink-soft);}
+  .bin-tab .swatch{width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center;}
+  .bin-tab .name{font-size:12.5px; font-weight:600; line-height:1.2;}
+  .bin-tab.active{background:#FDFCF8;}
+  .bin-tab.active::after{
+    content:""; position:absolute; left:0; right:0; bottom:-1px; height:3px;
+  }
+  .bin-tab[data-stream="gw"].active::after{background:var(--gw);}
+  .bin-tab[data-stream="mr"].active::after{background:var(--mr);}
+  .bin-tab[data-stream="pc"].active::after{background:var(--pc);}
+  .bin-tab[data-stream="og"].active::after{background:var(--og);}
+  .bin-tab[data-stream="ew"].active::after{background:var(--ew);}
+
+  /* ---------- Stream detail panel ---------- */
+  .detail-section{padding:36px 0 8px;}
+  .detail-panel{
+    background:var(--panel); border:1px solid var(--line); padding:32px;
+    display:none;
+  }
+  .detail-panel.active{display:block; animation:fade .3s ease;}
+  @keyframes fade{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);}}
+  .detail-head{display:flex; align-items:flex-start; gap:18px; margin-bottom:22px; flex-wrap:wrap;}
+  .detail-icon{width:52px; height:52px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center;}
+  .detail-icon svg{width:26px; height:26px;}
+  .detail-title-group .stream-code{font-family:var(--mono); font-size:12px; letter-spacing:0.1em; color:var(--ink-soft); text-transform:uppercase;}
+  .detail-title-group h2{font-family:var(--display); text-transform:uppercase; font-size:28px; margin:2px 0 6px;}
+  .detail-desc{color:var(--ink-soft); font-size:15px; max-width:600px;}
+
+  /* Empty by default for every building with no custom item-stream config — populated by
+     applyBuildingNotes() only when this building's setup differs from the standard 5 streams. */
+  .building-note{
+    margin-top:12px; padding:10px 14px; max-width:600px;
+    border-left:3px solid var(--ink-soft); font-size:13.5px; color:var(--ink-soft);
+  }
+  .building-note:empty{display:none;}
+  .building-note p{margin:0 0 4px;}
+  .building-note p:last-child{margin-bottom:0;}
+  .building-note b{color:var(--ink);}
+
+  .rule-grid{display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:22px;}
+  @media (max-width:640px){.rule-grid{grid-template-columns:1fr;}}
+  .rule-card{background:var(--paper); border:1px solid var(--line); padding:18px 20px;}
+  .rule-card h3{
+    font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase;
+    margin:0 0 12px; display:flex; align-items:center; gap:8px;
+  }
+  .rule-card.yes h3{color:var(--forest-dark);}
+  .rule-card.no h3{color:var(--gw);}
+  .rule-card ul{margin:0; padding-left:18px;}
+  .rule-card li{margin-bottom:7px; font-size:14.5px;}
+  .rule-card li:last-child{margin-bottom:0;}
+
+  .tip{
+    margin-top:18px; padding:14px 18px; background:#FBF6E6; border:1px solid #E8DBA8;
+    font-size:14px; display:flex; gap:10px; align-items:flex-start;
+  }
+  .tip .lb{flex-shrink:0; font-size:16px; line-height:1.3;}
+
+  .detail-nav{display:flex; justify-content:space-between; margin-top:20px;}
+
+  /* ---------- Quiz section ---------- */
+  .quiz-section{padding:70px 0 90px; border-top:1px solid var(--line); margin-top:20px;}
+  .quiz-intro{text-align:left; max-width:600px;}
+  .quiz-intro h2, .quiz-card h2{font-family:var(--display); text-transform:uppercase; font-size:32px; margin:0 0 12px;}
+  .quiz-meta{display:flex; gap:22px; margin:26px 0 30px; font-family:var(--mono); font-size:12px; color:var(--ink-soft); letter-spacing:0.05em;}
+  .quiz-meta b{color:var(--ink); font-weight:700;}
+
+  /* ---------- Sorting game ---------- */
+  .game-lock-status{
+    font-family:var(--mono); font-size:12px; color:var(--ink-soft); margin:20px 0 16px;
+  }
+  .game-lock-status.ready{color:var(--forest-dark);}
+
+  .game-stage{display:none;}
+
+  .phase-header{display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:20px;}
+  .phase-label{font-family:var(--mono); font-size:12px; letter-spacing:0.1em; color:var(--forest-dark); text-transform:uppercase;}
+  .phase-counter{font-family:var(--mono); font-size:12px; letter-spacing:0.05em; color:var(--ink-soft);}
+
+  .phase-bin-row{display:flex; justify-content:center; margin-bottom:26px;}
+  .bin-drop-target{
+    background:var(--panel); border:1.5px solid var(--line); padding:18px 40px; cursor:default;
+    display:flex; flex-direction:column; align-items:center; gap:10px; text-align:center;
+    font-family:var(--body); transition:border-color .15s ease, background .15s ease, transform .15s ease;
+  }
+  .bin-icon-lg{width:56px; height:56px; border-radius:50%; display:flex; align-items:center; justify-content:center;}
+  .bin-icon-lg svg{width:28px; height:28px;}
+  .bin-drop-target .bin-label{font-size:14px; font-weight:700; letter-spacing:0.02em;}
+  .bin-drop-target.bin-hover{transform:scale(1.05); border-color:var(--ink);}
+  .bin-drop-target.bin-flash-correct{background:var(--og-tint); border-color:var(--forest);}
+  .bin-drop-target.bin-flash-wrong{background:var(--gw-tint); border-color:var(--gw);}
+
+  .bin-collected{display:flex; flex-wrap:wrap; justify-content:center; gap:4px; max-width:180px;}
+  .bin-collected:empty{display:none;}
+  .bin-collected .collected-icon{
+    width:26px; height:26px; display:flex; align-items:center; justify-content:center;
+    opacity:0; transform:scale(.5); animation:collected-pop .3s ease forwards;
+  }
+  .bin-collected .collected-icon svg, .bin-collected .collected-icon img{width:100%; height:100%; object-fit:contain;}
+  @keyframes collected-pop{ to{ opacity:1; transform:scale(1); } }
+
+  .item-board{
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:12px;
+    margin-bottom:8px; min-height:130px;
+  }
+
+  .board-item{
+    position:relative; background:var(--paper); border:1.5px solid var(--ink); padding:16px 10px 12px;
+    display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center;
+    cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none;
+    box-shadow:0 2px 0 var(--line); will-change:transform;
+  }
+  .board-item:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+  .board-item .item-icon{width:40px; height:40px; display:flex; align-items:center; justify-content:center;}
+  .board-item .item-icon svg{width:100%; height:100%;}
+  .board-item .item-name{font-size:12.5px; font-weight:600; line-height:1.25;}
+  .board-item.dragging{cursor:grabbing; box-shadow:0 10px 22px rgba(30,42,34,0.22); z-index:50;}
+  .board-item.drop-wrong{animation:item-shake .5s ease; border-color:var(--gw);}
+  .board-item.locked{cursor:default;}
+  .board-item.locked .item-icon, .board-item.locked .item-name{opacity:0.45;}
+  .board-item.resolved-wrong{cursor:default;}
+  .board-item.resolved-wrong .item-icon, .board-item.resolved-wrong .item-name{opacity:0.45;}
+
+  .reveal-badge{
+    display:none; font-family:var(--mono); font-size:10.5px; letter-spacing:0.03em;
+    font-weight:700; margin-top:2px;
+  }
+  .board-item.locked .reveal-badge, .board-item.resolved-wrong .reveal-badge{display:block;}
+
+  @keyframes item-shake{
+    10%,90%{transform:translate(-3px,0);}
+    20%,80%{transform:translate(5px,0);}
+    30%,50%,70%{transform:translate(-8px,0);}
+    40%,60%{transform:translate(8px,0);}
+  }
+
+  .bins-row{display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:8px;}
+  @media (max-width:640px){.bins-row{grid-template-columns:repeat(3,1fr);}}
+  .bin-drop{
+    background:var(--panel); border:1.5px solid var(--line); padding:16px 8px; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center;
+    font-family:var(--body); transition:border-color .15s ease, background .15s ease, transform .15s ease;
+  }
+  .bin-drop .bin-icon{width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center;}
+  .bin-drop .bin-icon svg{width:18px; height:18px;}
+  .bin-drop .bin-label{font-size:12px; font-weight:600; line-height:1.2;}
+
+  .feedback{margin-top:20px; padding:14px 18px; font-size:14.5px; display:none; border:1px solid var(--line); background:var(--paper); align-items:center; gap:14px;}
+  .feedback.show{display:flex; animation:fade .25s ease;}
+  .feedback.correct{border-color:var(--forest); background:var(--og-tint);}
+  .feedback.wrong{border-color:var(--gw); background:var(--gw-tint);}
+  .fb-bin-icon{flex-shrink:0; width:34px; height:34px; border-radius:50%; border:2px solid; display:flex; align-items:center; justify-content:center;}
+  .fb-bin-icon svg{width:18px; height:18px;}
+
+  .quiz-controls{display:flex; justify-content:flex-end; margin-top:26px;}
+
+  /* ---------- Multiple-choice quiz ---------- */
+  .quiz-question{background:var(--panel); border:1px solid var(--line); padding:20px 22px; margin-bottom:16px;}
+  .quiz-question-text{font-weight:600; font-size:15.5px; margin:0 0 14px;}
+  .quiz-option{display:flex; align-items:flex-start; gap:10px; padding:8px 0; cursor:pointer; font-size:14.5px;}
+  .quiz-option input{margin-top:3px; flex-shrink:0;}
+  .quiz-review-item{border-left:3px solid var(--line); padding:10px 16px; margin-bottom:12px;}
+  .quiz-review-item.correct{border-left-color:var(--forest);}
+  .quiz-review-item.wrong{border-left-color:var(--gw);}
+  .quiz-review-q{font-weight:600; font-size:14px; margin:0 0 4px;}
+  .quiz-review-answer{font-size:13.5px; color:var(--ink-soft); margin:0;}
+
+  /* ---------- Results ---------- */
+  .results{display:none; text-align:left;}
+  .results.active{display:block; animation:fade .4s ease;}
+  .score-row{display:flex; align-items:flex-end; gap:18px; margin:20px 0 8px; flex-wrap:wrap;}
+  .score-big{font-family:var(--display); font-size:88px; line-height:0.9; color:var(--forest);}
+  .score-of{font-family:var(--mono); font-size:14px; color:var(--ink-soft); padding-bottom:14px;}
+  .gauge{height:14px; background:var(--line); border:1px solid var(--ink); margin:18px 0 8px; overflow:hidden;}
+  .gauge-fill{height:100%; background:var(--forest); width:0%; transition:width .8s ease;}
+  .gauge-label{font-family:var(--mono); font-size:11px; color:var(--ink-soft); display:flex; justify-content:space-between;}
+  .verdict{font-size:17px; font-weight:600; margin:22px 0 6px;}
+  .verdict-sub{color:var(--ink-soft); font-size:14.5px; margin-bottom:26px;}
+
+  .save-warning{
+    display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    background:var(--gw-tint); border:1.5px solid var(--gw); color:var(--gw);
+    padding:14px 18px; margin-bottom:20px; font-size:14px; font-weight:600;
+  }
+  .save-warning .btn.secondary{border-color:var(--gw); color:var(--gw); padding:8px 16px; font-size:13px; white-space:nowrap;}
+  .save-warning .btn.secondary:hover{background:var(--gw); color:var(--paper);}
+
+  .stream-breakdown{display:flex; flex-direction:column; gap:10px; margin-bottom:30px;}
+  .breakdown-row{display:grid; grid-template-columns:130px 1fr 50px; align-items:center; gap:12px;}
+  .breakdown-label{font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft);}
+  .breakdown-bar{height:10px; background:var(--line); border:1px solid var(--ink); overflow:hidden;}
+  .breakdown-fill{height:100%; transition:width .6s ease;}
+  .breakdown-value{font-family:var(--mono); font-size:12px; text-align:right;}
+
+  .review-list{display:flex; flex-direction:column; gap:14px; margin-bottom:30px;}
+  .review-stream-card{border:1.5px solid var(--line); border-left-width:5px; background:var(--panel); padding:16px 18px;}
+  .review-stream-header{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px;}
+  .review-stream-name{font-family:var(--display); font-size:15px; text-transform:uppercase; letter-spacing:0.03em;}
+  .review-stream-score{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
+  .review-correct-row{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:4px;}
+  .review-correct-row .item-thumb{width:26px; height:26px; opacity:0.85;}
+  .review-wrong-list{display:flex; flex-direction:column; gap:8px; margin-top:10px;}
+  .review-wrong-item{display:flex; gap:10px; align-items:flex-start; font-size:13.5px;}
+  .review-wrong-item .item-thumb{flex-shrink:0; width:26px; height:26px;}
+  .review-wrong-item .review-wrong-name{font-weight:600;}
+  .review-wrong-item .review-wrong-dest{font-weight:600;}
+  .review-wrong-item .review-wrong-reason{color:var(--ink-soft); font-size:12.5px;}
+  .review-all-correct{font-size:13px; color:var(--ink-soft); font-style:italic;}
+  .item-thumb{display:flex; align-items:center; justify-content:center;}
+  .item-thumb svg, .item-thumb img{width:100%; height:100%; object-fit:contain;}
+  .results-actions{display:flex; gap:12px; flex-wrap:wrap;}
+
+  footer{padding:30px 0 50px; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; color:var(--ink-soft); letter-spacing:0.04em;}
+</style>
+</head>
+<body>
+
+<div class="preview-banner" id="previewBanner" style="display:none;">Preview mode — nothing you do here is saved.</div>
+
+<section class="id-gate" id="idGate">
+  <div class="id-card" id="idCardLoading">
+    <p class="eyebrow">Before you start</p>
+    <h1 class="headline">Loading your building…</h1>
+  </div>
+
+  <div class="id-card" id="idCardInvalid" style="display:none;">
+    <p class="eyebrow" id="idCardInvalidEyebrow">Link not recognised</p>
+    <h1 class="headline" id="idCardInvalidHeadline">This link isn't set up yet.</h1>
+    <p class="hero-sub" id="idCardInvalidSub">Check with your building contact for the correct training link.</p>
+  </div>
+
+  <div class="id-card" id="idCardForm" style="display:none;">
+    <p class="eyebrow">Before you start</p>
+    <h1 class="headline">Tell us who's sorting.</h1>
+    <p class="hero-sub" style="margin-bottom:8px;">This records your training completion for <strong id="idBuildingNameInline"></strong>.</p>
+    <form class="id-form" id="idForm" novalidate>
+      <label class="id-field">
+        <span>Your name</span>
+        <input type="text" id="idName" name="name" required autocomplete="name">
+      </label>
+      <label class="id-field">
+        <span>Work email</span>
+        <input type="email" id="idEmail" name="email" required autocomplete="email">
+      </label>
+      <label class="id-field">
+        <span>Tenant / Company</span>
+        <select id="idTenant" name="tenant" required></select>
+      </label>
+      <label class="id-field" id="idLevelField">
+        <span>Level / Floor</span>
+        <select id="idLevel" name="level" required></select>
+      </label>
+      <button class="btn" type="submit">Continue →</button>
+    </form>
+    <p class="hero-sub" style="font-size:12px; opacity:.7; margin-top:16px;">Your name and email are recorded against this building/tenant/level only to confirm training completion, and are visible to your building's training coordinator. They aren't used for anything else.</p>
+  </div>
+</section>
+
+<div id="mainApp" style="display:none;">
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">◆ <b>Recycling Training</b></div>
+    <div class="progress-rail"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-label" id="progressLabel">0% complete</div>
+  </div>
+</div>
+
+<section class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Specialized Induction · Battery Disposal</p>
+    <h1 class="headline">Batteries need<br><em>their own point.</em></h1>
+    <p class="hero-sub">A focused look at a genuine fire-safety issue, followed by a short quiz to confirm what has been learned.</p>
+    <button class="btn" id="startBtn">Start the briefing →</button>
+
+    <div class="station" role="tablist" aria-label="Waste streams">
+      <button class="bin-tab active" data-stream="bat" role="tab" aria-selected="true">
+        <span class="code">01</span>
+        <span class="swatch" style="background:var(--ew-tint); border:2px solid var(--ew);"></span>
+        <span class="name">Batteries</span>
+      </button>
+    </div>
+  </div>
+</section>
+
+<section class="detail-section" id="detailSection">
+  <div class="wrap">
+
+    <div class="detail-panel active" data-stream="bat">
+      <div class="detail-head">
+        <div class="detail-icon" style="background:var(--ew-tint); border:2px solid var(--ew);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="var(--ew)" stroke-width="2"><rect x="7" y="4" width="10" height="17" rx="1.5"/><rect x="10" y="1.5" width="4" height="2.5" rx="0.5"/><path d="M9 9h6M9 12h6" stroke-linecap="round"/></svg>
+        </div>
+        <div class="detail-title-group">
+          <div class="stream-code">Hazardous — Fire risk</div>
+          <h2>Batteries</h2>
+        </div>
+      </div>
+      <p class="detail-desc">A battery in the wrong bin isn't just a recycling mistake — it's a genuine fire risk. Damaged or crushed batteries can ignite inside a collection bin or a waste truck, and that fire is very hard to put out once it starts.</p>
+      <div class="rule-grid">
+        <div class="rule-card yes">
+          <h3>✓ Where it goes</h3>
+          <ul>
+            <li>Every battery — of any size — goes to your building's dedicated battery collection point</li>
+            <li>Not sure where that is? Ask your Waste Champion or Building Management</li>
+          </ul>
+        </div>
+        <div class="rule-card no">
+          <h3>✕ Never goes in</h3>
+          <ul>
+            <li>General waste, Mixed Recycling, or any other stream</li>
+            <li>The E-Waste point — batteries need their own separate, dedicated point</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tip"><span class="lb">💡</span><span>A single battery in the wrong bin can start a fire in a waste truck — this is the one rule on this page that's about safety, not just sorting.</span></div>
+      <div class="detail-nav"><span></span><button class="btn" id="toGameBtn">Take the quiz →</button></div>
+    </div>
+
+  </div>
+</section>
+
+<section class="quiz-section wrap" id="gameSection">
+
+  <div class="quiz-intro" id="gameIntro">
+    <p class="eyebrow">Knowledge Check</p>
+    <h2>Answer 5 questions.</h2>
+    <p class="hero-sub">One correct answer each. You'll see what you got right and wrong straight after submitting.</p>
+    <div class="quiz-meta"><span><b>5</b> questions</span><span><b>~1 min</b></span><span>Pass mark: <b>75%</b></span></div>
+    <button class="btn" id="startGameBtn">Begin the quiz →</button>
+  </div>
+
+  <div class="game-stage" id="gameStage">
+    <form id="quizForm"></form>
+    <div class="quiz-controls"><button class="btn" id="submitQuizBtn" type="button">Submit answers →</button></div>
+  </div>
+
+  <div class="results" id="results">
+    <p class="eyebrow">Results</p>
+    <h2>Your quiz score</h2>
+    <div class="save-warning" id="saveWarning" style="display:none;">
+      <span>We couldn't save your results — check your connection and try again.</span>
+      <button class="btn secondary" id="retrySaveBtn">Retry</button>
+    </div>
+    <div class="score-row">
+      <div class="score-big" id="scorePct">0%</div>
+      <div class="score-of" id="scoreOf">0 / 5 correct</div>
+    </div>
+    <div class="gauge"><div class="gauge-fill" id="gaugeFill"></div></div>
+    <div class="gauge-label"><span>0%</span><span>75% pass mark</span><span>100%</span></div>
+    <p class="verdict" id="verdict"></p>
+    <p class="verdict-sub" id="verdictSub"></p>
+    <div id="quizReview"></div>
+    <div class="results-actions">
+      <button class="btn" id="retryBtn">Retake the quiz</button>
+      <button class="btn secondary" id="reviewBtn">Review the briefing again</button>
+    </div>
+  </div>
+
+</section>
+
+<footer class="wrap">BATTERY DISPOSAL · CHECK YOUR BUILDING'S SIGNAGE FOR YOUR DEDICATED BATTERY POINT</footer>
+
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {
+  getFirestore, doc, getDoc, collection, getDocs, addDoc, serverTimestamp, connectFirestoreEmulator
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
+
+// Safe to be visible in client code — it's not a secret, protection comes from firestore.rules.
+const firebaseConfig = {
+  apiKey: "AIzaSyAoWSx9FYa6UJa-6EZezgBYiDMuVVs9BBo",
+  authDomain: "esg-1-98f35.firebaseapp.com",
+  projectId: "esg-1-98f35",
+  storageBucket: "esg-1-98f35.firebasestorage.app",
+  messagingSenderId: "196747023122",
+  appId: "1:196747023122:web:3fbcc23c1532bed847d9cb"
+};
+
+// Anti-spam/anti-bot for the public write path (anyone with a building link can create
+// submissions/attempts with no login at all). DISABLED 2026-08-28: a real trainee on an
+// iPhone in Safari Private Browsing got a save failure — reCAPTCHA Enterprise's token
+// fetch needs browser storage that Private Browsing restricts, and a failed token fetch
+// breaks the Firestore write outright, even with Firestore's App Check enforcement set to
+// "Unenforced" (confirmed earlier the same way over file://, now confirmed for real too).
+// Since enforcement was never turned on, App Check was providing zero actual protection
+// yet while already able to break a real person's submission — not an acceptable trade.
+// Key ID (kept for whenever this gets revisited): 6LcynpwtAAAAAJ5IdNxKtqXRmtXTHrXdGZehA6Vw
+const RECAPTCHA_SITE_KEY = '';
+
+let db = null;
+try {
+  const firebaseApp = initializeApp(firebaseConfig);
+  db = getFirestore(firebaseApp);
+  const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
+  // App Check's reCAPTCHA Enterprise call needs a real round-trip to Google's servers from
+  // one of the key's registered domains (the real esg-1-98f35.web.app/.firebaseapp.com) — it
+  // can never work from file:// (every automated test, or Sergio double-clicking the file
+  // locally), so skip it there entirely rather than let every Firestore call fail waiting on
+  // a token that can never be issued. Checking the protocol directly (not just ?emulator=1)
+  // covers file:// tests that don't set that param too (e.g. report-ui.test.js).
+  if (RECAPTCHA_SITE_KEY && !isEmulatorMode && window.location.protocol !== 'file:'){
+    initializeAppCheck(firebaseApp, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+  }
+  // ?emulator=1 routes to the local Firestore emulator instead of the real project —
+  // used only by the automated tests in tests/, so they never write real test data live.
+  if (isEmulatorMode){
+    connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  }
+} catch (err) {
+  console.error('Firebase is not configured yet — the id-gate will show a fallback message until firebaseConfig is filled in.', err);
+}
+
+(function(){
+  // Tenant/level names ultimately come from a bulk Excel import into the admin panel,
+  // not just hand-typed there — escape before they ever go into innerHTML, same reasoning
+  // as the report tool's esc() helper.
+  const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
+  function esc(str){
+    return String(str ?? '').replace(/[&<>"']/g, (c) => ESC_MAP[c]);
+  }
+
+  // Tags every submission/attempt with which training course it belongs to. Only one course
+  // exists today, but this is required by firestore.rules from day one — adding it now (before
+  // any real data exists) means a future second course never needs an awkward backfill/guess
+  // on old untagged docs.
+  const PROGRAM_ID = 'battery-disposal';
+
+  // ?preview=1 (from the admin report's "Preview" buttons) — the full real flow runs as
+  // normal, but nothing ever gets written to Firestore, so an admin trying it out never
+  // pollutes real completion data or drop-off stats.
+  const isPreviewMode = new URLSearchParams(window.location.search).get('preview') === '1';
+  if (isPreviewMode) document.getElementById('previewBanner').style.display = 'block';
+
+  // ---------------- Identification gate ----------------
+  const siteContext = {buildingId:'', buildingName:'', tenantId:'', tenantName:'', level:'', name:'', email:'', linkId:''};
+  let tenantsCache = [];
+
+  const idCardLoading = document.getElementById('idCardLoading');
+  const idCardInvalid = document.getElementById('idCardInvalid');
+  const idCardForm = document.getElementById('idCardForm');
+  const idTenantSelect = document.getElementById('idTenant');
+  const idLevelSelect = document.getElementById('idLevel');
+  const idLevelField = document.getElementById('idLevelField');
+
+  function showInvalidLink(reason){
+    idCardLoading.style.display = 'none';
+    idCardForm.style.display = 'none';
+    idCardInvalid.style.display = 'block';
+    if (reason === 'expired'){
+      document.getElementById('idCardInvalidEyebrow').textContent = 'Link expired';
+      document.getElementById('idCardInvalidHeadline').textContent = 'This link is no longer active.';
+      document.getElementById('idCardInvalidSub').textContent = 'Ask your building contact for a current training link.';
+    } else {
+      document.getElementById('idCardInvalidEyebrow').textContent = 'Link not recognised';
+      document.getElementById('idCardInvalidHeadline').textContent = "This link isn't set up yet.";
+      document.getElementById('idCardInvalidSub').textContent = 'Check with your building contact for the correct training link.';
+    }
+  }
+
+  async function resolveDistributionLink(linkId){
+    const linkSnap = await getDoc(doc(db, 'links', linkId));
+    if (!linkSnap.exists()) return { error: 'not-found' };
+    const linkData = linkSnap.data();
+    if (linkData.programId !== PROGRAM_ID) return { error: 'not-found' };
+    if (linkData.expiresAt && linkData.expiresAt.toMillis() <= Date.now()) return { error: 'expired' };
+    return { buildingId: linkData.buildingId, lockedTenantId: linkData.tenantId || null };
+  }
+
+  function populateLevelsForTenant(tenantId){
+    const tenant = tenantsCache.find(t => t.id === tenantId);
+    const levels = (tenant && tenant.levels) || [];
+    if (levels.length <= 1){
+      // Only one level (or none) — nothing to actually choose, auto-fill and hide the field,
+      // same as before.
+      idLevelSelect.innerHTML = levels.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+      idLevelField.style.display = 'none';
+      idLevelSelect.value = levels[0] || '';
+    } else {
+      // Multiple real levels to choose from — a plain <select> defaults to its first <option>
+      // selected, which silently picked a level for the person instead of making them choose
+      // one (a real bug Sergio caught testing a multi-level tenant). A disabled placeholder
+      // option, same pattern as the tenant <select> above, forces an actual choice.
+      idLevelSelect.innerHTML = '<option value="" disabled selected>Select your level…</option>' +
+        levels.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+      idLevelField.style.display = 'block';
+    }
+  }
+
+  async function initIdGate(){
+    const params = new URLSearchParams(window.location.search);
+    let buildingId = params.get('b');
+    let lockedTenantId = null;
+    const linkId = params.get('l');
+    if (linkId){
+      if (!db){ showInvalidLink(); return; }
+      const resolved = await resolveDistributionLink(linkId);
+      if (resolved.error){ showInvalidLink(resolved.error === 'expired' ? 'expired' : undefined); return; }
+      buildingId = resolved.buildingId;
+      lockedTenantId = resolved.lockedTenantId;
+      siteContext.linkId = linkId;
+    }
+
+    // The report's general "Preview the training →" button (not tied to any building) links
+    // here with ?preview=1 and no ?b= at all — there's no real building/tenant to fetch, so
+    // skip the gate entirely rather than show "link not recognised" for a link that was never
+    // meant to carry a building in the first place.
+    if (isPreviewMode && !buildingId){
+      siteContext.buildingId = 'preview'; siteContext.buildingName = 'Preview';
+      siteContext.tenantId = 'preview'; siteContext.tenantName = 'Preview';
+      siteContext.level = 'Preview'; siteContext.name = 'Preview'; siteContext.email = 'preview@example.com';
+      document.getElementById('idGate').style.display = 'none';
+      document.getElementById('mainApp').style.display = 'block';
+      return;
+    }
+
+    if (!db){ showInvalidLink(); return; }
+    if (!buildingId){ showInvalidLink(); return; }
+
+    try {
+      const buildingSnap = await getDoc(doc(db, 'buildings', buildingId));
+      // active === false means the building was "deleted" from the admin panel — soft-deleted,
+      // not actually removed, so its history stays intact, but its links must stop working,
+      // same as a real delete would look like to a trainee.
+      if (!buildingSnap.exists() || buildingSnap.data().active === false){ showInvalidLink(); return; }
+
+      // The enrollment doc is the real access gate, not just admin-side config: if this
+      // building was never enrolled in Recycling (or was un-enrolled/soft-deleted), there's
+      // nothing to show — a ?b= that happens to be valid for some OTHER program must not
+      // silently work here too.
+      const enrollmentSnap = await getDoc(doc(db, 'enrollments', `${PROGRAM_ID}__${buildingId}`));
+      if (!enrollmentSnap.exists() || enrollmentSnap.data().active === false){ showInvalidLink(); return; }
+      const enrollment = enrollmentSnap.data();
+
+      siteContext.buildingId = buildingId;
+      siteContext.buildingName = buildingSnap.data().name || '';
+      document.getElementById('idBuildingNameInline').textContent = siteContext.buildingName;
+
+      // Battery Disposal has fixed content (see the multi-program plan) — no per-building
+      // customization, unlike Recycling.
+      const tenantsSnap = await getDocs(collection(db, 'buildings', buildingId, 'tenants'));
+      // enabledTenantIds: absent/null = every tenant enabled (today's default); an array
+      // (even an empty one, meaning "none") restricts the id-gate's dropdown to just those.
+      const enabledTenantIds = enrollment.enabledTenantIds;
+      const allTenants = tenantsSnap.docs
+        .map(d => ({id: d.id, ...d.data()}))
+        .filter(t => t.active !== false);
+      tenantsCache = Array.isArray(enabledTenantIds)
+        ? allTenants.filter(t => enabledTenantIds.includes(t.id))
+        : allTenants;
+      if (lockedTenantId){
+        tenantsCache = tenantsCache.filter(t => t.id === lockedTenantId);
+      }
+      if (tenantsCache.length === 0){ showInvalidLink(); return; }
+
+      idTenantSelect.innerHTML = lockedTenantId
+        ? tenantsCache.map(t => `<option value="${t.id}" selected>${esc(t.name)}</option>`).join('')
+        : '<option value="" disabled selected>Select your company…</option>' +
+          tenantsCache.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+      if (lockedTenantId) idTenantSelect.disabled = true;
+      idTenantSelect.addEventListener('change', () => populateLevelsForTenant(idTenantSelect.value));
+      if (lockedTenantId) populateLevelsForTenant(lockedTenantId);
+
+      idCardLoading.style.display = 'none';
+      idCardForm.style.display = 'block';
+    } catch (err){
+      console.error('Failed to load building for id-gate:', err);
+      showInvalidLink();
+    }
+  }
+
+  document.getElementById('idForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const tenant = tenantsCache.find(t => t.id === idTenantSelect.value);
+    siteContext.tenantId = idTenantSelect.value;
+    siteContext.tenantName = tenant ? tenant.name : '';
+    siteContext.level = idLevelSelect.value;
+    siteContext.name = document.getElementById('idName').value.trim();
+    siteContext.email = document.getElementById('idEmail').value.trim();
+    document.getElementById('idGate').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'block';
+    window.scrollTo(0,0);
+  });
+
+    const progressFill = document.getElementById('progressFill');
+  const progressLabel = document.getElementById('progressLabel');
+
+  const QUESTIONS = [
+    {
+      id: 'q1',
+      text: 'Where should a dead household battery go?',
+      options: [
+        { key: 'a', text: 'General waste bin' },
+        { key: 'b', text: 'Mixed recycling bin' },
+        { key: 'c', text: "A dedicated battery collection point" },
+        { key: 'd', text: 'The E-Waste point' },
+      ],
+      correctKey: 'c',
+      reason: "Batteries need their own dedicated collection point — not general waste, not recycling, and not even the E-Waste point.",
+    },
+    {
+      id: 'q2',
+      text: "What's the main risk of a battery ending up in the wrong bin?",
+      options: [
+        { key: 'a', text: 'It takes up extra space' },
+        { key: 'b', text: 'It can start a fire in a collection bin or truck' },
+        { key: 'c', text: "It's against the law" },
+        { key: 'd', text: 'It smells unpleasant' },
+      ],
+      correctKey: 'b',
+      reason: 'A damaged or crushed battery can ignite — this is a genuine fire-safety issue, not just a sorting mistake.',
+    },
+    {
+      id: 'q3',
+      text: "Is a building's battery point usually the same as its E-Waste point?",
+      options: [
+        { key: 'a', text: 'Yes, always the same point' },
+        { key: 'b', text: 'No, usually a separate, dedicated point' },
+        { key: 'c', text: "There's no such thing as a battery point" },
+        { key: 'd', text: 'Only for large batteries' },
+      ],
+      correctKey: 'b',
+      reason: 'Batteries are handled separately from E-Waste — check with your Waste Champion or Building Management for where yours is.',
+    },
+    {
+      id: 'q4',
+      text: "You're not sure where your floor's battery point is. What should you do?",
+      options: [
+        { key: 'a', text: 'Put it in general waste anyway' },
+        { key: 'b', text: 'Keep it in a drawer indefinitely' },
+        { key: 'c', text: 'Ask your Waste Champion or Building Management' },
+        { key: 'd', text: 'Mail it to the manufacturer' },
+      ],
+      correctKey: 'c',
+      reason: 'Every building has one — asking your Waste Champion or Building Management is the fastest way to find it.',
+    },
+    {
+      id: 'q5',
+      text: 'Which batteries need to go to the dedicated collection point?',
+      options: [
+        { key: 'a', text: 'Only large batteries, like laptop batteries' },
+        { key: 'b', text: 'Only rechargeable batteries' },
+        { key: 'c', text: 'Only batteries that look damaged' },
+        { key: 'd', text: 'Every battery, regardless of size' },
+      ],
+      correctKey: 'd',
+      reason: 'Size doesn\'t matter — a small button battery is just as much of a fire risk as a large one.',
+    },
+  ];
+
+  let gameStarted = false;
+  let answers = {};
+
+  function renderQuiz(){
+    const form = document.getElementById('quizForm');
+    form.innerHTML = QUESTIONS.map((q, i) => `
+      <div class="quiz-question" data-q="${q.id}">
+        <p class="quiz-question-text">${i + 1}. ${q.text}</p>
+        ${q.options.map(o => `
+          <label class="quiz-option">
+            <input type="radio" name="${q.id}" value="${o.key}">
+            <span>${o.text}</span>
+          </label>
+        `).join('')}
+      </div>
+    `).join('');
+    form.addEventListener('change', (e) => {
+      if (e.target.name) answers[e.target.name] = e.target.value;
+    });
+  }
+
+  function updateProgress(){
+    const answeredCount = Object.keys(answers).length;
+    const pct = gameStarted
+      ? (document.getElementById('results').classList.contains('active') ? 100 : Math.round((answeredCount / QUESTIONS.length) * 100))
+      : 0;
+    progressFill.style.width = pct + '%';
+    progressLabel.textContent = pct + '% complete';
+  }
+
+  document.getElementById('startBtn').addEventListener('click', () => {
+    document.getElementById('detailSection').scrollIntoView({behavior:'smooth', block:'start'});
+  });
+  document.getElementById('toGameBtn').addEventListener('click', () => {
+    document.getElementById('gameSection').scrollIntoView({behavior:'smooth', block:'start'});
+  });
+  document.getElementById('reviewBtn').addEventListener('click', () => {
+    document.getElementById('results').classList.remove('active');
+    document.getElementById('detailSection').scrollIntoView({behavior:'smooth', block:'start'});
+  });
+
+  let gameStartTime = null;
+  const deviceType = window.matchMedia('(pointer: coarse)').matches ? 'mobile-touch' : 'desktop';
+
+  // Same retry-with-backoff pattern as recycling-training.html's addDocWithRetry — an
+  // occasional transient write failure shouldn't lose a real submission.
+  async function addDocWithRetry(collectionRef, payload, attempts = 3){
+    for (let i = 0; i < attempts; i++){
+      try {
+        await addDoc(collectionRef, payload);
+        return true;
+      } catch (err){
+        if (i === attempts - 1){ console.error('addDocWithRetry: all attempts failed:', err); return false; }
+        await new Promise(r => setTimeout(r, 500 * (i + 1)));
+      }
+    }
+    return false;
+  }
+
+  async function recordAttemptStarted(){
+    if (!db || isPreviewMode) return;
+    const ok = await addDocWithRetry(collection(db, 'attempts'), {
+      buildingId: siteContext.buildingId, buildingName: siteContext.buildingName,
+      tenantId: siteContext.tenantId, tenantName: siteContext.tenantName,
+      level: siteContext.level, name: siteContext.name, email: siteContext.email,
+      programId: PROGRAM_ID,
+      ...(siteContext.linkId ? { linkId: siteContext.linkId } : {}),
+      startedAt: serverTimestamp()
+    });
+    if (!ok) console.error('Failed to record attempt start after retries.');
+  }
+
+  document.getElementById('startGameBtn').addEventListener('click', () => {
+    gameStarted = true;
+    gameStartTime = Date.now();
+    recordAttemptStarted();
+    renderQuiz();
+    document.getElementById('gameIntro').style.display = 'none';
+    document.getElementById('gameStage').style.display = 'block';
+    updateProgress();
+  });
+
+  async function submitResults(payload){
+    if (isPreviewMode) return true;
+    return await addDocWithRetry(collection(db, 'submissions'), payload);
+  }
+
+  let lastResultsPayload = null;
+
+  async function trySubmitResults(payload){
+    lastResultsPayload = payload;
+    const saved = await submitResults(payload);
+    document.getElementById('saveWarning').style.display = saved ? 'none' : 'flex';
+  }
+
+  document.getElementById('retrySaveBtn').addEventListener('click', () => {
+    if (lastResultsPayload) trySubmitResults(lastResultsPayload);
+  });
+
+  function showResults(){
+    document.getElementById('gameStage').style.display = 'none';
+    document.getElementById('results').classList.add('active');
+
+    const correctCount = QUESTIONS.filter(q => answers[q.id] === q.correctKey).length;
+    const total = QUESTIONS.length;
+    const pct = Math.round((correctCount / total) * 100);
+
+    document.getElementById('scorePct').textContent = pct + '%';
+    document.getElementById('scoreOf').textContent = correctCount + ' / ' + total + ' correct';
+    document.getElementById('gaugeFill').style.width = pct + '%';
+
+    const verdict = document.getElementById('verdict');
+    const verdictSub = document.getElementById('verdictSub');
+    if (pct >= 75){
+      verdict.textContent = 'Passed — solid grasp of battery disposal.';
+      verdictSub.textContent = 'Keep this as a reference next time you\'re not sure where a battery goes.';
+    } else {
+      verdict.textContent = 'Not quite at the pass mark yet.';
+      verdictSub.textContent = 'Have a look back through the briefing above, then retake the quiz.';
+    }
+
+    document.getElementById('quizReview').innerHTML = QUESTIONS.map((q, i) => {
+      const given = answers[q.id];
+      const isCorrect = given === q.correctKey;
+      const correctOption = q.options.find(o => o.key === q.correctKey);
+      return `
+        <div class="quiz-review-item ${isCorrect ? 'correct' : 'wrong'}">
+          <p class="quiz-review-q">${i + 1}. ${q.text}</p>
+          ${isCorrect
+            ? `<p class="quiz-review-answer">Correct — ${correctOption.text}.</p>`
+            : `<p class="quiz-review-answer">Correct answer: ${correctOption.text}. ${q.reason}</p>`}
+        </div>
+      `;
+    }).join('');
+
+    const durationSeconds = gameStartTime ? Math.round((Date.now() - gameStartTime) / 1000) : null;
+
+    trySubmitResults({
+      buildingId: siteContext.buildingId,
+      buildingName: siteContext.buildingName,
+      tenantId: siteContext.tenantId,
+      tenantName: siteContext.tenantName,
+      level: siteContext.level,
+      name: siteContext.name,
+      email: siteContext.email,
+      programId: PROGRAM_ID,
+      ...(siteContext.linkId ? { linkId: siteContext.linkId } : {}),
+      score: pct,
+      correctCount,
+      total,
+      answers: {...answers},
+      duration_seconds: durationSeconds,
+      device_type: deviceType,
+      timestamp: serverTimestamp()
+    });
+
+    updateProgress();
+    document.getElementById('gameSection').scrollIntoView({behavior:'smooth', block:'start'});
+  }
+
+  document.getElementById('submitQuizBtn').addEventListener('click', () => {
+    if (Object.keys(answers).length < QUESTIONS.length){
+      alert('Please answer every question before submitting.');
+      return;
+    }
+    showResults();
+  });
+
+  document.getElementById('retryBtn').addEventListener('click', () => {
+    answers = {};
+    document.getElementById('results').classList.remove('active');
+    document.getElementById('gameStage').style.display = 'block';
+    renderQuiz();
+    updateProgress();
+  });
+
+  updateProgress();
+
+  initIdGate();
+})();
+</script>
+
+</body>
+</html>

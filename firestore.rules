@@ -30,6 +30,19 @@ service cloud.firestore {
         && data.programId is string && data.programId.size() > 0 && data.programId.size() <= 100;
     }
 
+    // A submission/attempt MAY carry a linkId (came in via ?l=, a tenant-scoped and/or
+    // time-limited link — see /links below). When it does, this is the real server-side
+    // enforcement of expiry: a client-side "this link has expired" message is only a courtesy,
+    // since nothing stops a direct API call from ignoring it. Absent linkId (the plain ?b=
+    // link, or no link param at all) always passes — this check only ever narrows, never
+    // requires, a linkId.
+    function isValidLinkIfPresent(data) {
+      return !('linkId' in data) ||
+        (data.linkId is string &&
+         (!('expiresAt' in get(/databases/$(database)/documents/links/$(data.linkId)).data) ||
+          get(/databases/$(database)/documents/links/$(data.linkId)).data.expiresAt > request.time));
+    }
+
     // Reviewer accounts beyond the permanent owner fallback above. Only an existing
     // reviewer can grant or revoke another one (the report's Admins panel is only
     // reachable once signed in as an allowed reviewer in the first place).
@@ -50,12 +63,46 @@ service cloud.firestore {
       }
     }
 
+    // Program catalog (Recycling Sorting, and future specialized inductions like
+    // Organics Focus / Battery Disposal). Readable by anyone — needed by the
+    // unauthenticated induction-catalog screen and, indirectly, by every induction
+    // page — writable only by an allowed reviewer from the report's Catalog panel.
+    match /programs/{programId} {
+      allow read: if true;
+      allow write: if isAllowedReviewer();
+    }
+
+    // Which buildings are enrolled in which program, plus that program's
+    // per-building config (item overrides, enabled tenants). Replaces the old
+    // buildings/{id}.itemOverrides field now that a building can be enrolled in
+    // more than one program. Same read-by-anyone/write-by-reviewer shape as
+    // buildings itself, since every induction page's id-gate reads this before
+    // showing the form (and treats a missing doc as "not enrolled, invalid link").
+    match /enrollments/{enrollmentId} {
+      allow read: if true;
+      allow write: if isAllowedReviewer();
+    }
+
+    // Distribution links: tenant-scoped and/or time-limited alternatives to the
+    // plain ?b= building link. Readable by anyone — a trainee needs to resolve one
+    // before the id-gate even knows the building — the same capability-URL model
+    // as the link ids themselves: security comes from the id being an unguessable
+    // random token, not from this rule. Reviewers can create and update (update is
+    // how an early revoke works — set expiresAt to now) but never delete, so a
+    // resolved link's record never disappears out from under a check.
+    match /links/{linkId} {
+      allow read: if true;
+      allow create, update: if isAllowedReviewer();
+      allow delete: if false;
+    }
+
     // Training results: anyone can create one (completing the game), nobody
     // can create with a payload missing the required fields, nobody can ever
     // edit a submission after the fact, and only an allowed reviewer can
     // read or delete them.
     match /submissions/{submissionId} {
       allow create: if isValidPersonFields(request.resource.data)
+        && isValidLinkIfPresent(request.resource.data)
         && request.resource.data.score is number
         && request.resource.data.score >= 0 && request.resource.data.score <= 100;
       allow read, delete: if isAllowedReviewer();
@@ -66,7 +113,7 @@ service cloud.firestore {
     // lets the report compute a completion rate (started vs. actually finished).
     // Same shape/rules as submissions, minus the score field this doesn't have.
     match /attempts/{attemptId} {
-      allow create: if isValidPersonFields(request.resource.data);
+      allow create: if isValidPersonFields(request.resource.data) && isValidLinkIfPresent(request.resource.data);
       allow read: if isAllowedReviewer();
       allow update, delete: if false;
     }

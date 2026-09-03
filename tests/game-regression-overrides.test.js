@@ -89,6 +89,18 @@ async function resolvePhase(page, maxClicks){
   return await page.$eval('#nextPhaseBtn', el => getComputedStyle(el).display !== 'none').catch(() => false);
 }
 
+// itemOverrides now lives on the enrollment doc (enrollments/recycling-sorting__{buildingId}),
+// not on the building doc itself — see the multi-program plan's "atomic swap" step. Each
+// building here still needs its own enrollment doc for initIdGate() to treat it as enrolled
+// at all (a building with no enrollment doc is now an invalid link, same as a nonexistent one).
+async function seedBuilding(db, buildingId, name, tenantId, itemOverrides){
+  await setDoc(doc(db, 'buildings', buildingId), { name });
+  await setDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: 'Test Co', levels: ['Level 1'] });
+  await setDoc(doc(db, 'enrollments', `recycling-sorting__${buildingId}`), {
+    programId: 'recycling-sorting', buildingId, itemOverrides,
+  });
+}
+
 async function seedTestBuilding(){
   const testEnv = await initializeTestEnvironment({
     projectId: 'esg-1-98f35',
@@ -96,21 +108,26 @@ async function seedTestBuilding(){
   });
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
-    await setDoc(doc(db, 'buildings', TEST_BUILDING_ID), { name: 'Test Tower Overrides', itemOverrides: ITEM_OVERRIDES });
-    await setDoc(doc(db, 'buildings', TEST_BUILDING_ID, 'tenants', TEST_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
-    await setDoc(doc(db, 'buildings', ACCEPTABLE_BUILDING_ID), { name: 'Test Tower Acceptable', itemOverrides: ACCEPTABLE_ITEM_OVERRIDES });
-    await setDoc(doc(db, 'buildings', ACCEPTABLE_BUILDING_ID, 'tenants', ACCEPTABLE_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
-    await setDoc(doc(db, 'buildings', BLOCKED_BUILDING_ID), { name: 'Test Tower Blocked', itemOverrides: BLOCKED_ITEM_OVERRIDES });
-    await setDoc(doc(db, 'buildings', BLOCKED_BUILDING_ID, 'tenants', BLOCKED_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
-    await setDoc(doc(db, 'buildings', FULL_MERGE_BUILDING_ID), { name: 'Test Tower Full Merge', itemOverrides: FULL_MERGE_ITEM_OVERRIDES });
-    await setDoc(doc(db, 'buildings', FULL_MERGE_BUILDING_ID, 'tenants', FULL_MERGE_TENANT_ID), { name: 'Test Co', levels: ['Level 1'] });
+    await seedBuilding(db, TEST_BUILDING_ID, 'Test Tower Overrides', TEST_TENANT_ID, ITEM_OVERRIDES);
+    await seedBuilding(db, ACCEPTABLE_BUILDING_ID, 'Test Tower Acceptable', ACCEPTABLE_TENANT_ID, ACCEPTABLE_ITEM_OVERRIDES);
+    await seedBuilding(db, BLOCKED_BUILDING_ID, 'Test Tower Blocked', BLOCKED_TENANT_ID, BLOCKED_ITEM_OVERRIDES);
+    await seedBuilding(db, FULL_MERGE_BUILDING_ID, 'Test Tower Full Merge', FULL_MERGE_TENANT_ID, FULL_MERGE_ITEM_OVERRIDES);
   });
   return testEnv;
 }
 
 async function passIdGate(page, email, gameUrl, tenantId){
   await page.goto(gameUrl, { waitUntil: 'domcontentloaded' });
-  await new Promise(r => setTimeout(r, 500));
+  // initIdGate() now does an extra Firestore round-trip (the enrollment-gate check added by
+  // the multi-program retrofit) before the form is populated — a fixed short sleep here is
+  // exactly the kind of margin this project already learned not to rely on (see the identical
+  // 400ms->1200ms fix a few lines up in game-regression.test.js's invalid-link case). Waiting
+  // for a real, non-placeholder tenant option to actually exist is robust to however long that
+  // round-trip takes, instead of guessing a duration.
+  await page.waitForFunction(
+    () => document.querySelector('#idTenant option[value]:not([value=""])') !== null,
+    { timeout: 10000 }
+  );
   await page.type('#idName', 'Jane Doe');
   await page.type('#idEmail', email);
   await page.select('#idTenant', tenantId);

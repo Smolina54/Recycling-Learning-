@@ -133,12 +133,16 @@ async function runFlow(page){
     try { await window.__testSignIn(email, 'test-password-123'); return 'ok'; }
     catch (err) { return 'ERROR: ' + err.message; }
   }, ALLOWED_EMAIL);
-  await new Promise(r => setTimeout(r, 1200)); // real network round-trip to the Auth + Firestore emulators
-
   check('test sign-in hook resolved without throwing', signInResult === 'ok', signInResult);
+  // loadLiveData() now also awaits refreshProgramSelector() (an extra Firestore round-trip
+  // added by the multi-program plan) before showing #adminTabs — wait for it to actually
+  // become visible rather than guessing a fixed duration.
+  await page.waitForFunction(
+    () => getComputedStyle(document.getElementById('adminTabs')).display !== 'none',
+    { timeout: 10000 }
+  );
   const authStatusText = await page.$eval('#authStatus', el => el.textContent);
-  check('admin tabs appear after signing in',
-    await page.$eval('#adminTabs', el => getComputedStyle(el).display !== 'none'), authStatusText);
+  check('admin tabs appear after signing in', true, authStatusText);
   check('Reports tab is active by default', await page.$eval('#tabReportsBtn', el => el.classList.contains('active')));
 
   // --- XSS check: a malicious trainee-submitted name must render as inert text, never run ---
@@ -165,6 +169,10 @@ async function runFlow(page){
     missedListText.includes('Flattened cardboard box') && missedListText.includes('Mixed Recycling') && !missedListText.includes('Paper & Cardboard'),
     missedListText.slice(0, 400));
 
+  // Buildings/Admins/Catalog live inside the ⚙ settings menu now — open it before clicking
+  // any of the tab buttons it contains.
+  await page.click('#settingsBtn');
+  await new Promise(r => setTimeout(r, 100));
   await page.click('#tabBuildingsBtn');
   await new Promise(r => setTimeout(r, 200));
   check('Buildings tab becomes visible on click',
@@ -386,6 +394,20 @@ async function runFlow(page){
   check('other tenants in the same building survive an unrelated tenant delete',
     tenantEntriesLive.some(t => t.includes('Widgetco')), tenantEntriesLive.join(' || '));
 
+  // "Delete" on a tenant is also a soft-delete (active:false) — confirm the real id-gate's
+  // company dropdown no longer offers it, even though the building's own link still works.
+  const deletedTenantBuildingId = await (await findBuildingRow(page, buildingName)).evaluate(el => el.dataset.buildingId);
+  const tenantCheckPage = await page.browser().newPage();
+  await tenantCheckPage.goto(`${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'recycling-training.html')).href}?b=${deletedTenantBuildingId}&emulator=1`, { waitUntil: 'domcontentloaded' });
+  await tenantCheckPage.waitForFunction(
+    () => document.querySelector('#idTenant option[value]:not([value=""])') !== null,
+    { timeout: 10000 }
+  ).catch(() => {});
+  const tenantOptionsAfterDelete = await tenantCheckPage.$$eval('#idTenant option', opts => opts.map(o => o.textContent));
+  check('a soft-deleted tenant no longer appears in the real id-gate\'s company dropdown',
+    !tenantOptionsAfterDelete.some(t => t.includes('Test Tenant Renamed')), tenantOptionsAfterDelete.join('|'));
+  await tenantCheckPage.close();
+
   // --- Configure item streams (per-building item-stream overrides, Milestone 2) ---
   row = await findBuildingRow(page, buildingName);
   const buildingIdForItems = await row.evaluate(el => el.dataset.buildingId);
@@ -595,7 +617,19 @@ async function runFlow(page){
   buildingNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
   check('deleted building no longer appears in the list', !buildingNames.includes(renamedBuildingName), buildingNames.join('|') || '(none left)');
 
+  // "Delete building" is a soft-delete (active:false), not a real delete — confirm it actually
+  // has the effect a real delete would have from a trainee's point of view: the real link stops
+  // working, same fallback screen as a nonexistent buildingId.
+  const deletedBuildingPage = await page.browser().newPage();
+  await deletedBuildingPage.goto(`${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'recycling-training.html')).href}?b=${buildingIdForEdit}&emulator=1`, { waitUntil: 'domcontentloaded' });
+  await new Promise(r => setTimeout(r, 1200));
+  const invalidShownForDeleted = await deletedBuildingPage.$eval('#idCardInvalid', el => getComputedStyle(el).display !== 'none').catch(() => false);
+  check('a soft-deleted building\'s real link now shows the invalid-link fallback, same as a real delete would', invalidShownForDeleted);
+  await deletedBuildingPage.close();
+
   // --- Admins panel: its own tab now, not tucked inside Buildings ---
+  await page.click('#settingsBtn');
+  await new Promise(r => setTimeout(r, 100));
   await page.click('#tabAdminsBtn');
   await new Promise(r => setTimeout(r, 200));
   check('Admins tab becomes visible on click',
@@ -651,7 +685,12 @@ async function runFlow(page){
   const emailAdminPassword = 'test-password-123';
 
   await page.evaluate(async (email) => { await window.__testSignIn(email, 'test-password-123'); }, ALLOWED_EMAIL);
-  await new Promise(r => setTimeout(r, 1000));
+  await page.waitForFunction(
+    () => getComputedStyle(document.getElementById('adminTabs')).display !== 'none',
+    { timeout: 10000 }
+  );
+  await page.click('#settingsBtn');
+  await new Promise(r => setTimeout(r, 100));
   await page.click('#tabAdminsBtn');
   await new Promise(r => setTimeout(r, 300));
   await page.type('#newAdminEmail', emailAdmin);
@@ -673,12 +712,14 @@ async function runFlow(page){
   await page.type('#emailSignInEmail', emailAdmin);
   await page.type('#emailSignInPassword', emailAdminPassword);
   await page.click('#emailSignInForm button[type=submit]');
-  await new Promise(r => setTimeout(r, 1200));
+  const adminTabsShownAfterEmailSignIn = await page.waitForFunction(
+    () => getComputedStyle(document.getElementById('adminTabs')).display !== 'none',
+    { timeout: 10000 }
+  ).then(() => true).catch(() => false);
 
   const authStatusAfterEmailSignIn = await page.$eval('#authStatus', el => el.textContent);
   check('signing in through the real email/password form works for a Firestore-granted admin',
-    await page.$eval('#adminTabs', el => getComputedStyle(el).display !== 'none'),
-    authStatusAfterEmailSignIn);
+    adminTabsShownAfterEmailSignIn, authStatusAfterEmailSignIn);
   check('the email/password form collapses back after a successful sign-in (not left sitting on screen)',
     await page.$eval('#emailSignInForm', el => getComputedStyle(el).display === 'none'));
   check('the "Sign in with email" button also hides once signed in',
