@@ -105,17 +105,22 @@ async function runTenantLockedFlow(page, seedEnv){
   await new Promise(r => setTimeout(r, 150));
 
   await page.click('#startGameBtn');
-  await new Promise(r => setTimeout(r, 600));
 
+  // recordAttemptStarted()'s write is fire-and-forget from the click handler's point of view —
+  // a single fixed sleep before querying is exactly the kind of race this project's own tests
+  // avoid elsewhere (see admin-buildings.test.js), so poll for the doc to actually land instead.
   let attemptOk = false;
-  await seedEnv.withSecurityRulesDisabled(async (context) => {
-    const db = context.firestore();
-    const snap = await getDocs(query(collection(db, 'attempts'), where('email', '==', 'jane-link-tenant@example.com')));
-    if (!snap.empty){
-      const data = snap.docs[0].data();
-      attemptOk = data.tenantId === TENANT_A && data.linkId === 'link-tenant-a';
-    }
-  });
+  for (let i = 0; i < 20 && !attemptOk; i++){
+    await new Promise(r => setTimeout(r, 300));
+    await seedEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      const snap = await getDocs(query(collection(db, 'attempts'), where('email', '==', 'jane-link-tenant@example.com')));
+      if (!snap.empty){
+        const data = snap.docs[0].data();
+        attemptOk = data.tenantId === TENANT_A && data.linkId === 'link-tenant-a';
+      }
+    });
+  }
   check('the attempt was recorded against the locked tenant and carries the linkId', attemptOk);
 }
 

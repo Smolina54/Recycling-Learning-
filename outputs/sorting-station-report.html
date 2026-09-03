@@ -2373,7 +2373,17 @@ var qrcode = function() {
   .tab-btn.active{color:var(--ink); border-bottom-color:var(--forest);}
   .tab-btn:hover{color:var(--ink);}
 
-  .settings-menu-wrap{position:relative; margin-left:auto;}
+  .corner-settings{
+    position:fixed; top:16px; right:16px; z-index:45;
+    display:flex; gap:8px; align-items:center;
+  }
+  .corner-btn{font-size:13px; padding:8px 14px;}
+  .viewing-badge{
+    font-family:var(--mono); font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;
+    color:var(--forest-dark); background:var(--og-tint, #E5EAD8); border:1px solid var(--forest);
+    padding:6px 12px; border-radius:var(--radius);
+  }
+  .settings-menu-wrap{position:relative;}
   .settings-btn{font-size:16px; padding:6px 12px; line-height:1;}
   .settings-menu{
     position:absolute; top:calc(100% + 6px); right:0; z-index:30;
@@ -2395,7 +2405,7 @@ var qrcode = function() {
   }
   @media (max-width:640px){.import-row{grid-template-columns:20px 1fr;} .import-row .import-levels{grid-column:2;}}
 
-  .building-row{margin-bottom:20px;}
+  .building-row, .enrolled-building-row, .distribution-building-row{margin-bottom:20px;}
   .building-link-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
   .building-link-text{
     font-family:var(--mono); font-size:12px; background:var(--paper); border:1px solid var(--line);
@@ -2583,13 +2593,28 @@ var qrcode = function() {
     <p class="sub">Sign in with an authorized account to see live results straight from Firestore — pass rates, weak streams, and the specific items people get wrong most often.</p>
   </header>
 
+  <!-- Fixed to the page (not the header block, not the tab row) — a page-level settings
+       cluster, independent of whatever induction is selected. "Load sample data" works
+       whether signed in or not (same as today); "Sign out" and the ⚙ menu only make sense
+       once signed in. -->
+  <div class="corner-settings" id="cornerSettings">
+    <button class="btn secondary corner-btn" id="loadSampleBtn">Load sample data (preview)</button>
+    <button class="btn secondary corner-btn" id="signOutBtn" style="display:none;">Sign out</button>
+    <div class="settings-menu-wrap">
+      <button class="btn secondary settings-btn" id="settingsBtn" style="display:none;" title="Settings" aria-label="Settings">⚙</button>
+      <div class="settings-menu" id="settingsMenu" style="display:none;">
+        <button class="tab-btn" id="tabBuildingsBtn">Buildings</button>
+        <button class="tab-btn" id="tabAdminsBtn">Admins</button>
+        <button class="tab-btn" id="tabCatalogBtn">Catalog</button>
+      </div>
+    </div>
+  </div>
+
   <div class="upload-zone" id="authZone">
     <p id="authStatus">Sign in with an authorized account to load live results.</p>
     <div class="upload-actions">
       <button class="btn" id="signInBtn">Sign in with Google →</button>
       <button class="btn secondary" id="showEmailSignInBtn">Sign in with email →</button>
-      <button class="btn secondary" id="signOutBtn" style="display:none;">Sign out</button>
-      <button class="btn secondary" id="loadSampleBtn">Load sample data (preview)</button>
     </div>
     <form id="emailSignInForm" style="display:none; margin-top:16px;">
       <div class="filter-row">
@@ -2602,22 +2627,19 @@ var qrcode = function() {
     </form>
   </div>
 
-  <div class="filter-row" id="programSelectorRow" style="display:none; margin-bottom:12px;">
+  <div class="filter-row" id="programSelectorRow" style="display:none; margin-bottom:12px; align-items:center;">
     <label class="filter-field"><span>Induction</span>
-      <select id="programSelector"></select>
+      <select id="programSelector">
+        <option value="" disabled selected>Select an induction…</option>
+      </select>
     </label>
+    <span class="viewing-badge" id="viewingBadge" style="display:none;"></span>
   </div>
 
-  <div class="admin-tabs" id="adminTabs" style="display:none;">
+  <div class="admin-tabs" id="programTabs" style="display:none;">
     <button class="tab-btn active" id="tabReportsBtn">Reports</button>
-    <div class="settings-menu-wrap">
-      <button class="btn secondary settings-btn" id="settingsBtn" title="Settings" aria-label="Settings">⚙</button>
-      <div class="settings-menu" id="settingsMenu" style="display:none;">
-        <button class="tab-btn" id="tabBuildingsBtn">Buildings</button>
-        <button class="tab-btn" id="tabAdminsBtn">Admins</button>
-        <button class="tab-btn" id="tabCatalogBtn">Catalog</button>
-      </div>
-    </div>
+    <button class="tab-btn" id="tabEnrolledBuildingsBtn">Enrolled Buildings</button>
+    <button class="tab-btn" id="tabDistributionBtn">Distribution</button>
   </div>
 
   <section id="buildingsSection" style="display:none;">
@@ -2636,9 +2658,21 @@ var qrcode = function() {
       <p class="block-sub" id="buildingsStatus" style="margin-top:10px;"></p>
     </div>
 
+    <div class="filter-row" style="margin-bottom:16px;">
+      <label class="filter-field"><span>Search</span><input type="text" id="buildingSearchInput" placeholder="Search buildings by name…"></label>
+    </div>
+
+    <div id="buildingsList"></div>
+  </section>
+
+  <section id="enrolledBuildingsSection" style="display:none;">
+    <div class="report-header-row">
+      <h2>Enrolled Buildings</h2>
+    </div>
+
     <div class="report-block">
       <h3>Enroll an existing building in this induction</h3>
-      <p class="block-sub">Only buildings not already enrolled in the induction selected above are listed here.</p>
+      <p class="block-sub">Only buildings not already enrolled in the induction selected above are listed here. To add a brand-new building to the system, use Edificios in the ⚙ menu first.</p>
       <div class="filter-row">
         <label class="filter-field"><span>Building</span>
           <select id="enrollBuildingSelect"><option value="">Select a building…</option></select>
@@ -2650,11 +2684,16 @@ var qrcode = function() {
       <p class="block-sub" id="enrollBuildingStatus" style="margin-top:10px;"></p>
     </div>
 
-    <div class="filter-row" style="margin-bottom:16px;">
-      <label class="filter-field"><span>Search</span><input type="text" id="buildingSearchInput" placeholder="Search buildings by name…"></label>
-    </div>
+    <div id="enrolledBuildingsList"></div>
+  </section>
 
-    <div id="buildingsList"></div>
+  <section id="distributionSection" style="display:none;">
+    <div class="report-header-row">
+      <h2>Distribution</h2>
+    </div>
+    <p class="block-sub">Links for whichever induction is selected above. A building must be enrolled (see Enrolled Buildings) before it shows up here.</p>
+
+    <div id="distributionList"></div>
   </section>
 
   <section id="adminsSection" style="display:none;">
@@ -2704,7 +2743,7 @@ var qrcode = function() {
     <ul class="tenant-list" id="programsList"></ul>
   </section>
 
-  <section id="reportSection">
+  <section id="reportSection" style="display:none;">
     <div class="report-header-row">
       <h2 id="reportTitle">Overview</h2>
       <div class="source-note" id="sourceNote"></div>
@@ -4175,6 +4214,107 @@ try {
     return { rows, attempts };
   }
 
+  // Same demo purpose as generateSampleData() above, shaped to match what organics-training.html
+  // actually submits (single-stream item flags, no multi-stream breakdown) instead of forcing
+  // Recycling's 5-stream shape onto a program that doesn't have one.
+  function generateOrganicsSampleData(){
+    const buildings = [
+      {building:'123 Example Tower', tenants:[
+        {tenant:'Acme Legal', level:'Level 8'},
+        {tenant:'Northwind Consulting', level:'Level 14'}
+      ]},
+      {building:'456 Harbor Plaza', tenants:[
+        {tenant:'Contoso Finance', level:'Level 3'}
+      ]}
+    ];
+    const orgItems = ['og-banana','og-apple','og-coffee','og-fish','og-eggshell'];
+    const missBias = {'og-fish':0.35, 'og-eggshell':0.2};
+    const firstNames = ['Alex','Jordan','Sam','Taylor','Morgan','Casey','Riley','Jamie'];
+    const lastNames = ['Nguyen','Smith','Garcia','Patel','Kim','Brown','Diaz','Chen'];
+    let personSeq = 0;
+    function samplePerson(){
+      personSeq++;
+      const name = `${firstNames[personSeq % firstNames.length]} ${lastNames[(personSeq * 3) % lastNames.length]}`;
+      return { name, email: `${name.toLowerCase().replace(' ', '.')}${personSeq}@example.com` };
+    }
+    const rows = [], attempts = [];
+    buildings.forEach(b => {
+      b.tenants.forEach(t => {
+        const submissions = 3 + Math.floor(Math.random()*4);
+        for (let i=0; i<submissions; i++){
+          const person = samplePerson();
+          const itemFlags = {};
+          let avoided = 0;
+          orgItems.forEach(id => {
+            const ok = Math.random() > (missBias[id] || 0.1) ? 1 : 0;
+            itemFlags['item_'+id] = ok;
+            avoided += ok;
+          });
+          const total = orgItems.length;
+          const timestamp = new Date(Date.now() - Math.floor(Math.random()*20)*86400000).toISOString();
+          rows.push(Object.assign({
+            building: b.building, level: t.level, tenant: t.tenant,
+            name: person.name, email: person.email,
+            score: Math.round((avoided/total)*100), avoided, total,
+            duration_seconds: 60 + Math.floor(Math.random()*90),
+            device_type: Math.random() > 0.4 ? 'mobile-touch' : 'desktop',
+            timestamp
+          }, itemFlags));
+          attempts.push({ building: b.building, level: t.level, tenant: t.tenant, name: person.name, email: person.email, timestamp });
+        }
+      });
+    });
+    return { rows, attempts };
+  }
+
+  // Battery Disposal is a quiz, not a sorting game — its real submissions carry
+  // {score, correctCount, total, answers}, no items/breakdown at all. The generic report
+  // rendering already copes with that (stream bars and the missed-items list simply have
+  // nothing to aggregate and render empty), so this only needs to match the real shape.
+  function generateBatterySampleData(){
+    const buildings = [
+      {building:'123 Example Tower', tenants:[
+        {tenant:'Acme Legal', level:'Level 8'},
+        {tenant:'Northwind Consulting', level:'Level 14'}
+      ]},
+      {building:'456 Harbor Plaza', tenants:[
+        {tenant:'Contoso Finance', level:'Level 3'}
+      ]}
+    ];
+    const firstNames = ['Alex','Jordan','Sam','Taylor','Morgan','Casey','Riley','Jamie'];
+    const lastNames = ['Nguyen','Smith','Garcia','Patel','Kim','Brown','Diaz','Chen'];
+    let personSeq = 0;
+    function samplePerson(){
+      personSeq++;
+      const name = `${firstNames[personSeq % firstNames.length]} ${lastNames[(personSeq * 3) % lastNames.length]}`;
+      return { name, email: `${name.toLowerCase().replace(' ', '.')}${personSeq}@example.com` };
+    }
+    const total = 5;
+    const rows = [], attempts = [];
+    buildings.forEach(b => {
+      b.tenants.forEach(t => {
+        const submissions = 3 + Math.floor(Math.random()*4);
+        for (let i=0; i<submissions; i++){
+          const person = samplePerson();
+          const correctCount = Math.random() < 0.6 ? total : 3 + Math.floor(Math.random()*2);
+          const answers = {};
+          for (let q=1; q<=total; q++) answers['q'+q] = 'a';
+          const timestamp = new Date(Date.now() - Math.floor(Math.random()*20)*86400000).toISOString();
+          rows.push({
+            building: b.building, level: t.level, tenant: t.tenant,
+            name: person.name, email: person.email,
+            score: Math.round((correctCount/total)*100), correctCount, total, answers,
+            duration_seconds: 45 + Math.floor(Math.random()*60),
+            device_type: Math.random() > 0.4 ? 'mobile-touch' : 'desktop',
+            timestamp
+          });
+          attempts.push({ building: b.building, level: t.level, tenant: t.tenant, name: person.name, email: person.email, timestamp });
+        }
+      });
+    });
+    return { rows, attempts };
+  }
+
   let currentRows = [];
   let allRows = [];
   let allAttempts = []; // "started the sort" pings — used only to compute a completion rate
@@ -4542,31 +4682,27 @@ try {
   // carries — hardcoded as the default selection even before any `programs` catalog doc for
   // it exists (e.g. before the migration script has run), so Reports behaves identically to
   // "no filter at all" for the common case, matching every pre-existing test's expectations.
-  let currentProgramId = 'recycling-sorting';
+  let currentProgramId = '';
+  // Only ever called once a real program is selected (see the program selector's change
+  // handler) — Reports has nothing meaningful to show before that, per Sergio's explicit
+  // correction: no default selection, no data, until the admin actively picks one.
   async function loadLiveData(){
     if (!db){
       document.getElementById('authStatus').textContent = 'Firebase is not configured yet — check back once the project is connected.';
       return;
     }
-    document.getElementById('authStatus').textContent = 'Loading results…';
     try {
-      await refreshProgramSelector();
-      document.getElementById('programSelectorRow').style.display = 'flex';
       const [submissionsSnap, attemptsSnap] = await Promise.all([
         getDocs(query(collection(db, 'submissions'), where('programId', '==', currentProgramId), orderBy('timestamp', 'desc'), limit(MAX_ROWS))),
         getDocs(query(collection(db, 'attempts'), where('programId', '==', currentProgramId), orderBy('startedAt', 'desc'), limit(MAX_ROWS)))
       ]);
       const rows = submissionsSnap.docs.map(d => submissionToRow(d.id, d.data()));
       const attempts = attemptsSnap.docs.map(d => attemptToRow(d.id, d.data()));
-      document.getElementById('authStatus').textContent = `Signed in as ${auth.currentUser.email}`;
       const truncated = rows.length >= MAX_ROWS || attempts.length >= MAX_ROWS;
       const sourceLabel = `Live data from Firestore · ${rows.length} submissions` +
         (truncated ? ` (most recent ${MAX_ROWS} — narrow with the date filter to see an older period)` : '');
       loadRows(rows, attempts, sourceLabel, true);
-      document.getElementById('adminTabs').style.display = 'flex';
-      await loadBuildings();
-      await loadAdmins();
-      document.getElementById('reportSection').scrollIntoView({behavior:'smooth', block:'start'});
+      await loadEnrolledData();
     } catch (err){
       console.error('Failed to load submissions:', err);
       document.getElementById('authStatus').textContent = "Your account isn't authorized to view this report, or something went wrong loading it.";
@@ -4578,16 +4714,26 @@ try {
   // toggle re-render instantly from memory instead of re-fetching Firestore just to flip a
   // form open. Any actual write (save/delete) still goes through loadBuildings() for a fresh
   // fetch afterward, same as every other mutation in this tab.
+  // Master list (⚙ Edificios) — every active building, program-agnostic.
   let buildingsCache = [];
+  // Program-scoped list — feeds both Edificios inscritos and Distribution for whichever
+  // program is currently selected.
+  let enrolledBuildingsCache = [];
   // Every active building regardless of program enrollment — the source list for "Enroll an
-  // existing building" below, distinct from buildingsCache (which is scoped to the currently
-  // selected program).
+  // existing building" in Edificios inscritos, distinct from both caches above.
   let allBuildingsCache = [];
   let editingBuildingId = null;
   let editingTenant = null; // {buildingId, tenantId}
   let editingItemsBuildingId = null;
   let draftItemOverrides = null; // {itemId: {stream}}, only while editingItemsBuildingId is set
   let itemsEditorError = '';
+  // Real bug found in testing: renderEnrolledBuildingsList() fully replaces #enrolledBuildingsList's
+  // innerHTML on every load — including right after the tenant-enable checklist's own save handler
+  // sets its status text to "Saved." and then calls loadEnrolledData(), which immediately wipes it
+  // back to blank via a fresh render. The confirmation was never actually visible. Same fix as
+  // itemsEditorError above: keep the message in JS state (survives the re-render) instead of only
+  // writing it to a DOM node that's about to be discarded.
+  let tenantEnableStatusByBuildingId = {};
   // Must match recycling-training.html's DECOY_CAP — every stream needs at least this many
   // items with a DIFFERENT effective stream available to draw decoys from (see validateDraftOverrides()).
   const DECOY_CAP = 5;
@@ -4804,7 +4950,10 @@ try {
   // Collapsed by default — with dozens of real buildings (some with 20+ tenants each) showing
   // every tenant/link/QR for every building at once made the tab unusably long. A building
   // auto-expands while one of its tenants is being edited, so that form is never hidden away.
+  // Master (⚙ Edificios) and Edificios inscritos are two separate lists now, each with its own
+  // independent expand/collapse state.
   const expandedBuildingIds = new Set();
+  const expandedEnrolledBuildingIds = new Set();
 
   // Re-renders from the in-memory cache with the current search term applied — used for every
   // pure UI-state change (toggle expand, enter/cancel edit mode) so those stay instant and keep
@@ -4813,11 +4962,19 @@ try {
     const term = buildingSearchTerm.trim().toLowerCase();
     const filtered = term ? buildingsCache.filter(b => b.name.toLowerCase().includes(term)) : buildingsCache;
     renderBuildingsList(filtered);
+  }
+
+  function refreshEnrolledBuildingsView(){
+    renderEnrolledBuildingsList(enrolledBuildingsCache);
     refreshEnrollBuildingSelect();
   }
 
+  function refreshDistributionView(){
+    renderDistributionList(enrolledBuildingsCache);
+  }
+
   function refreshEnrollBuildingSelect(){
-    const enrolledIds = new Set(buildingsCache.map(b => b.id));
+    const enrolledIds = new Set(enrolledBuildingsCache.map(b => b.id));
     const notEnrolled = allBuildingsCache.filter(b => !enrolledIds.has(b.id));
     const select = document.getElementById('enrollBuildingSelect');
     select.innerHTML = '<option value="">Select a building…</option>' +
@@ -4856,12 +5013,33 @@ try {
     return buildingsSnap.docs.filter(d => d.data().active !== false);
   }
 
+  // Master building list — completely program-agnostic (⚙ Edificios), unaffected by whatever
+  // induction is selected above. Every real building lives here, whether or not it's enrolled
+  // in anything yet — enrollment/content concerns live in Edificios inscritos/Distribution.
+  async function loadMasterBuildings(){
+    const buildingDocs = await loadAllActiveBuildings();
+    allBuildingsCache = buildingDocs.map(d => ({ id: d.id, name: d.data().name || '(untitled)' }));
+    const buildings = await Promise.all(buildingDocs.map(async (d) => {
+      const tenantsSnap = await getDocs(collection(db, 'buildings', d.id, 'tenants'));
+      return {
+        id: d.id,
+        name: d.data().name || '(untitled)',
+        tenants: tenantsSnap.docs
+          .filter(t => t.data().active !== false)
+          .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [] })),
+      };
+    }));
+    buildingsCache = buildings;
+    refreshBuildingsView();
+  }
+
   // Scoped to whichever program is selected at the top of the screen — a building only shows
-  // up here once it's enrolled in that program (enrollments.active !== false), same as the
-  // Distribución links below only working for enrolled buildings. Every existing building was
-  // auto-enrolled in Recycling (either at creation time or by the one-time migration script),
-  // so this is a no-op change in behavior for the default/common case.
-  async function loadBuildings(){
+  // up here once it's enrolled in that program (enrollments.active !== false). Every existing
+  // building was auto-enrolled in Recycling (either at creation time or by the one-time
+  // migration script), so this is a no-op change in behavior for that program's default case.
+  // Feeds BOTH Edificios inscritos and Distribution — they're two views of the same enrolled
+  // set, not two separate queries.
+  async function loadEnrolledData(){
     const [enrollmentsSnap, allBuildingDocs, linksSnap] = await Promise.all([
       getDocs(query(collection(db, 'enrollments'), where('programId', '==', currentProgramId))),
       loadAllActiveBuildings(),
@@ -4893,14 +5071,19 @@ try {
         id: d.id,
         name: d.data().name || '(untitled)',
         itemOverrides: enrollment.itemOverrides || {},
+        // Left as the raw stored value (undefined/null/array/[]) — the 3-state model from the
+        // plan (absent-or-null = everyone; array = only these; [] = no one) is interpreted at
+        // render/save time, not collapsed here.
+        enabledTenantIds: enrollment.enabledTenantIds,
         tenants: tenantsSnap.docs
           .filter(t => t.data().active !== false)
           .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [] })),
         links: linksByBuilding[d.id] || [],
       };
     }));
-    buildingsCache = buildings;
-    refreshBuildingsView();
+    enrolledBuildingsCache = buildings;
+    refreshEnrolledBuildingsView();
+    refreshDistributionView();
   }
 
   // Single source of truth for "should this building's card be shown expanded" — used both
@@ -4909,7 +5092,11 @@ try {
   // QR check forgot the itemsEditor case, so collapsing while "Configure bins" was open hid
   // only the QR code, leaving the rest of the expanded card behind).
   function isBuildingExpanded(b){
-    return expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id) || editingItemsBuildingId === b.id;
+    return expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id);
+  }
+
+  function isEnrolledBuildingExpanded(b){
+    return expandedEnrolledBuildingIds.has(b.id) || editingItemsBuildingId === b.id;
   }
 
   // Tenant-scoped and/or time-limited alternative to the plain whole-building link above —
@@ -4961,6 +5148,9 @@ try {
     `;
   }
 
+  // Master (⚙ Edificios): pure building/tenant CRUD, no program awareness at all — no
+  // Configure streams, no links, no enrollment concept. This is the ONLY place tenants get
+  // added/edited/deleted, and the ONLY place a building's name changes or it gets deleted.
   function renderBuildingsList(buildings){
     const container = document.getElementById('buildingsList');
     if (buildings.length === 0){
@@ -4970,7 +5160,6 @@ try {
       return;
     }
     container.innerHTML = buildings.map(b => {
-      const link = `${window.location.origin}/${currentProgram().file}?b=${b.id}`;
       const isExpanded = isBuildingExpanded(b);
       const headerHtml = editingBuildingId === b.id
         ? `<div class="building-edit-row">
@@ -4982,11 +5171,8 @@ try {
             <button type="button" class="building-toggle-btn" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
             <h3>${esc(b.name)}</h3>
             <span class="building-tenant-count">${b.tenants.length} tenant${b.tenants.length === 1 ? '' : 's'}</span>
-            ${currentProgramId === 'recycling-sorting' && Object.keys(b.itemOverrides || {}).length ? '<span class="custom-config-badge">Custom bins</span>' : ''}
             <div class="building-header-actions">
-              ${currentProgramId === 'recycling-sorting' ? '<button class="btn secondary configure-items-btn">Configure streams</button>' : ''}
               <button class="btn secondary edit-building-btn">Edit name</button>
-              <button class="btn secondary remove-enrollment-btn danger-btn">Remove from this induction</button>
               <button class="btn secondary delete-building-btn danger-btn">Delete building</button>
             </div>
           </div>`;
@@ -5017,14 +5203,6 @@ try {
       return `
       <div class="report-block building-row" data-building-id="${b.id}">
         ${headerHtml}
-        <div class="building-link-row">
-          <code class="building-link-text">${link}</code>
-          <button class="btn secondary copy-link-btn" data-link="${link}">Copy link →</button>
-          <button class="btn secondary preview-link-btn" data-link="${link}">Preview →</button>
-        </div>
-        <div class="building-qr" data-link="${link}"></div>
-        ${renderDistributionLinksHtml(b)}
-        ${editingItemsBuildingId === b.id ? renderItemStreamsEditorHtml() : ''}
         <ul class="tenant-list">${tenantsHtml}</ul>
         <div class="filter-row">
           <label class="filter-field"><span>Tenant name</span><input type="text" class="new-tenant-name"></label>
@@ -5041,16 +5219,105 @@ try {
       </div>
     `;
     }).join('');
+  }
+
+  // Edificios inscritos: buildings enrolled in the selected program. Content configuration
+  // (Configure streams) and the tenant-enable checklist live here — no tenant CRUD (that's
+  // master's job), no real distribution links (that's the Distribution tab's job) beyond the
+  // Preview button, which never writes real data (?preview=1).
+  function renderEnrolledBuildingsList(buildings){
+    const container = document.getElementById('enrolledBuildingsList');
+    if (buildings.length === 0){
+      container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet — enroll one above.</p>';
+      return;
+    }
+    container.innerHTML = buildings.map(b => {
+      const previewLink = `${window.location.origin}/${currentProgram().file}?b=${b.id}&preview=1`;
+      const isExpanded = isEnrolledBuildingExpanded(b);
+      const headerHtml = `<div class="building-header-row">
+        <button type="button" class="building-toggle-btn" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
+        <h3>${esc(b.name)}</h3>
+        <span class="building-tenant-count">${b.tenants.length} tenant${b.tenants.length === 1 ? '' : 's'}</span>
+        ${currentProgramId === 'recycling-sorting' && Object.keys(b.itemOverrides || {}).length ? '<span class="custom-config-badge">Custom bins</span>' : ''}
+        <div class="building-header-actions">
+          ${currentProgramId === 'recycling-sorting' ? '<button class="btn secondary configure-items-btn">Configure streams</button>' : ''}
+          <button class="btn secondary preview-link-btn" data-link="${previewLink}">Preview →</button>
+          <button class="btn secondary remove-enrollment-btn danger-btn">Remove from this induction</button>
+        </div>
+      </div>`;
+      if (!isExpanded){
+        return `<div class="report-block enrolled-building-row" data-building-id="${b.id}">${headerHtml}</div>`;
+      }
+      return `
+      <div class="report-block enrolled-building-row" data-building-id="${b.id}">
+        ${headerHtml}
+        ${editingItemsBuildingId === b.id ? renderItemStreamsEditorHtml() : ''}
+        ${renderTenantEnableChecklistHtml(b)}
+      </div>
+    `;
+    }).join('');
+  }
+
+  // The tenant-enable checklist — the actual admin-side control for `enrollments.enabledTenantIds`
+  // (the data model already existed; this is the UI that was missing). Interprets the 3-state
+  // model exactly as documented: absent/null = everyone enabled, an array = only those tenants,
+  // an explicit [] = no one (paused for everyone without un-enrolling the building).
+  function renderTenantEnableChecklistHtml(b){
+    const enabledIds = b.enabledTenantIds;
+    const isTenantEnabled = (tenantId) => !Array.isArray(enabledIds) || enabledIds.includes(tenantId);
+    const rowsHtml = b.tenants.length
+      ? b.tenants.map(t => `
+        <li data-tenant-id="${esc(t.id)}">
+          <label class="tenant-enable-label">
+            <input type="checkbox" class="tenant-enable-checkbox" data-tenant-id="${esc(t.id)}"${isTenantEnabled(t.id) ? ' checked' : ''}>
+            <span class="tenant-name">${esc(t.name)}</span>
+          </label>
+        </li>`).join('')
+      : '<li class="block-sub">This building has no tenants yet — add them in Edificios (⚙).</li>';
+    return `
+      <div class="report-block tenant-enable-block">
+        <p class="generate-link-title"><strong>Tenants allowed to take this induction</strong></p>
+        <p class="block-sub">Uncheck a tenant to stop offering them this induction's link — their access to other inductions, and all of their history, are unaffected.</p>
+        <ul class="tenant-list">${rowsHtml}</ul>
+        <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+          <button class="btn secondary save-tenant-enable-btn">Save</button>
+        </div>
+        <p class="block-sub save-tenant-enable-status" style="margin-top:8px;">${esc(tenantEnableStatusByBuildingId[b.id] || '')}</p>
+      </div>`;
+  }
+
+  // Distribution: real links only (whole-building + tenant-scoped/expiring) for buildings
+  // already enrolled in the selected program. No tenant CRUD, no content configuration — just
+  // getting a link out the door.
+  function renderDistributionList(buildings){
+    const container = document.getElementById('distributionList');
+    if (buildings.length === 0){
+      container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet — enroll one in Enrolled Buildings first.</p>';
+      return;
+    }
+    container.innerHTML = buildings.map(b => {
+      const link = `${window.location.origin}/${currentProgram().file}?b=${b.id}`;
+      return `
+      <div class="report-block distribution-building-row" data-building-id="${b.id}">
+        <h3>${esc(b.name)}</h3>
+        <div class="building-link-row">
+          <code class="building-link-text">${link}</code>
+          <button class="btn secondary copy-link-btn" data-link="${link}">Copy link →</button>
+          <button class="btn secondary preview-link-btn" data-link="${link}">Preview →</button>
+        </div>
+        <div class="building-qr" data-link="${link}"></div>
+        ${renderDistributionLinksHtml(b)}
+      </div>
+    `;
+    }).join('');
 
     buildings.forEach(b => {
-      if (isBuildingExpanded(b)){
-        renderQrCode(b.id, `${window.location.origin}/${currentProgram().file}?b=${b.id}`);
-      }
+      renderQrCode(b.id, `${window.location.origin}/${currentProgram().file}?b=${b.id}`);
     });
   }
 
   function renderQrCode(buildingId, link){
-    const container = document.querySelector(`.building-row[data-building-id="${buildingId}"] .building-qr`);
+    const container = document.querySelector(`#distributionList [data-building-id="${buildingId}"] .building-qr`);
     if (!container || typeof qrcode !== 'function') return;
     const qr = qrcode(0, 'M');
     qr.addData(link);
@@ -5122,7 +5389,7 @@ try {
       nameInput.value = '';
       status.textContent = `Added "${name}".`;
       expandedBuildingIds.add(newBuildingId); // open it up right away — you almost always want to add tenants next
-      await loadBuildings();
+      await loadMasterBuildings();
     } catch (err){
       console.error('Failed to add building:', err);
       status.textContent = 'Failed to add building — check the console for details.';
@@ -5141,7 +5408,7 @@ try {
         createdAt: serverTimestamp(),
       });
       status.textContent = 'Enrolled.';
-      await loadBuildings();
+      await loadEnrolledData();
     } catch (err){
       console.error('Failed to enroll building:', err);
       status.textContent = 'Failed to enroll — check the console for details.';
@@ -5235,19 +5502,28 @@ try {
     return programsCache.find(p => p.id === currentProgramId) || programsCache[0];
   }
 
+  // No default selection (Sergio's explicit correction): the placeholder is only ever
+  // replaced by an actual choice from the change handler, never assumed here. Re-running this
+  // (e.g. after adding/archiving something in Catalog) keeps whatever was already selected if
+  // it still exists; it never silently substitutes a different program for it.
   async function refreshProgramSelector(){
     const programs = await loadPrograms();
     const hasRecycling = programs.some(p => p.id === 'recycling-sorting');
     const options = hasRecycling ? programs : [{ id: 'recycling-sorting', name: 'Recycling Sorting', file: 'recycling-training.html', kind: 'game', status: 'active' }, ...programs];
     programsCache = options;
     const select = document.getElementById('programSelector');
-    const previousValue = select.value || currentProgramId;
-    select.innerHTML = options.map(p =>
-      `<option value="${esc(p.id)}">${esc(p.name || p.id)}${p.status === 'archived' ? ' (archived)' : ''}</option>`
-    ).join('');
-    const stillExists = options.some(p => p.id === previousValue);
-    select.value = stillExists ? previousValue : 'recycling-sorting';
-    currentProgramId = select.value;
+    const previousValue = currentProgramId;
+    const stillExists = Boolean(previousValue) && options.some(p => p.id === previousValue);
+    select.innerHTML =
+      `<option value="" disabled${stillExists ? '' : ' selected'}>Select an induction…</option>` +
+      options.map(p =>
+        `<option value="${esc(p.id)}"${p.id === previousValue && stillExists ? ' selected' : ''}>${esc(p.name || p.id)}${p.status === 'archived' ? ' (archived)' : ''}</option>`
+      ).join('');
+    if (!stillExists){
+      currentProgramId = '';
+      document.getElementById('programTabs').style.display = 'none';
+      document.getElementById('viewingBadge').style.display = 'none';
+    }
   }
 
   function renderProgramsList(programs){
@@ -5330,6 +5606,31 @@ try {
     }
   });
 
+  // Shared, stateless — used by both Edificios inscritos' Preview button and Distribution's
+  // Preview/Copy buttons. Attached once at document level rather than duplicated per section.
+  document.addEventListener('click', async (e) => {
+    const previewBtn = e.target.closest('.preview-link-btn');
+    if (previewBtn){
+      window.open(`${previewBtn.dataset.link}&preview=1`, '_blank');
+      return;
+    }
+
+    const copyBtn = e.target.closest('.copy-link-btn');
+    if (copyBtn){
+      try {
+        await navigator.clipboard.writeText(copyBtn.dataset.link);
+        const original = copyBtn.textContent;
+        copyBtn.textContent = 'Copied ✓';
+        setTimeout(() => { copyBtn.textContent = original; }, 1500);
+      } catch (err){
+        console.error('Clipboard write failed:', err);
+        alert('Could not copy automatically — select and copy the link text manually.');
+      }
+      return;
+    }
+  });
+
+  // ---------------- ⚙ Edificios (master): building/tenant CRUD, program-agnostic ----------------
   document.getElementById('buildingsList').addEventListener('click', async (e) => {
     const addLevelRowBtn = e.target.closest('.add-level-row-btn');
     if (addLevelRowBtn){
@@ -5350,75 +5651,6 @@ try {
       if (expandedBuildingIds.has(buildingId)) expandedBuildingIds.delete(buildingId);
       else expandedBuildingIds.add(buildingId);
       refreshBuildingsView();
-      return;
-    }
-
-    const configureItemsBtn = e.target.closest('.configure-items-btn');
-    if (configureItemsBtn){
-      const buildingId = configureItemsBtn.closest('.building-row').dataset.buildingId;
-      const building = buildingsCache.find(b => b.id === buildingId);
-      editingItemsBuildingId = buildingId;
-      draftItemOverrides = JSON.parse(JSON.stringify((building && building.itemOverrides) || {}));
-      itemsEditorError = '';
-      refreshBuildingsView();
-      return;
-    }
-
-    const cancelItemsBtn = e.target.closest('.cancel-items-btn');
-    if (cancelItemsBtn){
-      editingItemsBuildingId = null;
-      draftItemOverrides = null;
-      itemsEditorError = '';
-      refreshBuildingsView();
-      return;
-    }
-
-    const resetItemsBtn = e.target.closest('.reset-items-btn');
-    if (resetItemsBtn){
-      draftItemOverrides = {};
-      itemsEditorError = '';
-      refreshBuildingsView();
-      return;
-    }
-
-    const quickMergeBtn = e.target.closest('.quick-merge-btn');
-    if (quickMergeBtn){
-      const row = quickMergeBtn.closest('.items-editor');
-      const fromStream = row.querySelector('.quick-merge-from').value;
-      const toStream = row.querySelector('.quick-merge-to').value;
-      if (fromStream === toStream){ alert('Choose two different streams to merge.'); return; }
-      Object.keys(catalog).forEach(id => {
-        // Only items actually active in the "from" stream get swept into the merge — an
-        // inactive item sitting there nominally isn't really "in" that stream for a trainee.
-        if (!effectiveActiveInDraft(id)) return;
-        if (effectiveStreamInDraft(id) !== fromStream) return;
-        setDraftOverride(id, toStream, effectiveAcceptableInDraft(id));
-      });
-      itemsEditorError = '';
-      refreshBuildingsView();
-      return;
-    }
-
-    const saveItemsBtn = e.target.closest('.save-items-btn');
-    if (saveItemsBtn){
-      const err = validateDraftOverrides();
-      if (err){ itemsEditorError = err; refreshBuildingsView(); return; }
-      try {
-        // updateDoc, NOT setDoc(..., {merge:true}) — merge:true recursively merges a nested
-        // map field instead of replacing it, so a removed item's old override would silently
-        // survive in Firestore even though the draft no longer has it. updateDoc replaces the
-        // whole itemOverrides map wholesale while leaving every other field untouched — found
-        // empirically (a dedicated diagnostic script against the emulator) when a "reset to
-        // default" test only cleared some items and not others.
-        await updateDoc(doc(db, 'enrollments', `recycling-sorting__${editingItemsBuildingId}`), { itemOverrides: draftItemOverrides });
-        editingItemsBuildingId = null;
-        draftItemOverrides = null;
-        itemsEditorError = '';
-        await loadBuildings();
-      } catch (err2){
-        console.error('Failed to save item-stream configuration:', err2);
-        alert('Failed to save — check the console for details.');
-      }
       return;
     }
 
@@ -5445,33 +5677,10 @@ try {
       try {
         await setDoc(doc(db, 'buildings', buildingId), { name: newName }, { merge: true });
         editingBuildingId = null;
-        await loadBuildings();
+        await loadMasterBuildings();
       } catch (err){
         console.error('Failed to rename building:', err);
         alert('Failed to save — check the console for details.');
-      }
-      return;
-    }
-
-    const removeEnrollmentBtn = e.target.closest('.remove-enrollment-btn');
-    if (removeEnrollmentBtn){
-      const buildingId = removeEnrollmentBtn.closest('.building-row').dataset.buildingId;
-      const building = buildingsCache.find(b => b.id === buildingId);
-      const confirmed = confirm(
-        `Remove "${building ? building.name : 'this building'}" from ${currentProgram().name}?\n\n` +
-        `New links for this program stop working for this building right away. Its configuration ` +
-        `and history are kept and come back automatically if it's re-enrolled later. Its enrollment ` +
-        `in any other induction is not affected.`
-      );
-      if (!confirmed) return;
-      try {
-        // Un-enroll is a soft-delete too (active:false on the enrollment doc, not a real
-        // delete) — same reasoning as "Delete building" below.
-        await updateDoc(doc(db, 'enrollments', `${currentProgramId}__${buildingId}`), { active: false });
-        await loadBuildings();
-      } catch (err){
-        console.error('Failed to remove enrollment:', err);
-        alert('Failed to remove — check the console for details.');
       }
       return;
     }
@@ -5483,9 +5692,10 @@ try {
       const tenantCount = building ? building.tenants.length : 0;
       const confirmed = confirm(
         `Delete "${building ? building.name : 'this building'}" and its ${tenantCount} tenant(s)?\n\n` +
-        `Every link/QR code you've shared for this building stops working immediately. Its data ` +
-        `and history (submissions, attempts, configuration) are NOT deleted — only hidden — but ` +
-        `there's no button yet to bring it back if you change your mind.`
+        `Every link/QR code you've shared for this building, in every induction it's enrolled in, ` +
+        `stops working immediately. Its data and history (submissions, attempts, configuration) ` +
+        `are NOT deleted — only hidden — but there's no button yet to bring it back if you change ` +
+        `your mind.`
       );
       if (!confirmed) return;
       try {
@@ -5494,7 +5704,7 @@ try {
         // nothing referencing it — historical submissions/attempts included — ever points at
         // a missing document; initIdGate() treats active:false the same as "not found".
         await updateDoc(doc(db, 'buildings', buildingId), { active: false });
-        await loadBuildings();
+        await loadMasterBuildings();
       } catch (err){
         console.error('Failed to delete building:', err);
         alert('Failed to delete — check the console for details.');
@@ -5529,7 +5739,7 @@ try {
       try {
         await setDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: newName, levels: newLevels });
         editingTenant = null;
-        await loadBuildings();
+        await loadMasterBuildings();
       } catch (err){
         console.error('Failed to update tenant:', err);
         alert('Failed to save — check the console for details.');
@@ -5550,72 +5760,10 @@ try {
       try {
         // Soft-delete, not a real delete — same reasoning as "Delete building" above.
         await updateDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { active: false });
-        await loadBuildings();
+        await loadMasterBuildings();
       } catch (err){
         console.error('Failed to delete tenant:', err);
         alert('Failed to delete — check the console for details.');
-      }
-      return;
-    }
-
-    const previewBtn = e.target.closest('.preview-link-btn');
-    if (previewBtn){
-      window.open(`${previewBtn.dataset.link}&preview=1`, '_blank');
-      return;
-    }
-
-    const copyBtn = e.target.closest('.copy-link-btn');
-    if (copyBtn){
-      try {
-        await navigator.clipboard.writeText(copyBtn.dataset.link);
-        const original = copyBtn.textContent;
-        copyBtn.textContent = 'Copied ✓';
-        setTimeout(() => { copyBtn.textContent = original; }, 1500);
-      } catch (err){
-        console.error('Clipboard write failed:', err);
-        alert('Could not copy automatically — select and copy the link text manually.');
-      }
-      return;
-    }
-
-    const generateLinkBtn = e.target.closest('.generate-link-btn');
-    if (generateLinkBtn){
-      const block = generateLinkBtn.closest('.generate-link-block');
-      const row = generateLinkBtn.closest('.building-row');
-      const buildingId = row.dataset.buildingId;
-      const tenantId = block.querySelector('.new-link-tenant').value || null;
-      const expiryDays = block.querySelector('.new-link-expiry').value;
-      const status = block.querySelector('.generate-link-status');
-      status.textContent = 'Generating…';
-      try {
-        const linkId = crypto.randomUUID();
-        const linkDoc = { programId: currentProgramId, buildingId, tenantId, createdAt: serverTimestamp() };
-        if (expiryDays) linkDoc.expiresAt = new Date(Date.now() + Number(expiryDays) * 24 * 60 * 60 * 1000);
-        await setDoc(doc(db, 'links', linkId), linkDoc);
-        status.textContent = 'Link generated.';
-        await loadBuildings();
-      } catch (err){
-        console.error('Failed to generate link:', err);
-        status.textContent = 'Failed to generate — check the console for details.';
-      }
-      return;
-    }
-
-    const revokeLinkBtn = e.target.closest('.revoke-link-btn');
-    if (revokeLinkBtn){
-      const linkId = revokeLinkBtn.closest('li').dataset.linkId;
-      const confirmed = confirm(
-        `Revoke this link?\n\n` +
-        `Anyone holding this exact link loses access right away. This can't be undone on this ` +
-        `same link, though you can generate a new one immediately.`
-      );
-      if (!confirmed) return;
-      try {
-        await updateDoc(doc(db, 'links', linkId), { expiresAt: new Date() });
-        await loadBuildings();
-      } catch (err){
-        console.error('Failed to revoke link:', err);
-        alert('Failed to revoke — check the console for details.');
       }
       return;
     }
@@ -5629,7 +5777,7 @@ try {
       if (!tenantName || levels.length === 0){ alert('Enter a tenant name and at least one level.'); return; }
       try {
         await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: tenantName, levels });
-        await loadBuildings(); // re-renders the whole tab, including a fresh blank "add tenant" form
+        await loadMasterBuildings(); // re-renders the whole tab, including a fresh blank "add tenant" form
       } catch (err){
         console.error('Failed to add tenant:', err);
         alert('Failed to add tenant — check the console for details.');
@@ -5663,7 +5811,7 @@ try {
         for (const t of toImport){
           await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: t.name, levels: t.levels });
         }
-        await loadBuildings();
+        await loadMasterBuildings();
       } catch (err){
         console.error('Bulk import failed:', err);
         alert('Import failed partway through — check the console for which tenants already got added before retrying.');
@@ -5672,38 +5820,202 @@ try {
     }
   });
 
+  // ---------------- Edificios inscritos: per-program enrollment + content + tenant access ----------------
+  document.getElementById('enrolledBuildingsList').addEventListener('click', async (e) => {
+    const toggleBtn = e.target.closest('.building-toggle-btn');
+    if (toggleBtn){
+      const buildingId = toggleBtn.closest('.enrolled-building-row').dataset.buildingId;
+      if (expandedEnrolledBuildingIds.has(buildingId)) expandedEnrolledBuildingIds.delete(buildingId);
+      else expandedEnrolledBuildingIds.add(buildingId);
+      refreshEnrolledBuildingsView();
+      return;
+    }
+
+    const configureItemsBtn = e.target.closest('.configure-items-btn');
+    if (configureItemsBtn){
+      const buildingId = configureItemsBtn.closest('.enrolled-building-row').dataset.buildingId;
+      const building = enrolledBuildingsCache.find(b => b.id === buildingId);
+      editingItemsBuildingId = buildingId;
+      draftItemOverrides = JSON.parse(JSON.stringify((building && building.itemOverrides) || {}));
+      itemsEditorError = '';
+      refreshEnrolledBuildingsView();
+      return;
+    }
+
+    const cancelItemsBtn = e.target.closest('.cancel-items-btn');
+    if (cancelItemsBtn){
+      editingItemsBuildingId = null;
+      draftItemOverrides = null;
+      itemsEditorError = '';
+      refreshEnrolledBuildingsView();
+      return;
+    }
+
+    const resetItemsBtn = e.target.closest('.reset-items-btn');
+    if (resetItemsBtn){
+      draftItemOverrides = {};
+      itemsEditorError = '';
+      refreshEnrolledBuildingsView();
+      return;
+    }
+
+    const quickMergeBtn = e.target.closest('.quick-merge-btn');
+    if (quickMergeBtn){
+      const row = quickMergeBtn.closest('.items-editor');
+      const fromStream = row.querySelector('.quick-merge-from').value;
+      const toStream = row.querySelector('.quick-merge-to').value;
+      if (fromStream === toStream){ alert('Choose two different streams to merge.'); return; }
+      Object.keys(catalog).forEach(id => {
+        // Only items actually active in the "from" stream get swept into the merge — an
+        // inactive item sitting there nominally isn't really "in" that stream for a trainee.
+        if (!effectiveActiveInDraft(id)) return;
+        if (effectiveStreamInDraft(id) !== fromStream) return;
+        setDraftOverride(id, toStream, effectiveAcceptableInDraft(id));
+      });
+      itemsEditorError = '';
+      refreshEnrolledBuildingsView();
+      return;
+    }
+
+    const saveItemsBtn = e.target.closest('.save-items-btn');
+    if (saveItemsBtn){
+      const err = validateDraftOverrides();
+      if (err){ itemsEditorError = err; refreshEnrolledBuildingsView(); return; }
+      try {
+        // updateDoc, NOT setDoc(..., {merge:true}) — merge:true recursively merges a nested
+        // map field instead of replacing it, so a removed item's old override would silently
+        // survive in Firestore even though the draft no longer has it. updateDoc replaces the
+        // whole itemOverrides map wholesale while leaving every other field untouched — found
+        // empirically (a dedicated diagnostic script against the emulator) when a "reset to
+        // default" test only cleared some items and not others.
+        await updateDoc(doc(db, 'enrollments', `recycling-sorting__${editingItemsBuildingId}`), { itemOverrides: draftItemOverrides });
+        editingItemsBuildingId = null;
+        draftItemOverrides = null;
+        itemsEditorError = '';
+        await loadEnrolledData();
+      } catch (err2){
+        console.error('Failed to save item-stream configuration:', err2);
+        alert('Failed to save — check the console for details.');
+      }
+      return;
+    }
+
+    const removeEnrollmentBtn = e.target.closest('.remove-enrollment-btn');
+    if (removeEnrollmentBtn){
+      const buildingId = removeEnrollmentBtn.closest('.enrolled-building-row').dataset.buildingId;
+      const building = enrolledBuildingsCache.find(b => b.id === buildingId);
+      const confirmed = confirm(
+        `Remove "${building ? building.name : 'this building'}" from ${currentProgram().name}?\n\n` +
+        `New links for this program stop working for this building right away. Its configuration ` +
+        `and history are kept and come back automatically if it's re-enrolled later. Its enrollment ` +
+        `in any other induction is not affected.`
+      );
+      if (!confirmed) return;
+      try {
+        // Un-enroll is a soft-delete too (active:false on the enrollment doc, not a real
+        // delete) — same reasoning as "Delete building" in Edificios.
+        await updateDoc(doc(db, 'enrollments', `${currentProgramId}__${buildingId}`), { active: false });
+        await loadEnrolledData();
+      } catch (err){
+        console.error('Failed to remove enrollment:', err);
+        alert('Failed to remove — check the console for details.');
+      }
+      return;
+    }
+
+    const saveTenantEnableBtn = e.target.closest('.save-tenant-enable-btn');
+    if (saveTenantEnableBtn){
+      const row = saveTenantEnableBtn.closest('.enrolled-building-row');
+      const buildingId = row.dataset.buildingId;
+      const building = enrolledBuildingsCache.find(b => b.id === buildingId);
+      const checkboxes = [...row.querySelectorAll('.tenant-enable-checkbox')];
+      const wasEnabled = (tenantId) => !Array.isArray(building.enabledTenantIds) || building.enabledTenantIds.includes(tenantId);
+      const newlyDisabledNames = checkboxes
+        .filter(c => !c.checked && wasEnabled(c.dataset.tenantId))
+        .map(c => (building.tenants.find(t => t.id === c.dataset.tenantId) || {}).name)
+        .filter(Boolean);
+      if (newlyDisabledNames.length){
+        const confirmed = confirm(
+          `Disable this induction for ${newlyDisabledNames.join(', ')}?\n\n` +
+          `People from ${newlyDisabledNames.length === 1 ? 'that tenant' : 'those tenants'} immediately ` +
+          `lose access to this induction's link. Re-enabling is instant and has no side effects.`
+        );
+        if (!confirmed) return;
+      }
+      const status = row.querySelector('.save-tenant-enable-status');
+      status.textContent = 'Saving…';
+      try {
+        const checkedIds = checkboxes.filter(c => c.checked).map(c => c.dataset.tenantId);
+        // 3-state model (see the multi-program plan): every tenant checked -> null (the clean
+        // "no restriction" default, not a redundant full array); none checked -> [] (explicitly
+        // paused for everyone); otherwise the array of checked tenant ids.
+        const value = checkedIds.length === building.tenants.length ? null : checkedIds;
+        await updateDoc(doc(db, 'enrollments', `${currentProgramId}__${buildingId}`), { enabledTenantIds: value });
+        status.textContent = 'Saved.';
+        // Real bug found in testing: loadEnrolledData() fully re-renders #enrolledBuildingsList
+        // right after this, which would otherwise wipe the "Saved." text we just set (a fresh
+        // renderTenantEnableChecklistHtml() starts with a blank status paragraph every time) —
+        // the confirmation was never actually visible to an admin. Stash it in JS state first so
+        // the re-render picks it back up, same fix as itemsEditorError uses for the same problem.
+        tenantEnableStatusByBuildingId[buildingId] = 'Saved.';
+        await loadEnrolledData();
+      } catch (err){
+        console.error('Failed to save tenant access:', err);
+        status.textContent = 'Failed to save — check the console for details.';
+        tenantEnableStatusByBuildingId[buildingId] = 'Failed to save — check the console for details.';
+      }
+      return;
+    }
+  });
+
+  // ---------------- Distribution: real links only ----------------
+  document.getElementById('distributionList').addEventListener('click', async (e) => {
+    const generateLinkBtn = e.target.closest('.generate-link-btn');
+    if (generateLinkBtn){
+      const block = generateLinkBtn.closest('.generate-link-block');
+      const row = generateLinkBtn.closest('.distribution-building-row');
+      const buildingId = row.dataset.buildingId;
+      const tenantId = block.querySelector('.new-link-tenant').value || null;
+      const expiryDays = block.querySelector('.new-link-expiry').value;
+      const status = block.querySelector('.generate-link-status');
+      status.textContent = 'Generating…';
+      try {
+        const linkId = crypto.randomUUID();
+        const linkDoc = { programId: currentProgramId, buildingId, tenantId, createdAt: serverTimestamp() };
+        if (expiryDays) linkDoc.expiresAt = new Date(Date.now() + Number(expiryDays) * 24 * 60 * 60 * 1000);
+        await setDoc(doc(db, 'links', linkId), linkDoc);
+        status.textContent = 'Link generated.';
+        await loadEnrolledData();
+      } catch (err){
+        console.error('Failed to generate link:', err);
+        status.textContent = 'Failed to generate — check the console for details.';
+      }
+      return;
+    }
+
+    const revokeLinkBtn = e.target.closest('.revoke-link-btn');
+    if (revokeLinkBtn){
+      const linkId = revokeLinkBtn.closest('li').dataset.linkId;
+      const confirmed = confirm(
+        `Revoke this link?\n\n` +
+        `Anyone holding this exact link loses access right away. This can't be undone on this ` +
+        `same link, though you can generate a new one immediately.`
+      );
+      if (!confirmed) return;
+      try {
+        await updateDoc(doc(db, 'links', linkId), { expiresAt: new Date() });
+        await loadEnrolledData();
+      } catch (err){
+        console.error('Failed to revoke link:', err);
+        alert('Failed to revoke — check the console for details.');
+      }
+      return;
+    }
+  });
+
+  // ⚙ Edificios (master) again — tenant-levels editor + bulk Excel import, both only ever
+  // shown inside #buildingsList, never inside Edificios inscritos.
   document.getElementById('buildingsList').addEventListener('change', async (e) => {
-    const activeToggle = e.target.closest('.item-active-toggle');
-    if (activeToggle){
-      setDraftActive(activeToggle.dataset.itemId, activeToggle.checked);
-      itemsEditorError = '';
-      refreshBuildingsView();
-      return;
-    }
-
-    const itemStreamSelect = e.target.closest('.item-stream-select');
-    if (itemStreamSelect){
-      const itemId = itemStreamSelect.dataset.itemId;
-      setDraftOverride(itemId, itemStreamSelect.value, effectiveAcceptableInDraft(itemId));
-      itemsEditorError = '';
-      refreshBuildingsView();
-      return;
-    }
-
-    const acceptableCheckbox = e.target.closest('.item-acceptable-checkbox');
-    if (acceptableCheckbox){
-      const itemId = acceptableCheckbox.dataset.itemId;
-      const stream = acceptableCheckbox.value;
-      const current = effectiveAcceptableInDraft(itemId);
-      const updated = acceptableCheckbox.checked
-        ? [...new Set([...current, stream])]
-        : current.filter(s => s !== stream);
-      setDraftOverride(itemId, effectiveStreamInDraft(itemId), updated);
-      itemsEditorError = '';
-      refreshBuildingsView();
-      return;
-    }
-
     const levelTypeSelect = e.target.closest('.level-type-select');
     if (levelTypeSelect){
       const row = levelTypeSelect.closest('.level-row');
@@ -5730,25 +6042,67 @@ try {
     input.value = '';
   });
 
-  // Three tabs, one visible section at a time — showTab() is the single place that knows how
-  // to switch between them, so tabReportsBtn/tabBuildingsBtn/tabAdminsBtn and the sign-in
-  // success handler all stay in sync instead of each toggling display/active by hand.
+  document.getElementById('enrolledBuildingsList').addEventListener('change', (e) => {
+    const activeToggle = e.target.closest('.item-active-toggle');
+    if (activeToggle){
+      setDraftActive(activeToggle.dataset.itemId, activeToggle.checked);
+      itemsEditorError = '';
+      refreshEnrolledBuildingsView();
+      return;
+    }
+
+    const itemStreamSelect = e.target.closest('.item-stream-select');
+    if (itemStreamSelect){
+      const itemId = itemStreamSelect.dataset.itemId;
+      setDraftOverride(itemId, itemStreamSelect.value, effectiveAcceptableInDraft(itemId));
+      itemsEditorError = '';
+      refreshEnrolledBuildingsView();
+      return;
+    }
+
+    const acceptableCheckbox = e.target.closest('.item-acceptable-checkbox');
+    if (acceptableCheckbox){
+      const itemId = acceptableCheckbox.dataset.itemId;
+      const stream = acceptableCheckbox.value;
+      const current = effectiveAcceptableInDraft(itemId);
+      const updated = acceptableCheckbox.checked
+        ? [...new Set([...current, stream])]
+        : current.filter(s => s !== stream);
+      setDraftOverride(itemId, effectiveStreamInDraft(itemId), updated);
+      itemsEditorError = '';
+      refreshEnrolledBuildingsView();
+      return;
+    }
+  });
+
+  // Six possible sections, one visible at a time — showTab() is the single place that knows
+  // how to switch between any of them. Reports/Enrolled Buildings/Distribution are scoped to
+  // whichever induction is selected above (only reachable once one is); Buildings/Admins/
+  // Catalog (the ⚙ menu) are program-agnostic and reachable any time after sign-in.
+  const ALL_TABS = {
+    reports: { btn: 'tabReportsBtn', section: 'reportSection' },
+    enrolledBuildings: { btn: 'tabEnrolledBuildingsBtn', section: 'enrolledBuildingsSection' },
+    distribution: { btn: 'tabDistributionBtn', section: 'distributionSection' },
+    buildings: { btn: 'tabBuildingsBtn', section: 'buildingsSection' },
+    admins: { btn: 'tabAdminsBtn', section: 'adminsSection' },
+    catalog: { btn: 'tabCatalogBtn', section: 'catalogSection' },
+  };
   function showTab(tabName){
-    const tabs = { reports: 'tabReportsBtn', buildings: 'tabBuildingsBtn', admins: 'tabAdminsBtn', catalog: 'tabCatalogBtn' };
-    const sections = { reports: 'reportSection', buildings: 'buildingsSection', admins: 'adminsSection', catalog: 'catalogSection' };
-    Object.keys(tabs).forEach(name => {
-      document.getElementById(tabs[name]).classList.toggle('active', name === tabName);
-      document.getElementById(sections[name]).style.display = name === tabName ? 'block' : 'none';
+    Object.keys(ALL_TABS).forEach(name => {
+      const { btn, section } = ALL_TABS[name];
+      document.getElementById(btn).classList.toggle('active', name === tabName);
+      document.getElementById(section).style.display = name === tabName ? 'block' : 'none';
     });
   }
-  document.getElementById('tabReportsBtn').addEventListener('click', () => { showTab('reports'); closeSettingsMenu(); });
+  document.getElementById('tabReportsBtn').addEventListener('click', () => showTab('reports'));
+  document.getElementById('tabEnrolledBuildingsBtn').addEventListener('click', () => showTab('enrolledBuildings'));
+  document.getElementById('tabDistributionBtn').addEventListener('click', () => showTab('distribution'));
   document.getElementById('tabBuildingsBtn').addEventListener('click', () => { showTab('buildings'); closeSettingsMenu(); });
   document.getElementById('tabAdminsBtn').addEventListener('click', () => { showTab('admins'); closeSettingsMenu(); });
   document.getElementById('tabCatalogBtn').addEventListener('click', () => { showTab('catalog'); refreshProgramSelector(); closeSettingsMenu(); });
 
   // Buildings/Admins/Catalog live inside this small ⚙ menu (Sergio's own design, see the
-  // multi-program plan) — Reports stays the one always-visible tab since it's the daily-use
-  // view; the other three are lower-frequency admin/config actions.
+  // multi-program plan) — program-agnostic, reachable regardless of what's selected above.
   function closeSettingsMenu(){ document.getElementById('settingsMenu').style.display = 'none'; }
   document.getElementById('settingsBtn').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -5760,13 +6114,22 @@ try {
     if (!wrap.contains(e.target)) closeSettingsMenu();
   });
 
-  // Reports and Buildings are both scoped by the selector (see the multi-program plan) —
-  // switching it re-fetches Reports with the new programId filter and reloads Buildings to
-  // show only what's enrolled in the newly-selected program.
+  function updateViewingBadge(){
+    const badge = document.getElementById('viewingBadge');
+    badge.textContent = `Viewing: ${currentProgram().name}`;
+    badge.style.display = 'inline-block';
+  }
+
+  // Nothing is shown until a real induction is picked — no default selection, no data, per
+  // Sergio's explicit correction. The placeholder option has no value, so this only ever
+  // fires with a real programId.
   document.getElementById('programSelector').addEventListener('change', async (e) => {
     currentProgramId = e.target.value;
+    if (!currentProgramId) return;
+    updateViewingBadge();
+    document.getElementById('programTabs').style.display = 'flex';
+    showTab('reports');
     await loadLiveData();
-    await loadBuildings();
   });
 
   document.getElementById('signInBtn').addEventListener('click', async () => {
@@ -5812,10 +6175,22 @@ try {
     onAuthStateChanged(auth, (user) => {
       document.getElementById('signInBtn').style.display = user ? 'none' : 'inline-flex';
       document.getElementById('signOutBtn').style.display = user ? 'inline-flex' : 'none';
+      document.getElementById('settingsBtn').style.display = user ? 'inline-flex' : 'none';
       if (user){
+        // The whole sign-in box, not just its buttons, goes away on sign-in — this is the
+        // literal "giant box in the middle of the page" Sergio flagged; moving Sign out/Load
+        // sample data out of it (see #cornerSettings) didn't fix that on its own.
+        document.getElementById('authZone').style.display = 'none';
         document.getElementById('showEmailSignInBtn').style.display = 'none';
         document.getElementById('emailSignInForm').style.display = 'none';
-        loadLiveData();
+        // Sign-in only readies the page for a choice — it never picks a program or loads any
+        // data on its own (Sergio's explicit correction: no default induction, no "Overview of
+        // what?"). programSelector starts on its own disabled placeholder; nothing below it
+        // renders until the change handler fires with a real selection.
+        document.getElementById('programSelectorRow').style.display = 'flex';
+        refreshProgramSelector();
+        loadMasterBuildings();
+        loadAdmins();
       }
       else {
         // Real names/emails/scores were on screen the moment before this — signing out has to
@@ -5824,22 +6199,32 @@ try {
         // populated after sign-out, which anyone at the same screen could still read.
         isLiveData = false;
         allRows = []; currentRows = []; allAttempts = [];
+        document.getElementById('authZone').style.display = '';
         document.getElementById('authStatus').textContent = 'Sign in with an authorized account to load live results.';
         // Reset the email form back to its collapsed state, and never leave a typed password
         // sitting visible on screen after signing out.
         document.getElementById('emailSignInForm').style.display = 'none';
         document.getElementById('emailSignInForm').reset();
         document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';
-        document.getElementById('adminTabs').style.display = 'none';
+        closeSettingsMenu();
+        document.getElementById('settingsBtn').style.display = 'none';
+        document.getElementById('programTabs').style.display = 'none';
         document.getElementById('programSelectorRow').style.display = 'none';
         document.getElementById('programSelector').innerHTML = '';
-        currentProgramId = 'recycling-sorting';
+        document.getElementById('viewingBadge').style.display = 'none';
+        document.getElementById('viewingBadge').textContent = '';
+        currentProgramId = '';
         document.getElementById('adminsSection').style.display = 'none';
         document.getElementById('adminsList').innerHTML = '';
         document.getElementById('buildingsSection').style.display = 'none';
         document.getElementById('buildingsList').innerHTML = '';
+        document.getElementById('enrolledBuildingsSection').style.display = 'none';
+        document.getElementById('enrolledBuildingsList').innerHTML = '';
         document.getElementById('enrollBuildingSelect').innerHTML = '<option value="">Select a building…</option>';
+        enrolledBuildingsCache = [];
         allBuildingsCache = [];
+        document.getElementById('distributionSection').style.display = 'none';
+        document.getElementById('distributionList').innerHTML = '';
         document.getElementById('catalogSection').style.display = 'none';
         document.getElementById('programsList').innerHTML = '';
         document.getElementById('reportSection').style.display = 'none';
@@ -5854,6 +6239,8 @@ try {
         // would set reportSection back to display:block, undoing the hide two lines above and
         // reintroducing the exact post-sign-out data-visibility bug fixed earlier this project.
         document.getElementById('tabReportsBtn').classList.add('active');
+        document.getElementById('tabEnrolledBuildingsBtn').classList.remove('active');
+        document.getElementById('tabDistributionBtn').classList.remove('active');
         document.getElementById('tabBuildingsBtn').classList.remove('active');
         document.getElementById('tabAdminsBtn').classList.remove('active');
         document.getElementById('tabCatalogBtn').classList.remove('active');
@@ -5861,8 +6248,16 @@ try {
     });
   }
 
+  // Works whether signed in or not, and regardless of whether a program is selected yet
+  // (currentProgram() falls back to Recycling when nothing's selected) — this is a standalone
+  // demo feature, not part of the sign-in-gated admin flow.
   document.getElementById('loadSampleBtn').addEventListener('click', () => {
-    const { rows, attempts } = generateSampleData();
+    showTab('reports');
+    const program = currentProgram();
+    const generator = program.id === 'organics-focus' ? generateOrganicsSampleData
+      : program.id === 'battery-disposal' ? generateBatterySampleData
+      : generateSampleData;
+    const { rows, attempts } = generator();
     loadRows(rows, attempts, 'Sample / preview data — not real submissions', false);
     document.getElementById('reportSection').scrollIntoView({behavior:'smooth', block:'start'});
   });
