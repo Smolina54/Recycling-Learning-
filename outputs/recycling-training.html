@@ -205,7 +205,11 @@
   .detail-nav{display:flex; justify-content:space-between; margin-top:20px;}
 
   /* ---------- Quiz section ---------- */
-  .quiz-section{padding:70px 0 90px; border-top:1px solid var(--line); margin-top:20px;}
+  /* padding-top/bottom only, deliberately NOT the shorthand — this section also carries the
+     shared .wrap class for its 24px side padding; a shorthand `padding` here would win the
+     cascade (same specificity, defined later) and silently zero out wrap's horizontal padding,
+     which is exactly what made the game board sit flush against the screen edge on mobile. */
+  .quiz-section{padding-top:70px; padding-bottom:90px; border-top:1px solid var(--line); margin-top:20px;}
   .quiz-intro{text-align:left; max-width:600px;}
   .quiz-intro h2, .quiz-card h2{font-family:var(--display); text-transform:uppercase; font-size:32px; margin:0 0 12px;}
   .quiz-meta{display:flex; gap:22px; margin:26px 0 30px; font-family:var(--mono); font-size:12px; color:var(--ink-soft); letter-spacing:0.05em;}
