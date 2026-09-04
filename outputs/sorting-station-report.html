@@ -2748,6 +2748,21 @@ var qrcode = function() {
       <h2 id="reportTitle">Overview</h2>
       <div class="source-note" id="sourceNote"></div>
       <button class="btn secondary" id="previewTrainingBtn" style="margin-left:auto;">Preview the training →</button>
+      <button class="btn secondary" id="demoTrainingBtn">Demo →</button>
+    </div>
+
+    <!-- Short (2 correct + 2 decoy items per stream) version of Recycling Sorting for live
+         presentations — someone can play it end-to-end in under a minute. Same ?preview=1
+         write-skipping as the full Preview button, plus a QR so attendees can scan it on their
+         own phone during a demo/stand rather than everyone crowding one screen. -->
+    <div class="report-block" id="demoQrBlock" style="display:none;">
+      <h3>Demo link — for live presentations</h3>
+      <p class="block-sub">A short version of Recycling Sorting: 2 correct items + 2 decoys per stream instead of 5 — playable in under a minute. Nothing is saved, same as Preview.</p>
+      <div class="building-link-row">
+        <code class="building-link-text" id="demoLinkText"></code>
+        <button class="btn secondary copy-link-btn" id="copyDemoLinkBtn" data-link="">Copy link →</button>
+      </div>
+      <div class="building-qr" id="demoQrContainer"></div>
     </div>
 
     <div class="report-block" id="filterBlock" style="display:none;">
@@ -5327,13 +5342,15 @@ try {
     });
   }
 
-  function renderQrCode(buildingId, link){
-    const container = document.querySelector(`#distributionList [data-building-id="${buildingId}"] .building-qr`);
+  function renderQrInto(container, link){
     if (!container || typeof qrcode !== 'function') return;
     const qr = qrcode(0, 'M');
     qr.addData(link);
     qr.make();
     container.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2 });
+  }
+  function renderQrCode(buildingId, link){
+    renderQrInto(document.querySelector(`#distributionList [data-building-id="${buildingId}"] .building-qr`), link);
   }
 
   // Building-name column value from a "collection point" style export (e.g. "KPMG - Level 36 - Office")
@@ -6320,6 +6337,19 @@ try {
   // recycling-training.html?preview=1 with no ?b= skips the id-gate entirely for this case.
   document.getElementById('previewTrainingBtn').addEventListener('click', () => {
     window.open(`${pageBaseUrl()}recycling-training.html?preview=1`, '_blank');
+  });
+
+  // Toggles the QR block open/closed rather than opening the demo itself — this button is
+  // meant to stay up on a shared screen during a live presentation while people scan it, unlike
+  // Preview above which is a one-person, one-click lookup.
+  document.getElementById('demoTrainingBtn').addEventListener('click', () => {
+    const block = document.getElementById('demoQrBlock');
+    if (block.style.display !== 'none'){ block.style.display = 'none'; return; }
+    const link = `${pageBaseUrl()}recycling-training.html?demo=1`;
+    document.getElementById('demoLinkText').textContent = link;
+    document.getElementById('copyDemoLinkBtn').dataset.link = link;
+    renderQrInto(document.getElementById('demoQrContainer'), link);
+    block.style.display = 'block';
   });
 })();
 </script>

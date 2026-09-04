@@ -755,7 +755,14 @@ try {
   // ?preview=1 (from the admin report's "Preview" buttons) — the full real flow runs as
   // normal, but nothing ever gets written to Firestore, so an admin trying it out never
   // pollutes real completion data or drop-off stats.
-  const isPreviewMode = new URLSearchParams(window.location.search).get('preview') === '1';
+  //
+  // ?demo=1 (from the report's "Demo" button, for live presentations) is preview mode plus one
+  // more thing: only 2 correct items + 2 decoys per stream instead of 5, so a whole run takes
+  // under a minute — see the demo-trimming block in initIdGate() below. It implies preview mode
+  // rather than duplicating the "never write to Firestore" behavior separately.
+  const isDemoMode = new URLSearchParams(window.location.search).get('demo') === '1';
+  const isPreviewMode = isDemoMode || new URLSearchParams(window.location.search).get('preview') === '1';
+  if (isDemoMode) document.getElementById('previewBanner').textContent = 'Demo mode — a shorter version, just for trying it out. Nothing is saved.';
   if (isPreviewMode) document.getElementById('previewBanner').style.display = 'block';
 
   // ---------------- Identification gate ----------------
@@ -843,6 +850,20 @@ try {
       itemOverrides = {}; hasOverrides = false;
       applyEffectiveStreams(itemOverrides);
       currentDecoyMap = decoyMap;
+      // Demo mode: cap decoys to the first 2 per stream (catalog order) instead of 5 — the
+      // results screen's `total` (allResults.length via freshResults(), read below) picks this
+      // up automatically. Correct-item capping happens separately in correctItemsForStream(),
+      // NOT by trimming `items` itself here — items still has to hold every item, since a demo
+      // decoy is, by definition, some OTHER stream's correct item, and itemById() (used to
+      // resolve each decoy id below) only ever searches `items`. Removing an item from `items`
+      // for not making its own stream's cut would break resolving it as a decoy elsewhere,
+      // silently leaving that decoy off the board — the first version of this fix did exactly
+      // that (caught by a manual board-item-count check before shipping).
+      if (isDemoMode){
+        const trimmedDecoyMap = {};
+        streams.forEach(s => { trimmedDecoyMap[s] = decoyMap[s].slice(0, 2); });
+        currentDecoyMap = trimmedDecoyMap;
+      }
       allResults = freshResults();
       applyBuildingNotes();
       siteContext.buildingId = 'preview'; siteContext.buildingName = 'Preview';
@@ -2648,8 +2669,16 @@ try {
     });
   }
 
+  // Demo mode shows only the first 2 correct items per stream (catalog order) instead of the
+  // full set — everywhere else that needs "the correct items for this stream" (the board itself,
+  // and phaseCorrectTarget below) goes through this one function so both always agree.
+  function correctItemsForStream(stream){
+    const all = items.filter(it => it.stream === stream || it.acceptable.includes(stream));
+    return isDemoMode ? all.slice(0, 2) : all;
+  }
+
   function buildBoard(stream){
-    const correct = items.filter(it => it.stream === stream || it.acceptable.includes(stream));
+    const correct = correctItemsForStream(stream);
     const decoys = currentDecoyMap[stream].map(itemById);
     return shuffle([...correct, ...decoys]);
   }
@@ -2676,7 +2705,7 @@ try {
     sortedCount = 0;
     phaseLocked = false;
     const stream = streams[idx];
-    phaseCorrectTarget = items.filter(it => it.stream === stream || it.acceptable.includes(stream)).length;
+    phaseCorrectTarget = correctItemsForStream(stream).length;
 
     document.getElementById('phaseLabel').textContent = `Phase ${idx+1} of 5 — ${streamNames[stream]}`;
     document.getElementById('phaseCounter').textContent = `Sorted 0 of ${phaseCorrectTarget}`;
