@@ -6091,12 +6091,12 @@ try {
   // whichever induction is selected above (only reachable once one is); Buildings/Admins/
   // Catalog (the ⚙ menu) are program-agnostic and reachable any time after sign-in.
   const ALL_TABS = {
-    reports: { btn: 'tabReportsBtn', section: 'reportSection' },
-    enrolledBuildings: { btn: 'tabEnrolledBuildingsBtn', section: 'enrolledBuildingsSection' },
-    distribution: { btn: 'tabDistributionBtn', section: 'distributionSection' },
-    buildings: { btn: 'tabBuildingsBtn', section: 'buildingsSection' },
-    admins: { btn: 'tabAdminsBtn', section: 'adminsSection' },
-    catalog: { btn: 'tabCatalogBtn', section: 'catalogSection' },
+    reports: { btn: 'tabReportsBtn', section: 'reportSection', scoped: true },
+    enrolledBuildings: { btn: 'tabEnrolledBuildingsBtn', section: 'enrolledBuildingsSection', scoped: true },
+    distribution: { btn: 'tabDistributionBtn', section: 'distributionSection', scoped: true },
+    buildings: { btn: 'tabBuildingsBtn', section: 'buildingsSection', scoped: false },
+    admins: { btn: 'tabAdminsBtn', section: 'adminsSection', scoped: false },
+    catalog: { btn: 'tabCatalogBtn', section: 'catalogSection', scoped: false },
   };
   function showTab(tabName){
     Object.keys(ALL_TABS).forEach(name => {
@@ -6104,6 +6104,20 @@ try {
       document.getElementById(btn).classList.toggle('active', name === tabName);
       document.getElementById(section).style.display = name === tabName ? 'block' : 'none';
     });
+    // Buildings/Admins/Catalog (the ⚙ menu) are program-agnostic — nothing in them relates to
+    // whichever induction happens to be selected above. Leaving the induction-scoped tab bar
+    // and "Viewing: X" badge on screen while looking at one of these made it look like you were
+    // still inside that induction's data (real user confusion: "no sé si estoy en el menú de
+    // administración o en el de la inducción"). Hide both, and swap in a distinct settings
+    // badge, whenever the active tab isn't induction-scoped; restore them when it is again.
+    const isScoped = ALL_TABS[tabName].scoped;
+    document.getElementById('programTabs').style.display = isScoped ? 'flex' : 'none';
+    if (isScoped) updateViewingBadge();
+    else {
+      const badge = document.getElementById('viewingBadge');
+      badge.textContent = '⚙ Settings (all inductions)';
+      badge.style.display = 'inline-block';
+    }
   }
   document.getElementById('tabReportsBtn').addEventListener('click', () => showTab('reports'));
   document.getElementById('tabEnrolledBuildingsBtn').addEventListener('click', () => showTab('enrolledBuildings'));
@@ -6137,8 +6151,9 @@ try {
   document.getElementById('programSelector').addEventListener('change', async (e) => {
     currentProgramId = e.target.value;
     if (!currentProgramId) return;
-    updateViewingBadge();
-    document.getElementById('programTabs').style.display = 'flex';
+    // showTab('reports') itself now shows #programTabs and calls updateViewingBadge() (both
+    // tied to the tab's own scoped:true), since it has to do the same for every other switch
+    // between a scoped and an un-scoped tab — no need to duplicate either call here too.
     showTab('reports');
     await loadLiveData();
   });
