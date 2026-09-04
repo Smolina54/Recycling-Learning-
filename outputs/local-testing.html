@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Local testing links</title>
+<style>
+  body { font-family: sans-serif; max-width: 640px; margin: 40px auto; line-height: 1.5; }
+  a { display: block; padding: 12px 16px; margin: 8px 0; background: #eef; border-radius: 8px; text-decoration: none; color: #114; font-weight: bold; }
+  a:hover { background: #ddf; }
+  code { background: #eee; padding: 2px 6px; border-radius: 4px; }
+  .note { color: #555; font-size: 14px; }
+</style>
+</head>
+<body>
+  <h2>Recycling Training — local emulator testing</h2>
+  <!-- Dev-only helper, same pattern as icon-audit.html: lives in outputs/ so it's a stable
+       bookmarkable path, but listed in firebase.json's hosting.ignore so it never deploys. -->
+  <p class="note">Requires the Firestore + Auth emulators running locally (<code>firebase emulators:start --only firestore,auth</code>). These links already include <code>?emulator=1</code>, so you never have to type it by hand.</p>
+
+  <a href="sorting-station-report.html?emulator=1">Admin panel</a>
+  <p class="note">Sign in with email: <code>esgtradeflex@gmail.com</code> / <code>probando123</code> (this test account only exists in the local emulator, never in production).</p>
+
+  <a href="recycling-training.html?emulator=1&preview=1">Recycling Sorting (preview, no building needed)</a>
+  <a href="organics-training.html?emulator=1&preview=1">Organics Focus (preview, no building needed)</a>
+  <a href="battery-training.html?emulator=1&preview=1">Battery Disposal (preview, no building needed)</a>
+
+  <p class="note">Nothing here touches production data. Bookmark this page — reopen it any time the emulators are running instead of asking for the links again.</p>
+</body>
+</html>

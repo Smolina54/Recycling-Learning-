@@ -5,6 +5,7 @@
       "firebase.json",
       "**/.*",
       "icon-audit.html",
+      "local-testing.html",
       "*.docx"
     ]
   },
