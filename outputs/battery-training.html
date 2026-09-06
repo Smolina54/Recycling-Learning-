@@ -205,7 +205,10 @@
   .detail-nav{display:flex; justify-content:space-between; margin-top:20px;}
 
   /* ---------- Quiz section ---------- */
-  .quiz-section{padding:70px 0 90px; border-top:1px solid var(--line); margin-top:20px;}
+  /* padding-top/bottom only — this section also carries the shared .wrap class for its 24px
+     side padding; a shorthand `padding` here would win the cascade (same specificity, defined
+     later) and silently zero out wrap's horizontal padding. Same bug/fix as recycling-training.html. */
+  .quiz-section{padding-top:70px; padding-bottom:90px; border-top:1px solid var(--line); margin-top:20px;}
   .quiz-intro{text-align:left; max-width:600px;}
   .quiz-intro h2, .quiz-card h2{font-family:var(--display); text-transform:uppercase; font-size:32px; margin:0 0 12px;}
   .quiz-meta{display:flex; gap:22px; margin:26px 0 30px; font-family:var(--mono); font-size:12px; color:var(--ink-soft); letter-spacing:0.05em;}
@@ -356,7 +359,8 @@
   .item-thumb svg, .item-thumb img{width:100%; height:100%; object-fit:contain;}
   .results-actions{display:flex; gap:12px; flex-wrap:wrap;}
 
-  footer{padding:30px 0 50px; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; color:var(--ink-soft); letter-spacing:0.04em;}
+  /* padding-top/bottom only — same reasoning as .quiz-section above (.wrap-shorthand collision). */
+  footer{padding-top:30px; padding-bottom:50px; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; color:var(--ink-soft); letter-spacing:0.04em;}
 </style>
 </head>
 <body>
