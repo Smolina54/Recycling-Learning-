@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "ask": [
+      "Edit",
+      "Write",
+      "Bash"
+    ]
+  }
+}

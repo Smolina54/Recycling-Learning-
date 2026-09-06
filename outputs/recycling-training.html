@@ -349,7 +349,11 @@
   .item-thumb svg, .item-thumb img{width:100%; height:100%; object-fit:contain;}
   .results-actions{display:flex; gap:12px; flex-wrap:wrap;}
 
-  footer{padding:30px 0 50px; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; color:var(--ink-soft); letter-spacing:0.04em;}
+  /* padding-top/bottom only — same reasoning as .quiz-section above: this element also carries
+     .wrap for its 24px side padding, and .wrap (a class) beats a bare tag selector like `footer`
+     regardless of source order, so a shorthand `padding` here would silently zero out its own
+     top/bottom values instead of the other way around. */
+  footer{padding-top:30px; padding-bottom:50px; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; color:var(--ink-soft); letter-spacing:0.04em;}
 </style>
 </head>
 <body>
