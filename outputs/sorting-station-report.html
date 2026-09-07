@@ -6492,6 +6492,7 @@ try {
     // tied to the tab's own scoped:true), since it has to do the same for every other switch
     // between a scoped and an un-scoped tab — no need to duplicate either call here too.
     showTab('reports');
+    refreshDemoLink(); // no-op if the demo panel isn't open — see its own definition below
     await loadLiveData();
   });
 
@@ -6667,12 +6668,13 @@ try {
     window.open(`${pageBaseUrl()}${currentProgram().file}?preview=1`, '_blank');
   });
 
-  // Toggles the QR block open/closed rather than opening the demo itself — this button is
-  // meant to stay up on a shared screen during a live presentation while people scan it, unlike
-  // Preview above which is a one-person, one-click lookup.
-  document.getElementById('demoTrainingBtn').addEventListener('click', () => {
+  // Recomputes and re-renders the demo link/QR for whichever induction is currently selected.
+  // Called both when the panel is first opened AND whenever the induction is switched while
+  // it's left open (a live-presentation panel, meant to stay up on a shared screen) — otherwise
+  // switching induction silently left it showing the PREVIOUS induction's link/QR.
+  function refreshDemoLink(){
     const block = document.getElementById('demoQrBlock');
-    if (block.style.display !== 'none'){ block.style.display = 'none'; return; }
+    if (block.style.display === 'none') return;
     const program = currentProgram();
     // Only recycling-sorting has a real short demo mode (?demo=1) built. Other inductions fall
     // back to the full preview flow (?preview=1) until demo mode is built for them too.
@@ -6681,7 +6683,16 @@ try {
     document.getElementById('demoLinkText').textContent = link;
     document.getElementById('copyDemoLinkBtn').dataset.link = link;
     renderQrInto(document.getElementById('demoQrContainer'), link);
+  }
+
+  // Toggles the QR block open/closed rather than opening the demo itself — this button is
+  // meant to stay up on a shared screen during a live presentation while people scan it, unlike
+  // Preview above which is a one-person, one-click lookup.
+  document.getElementById('demoTrainingBtn').addEventListener('click', () => {
+    const block = document.getElementById('demoQrBlock');
+    if (block.style.display !== 'none'){ block.style.display = 'none'; return; }
     block.style.display = 'block';
+    refreshDemoLink();
   });
 })();
 </script>
