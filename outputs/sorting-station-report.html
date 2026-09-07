@@ -2803,7 +2803,7 @@ var qrcode = function() {
     </div>
 
     <div class="report-block">
-      <h3>Enroll an existing building in this induction</h3>
+      <h3>Enrol an existing building in this induction</h3>
       <p class="block-sub">Only buildings not already enrolled in the induction selected above are listed here. To add a brand-new building to the system, use Edificios in the ⚙ menu first.</p>
       <div class="filter-row">
         <label class="filter-field"><span>Building</span>
@@ -2811,7 +2811,7 @@ var qrcode = function() {
         </label>
       </div>
       <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
-        <button class="btn" id="enrollBuildingBtn">+ Enroll building</button>
+        <button class="btn" id="enrollBuildingBtn">+ Enrol building</button>
       </div>
       <p class="block-sub" id="enrollBuildingStatus" style="margin-top:10px;"></p>
     </div>
@@ -2867,7 +2867,7 @@ var qrcode = function() {
         </label>
       </div>
       <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
-        <button class="btn" id="addProgramBtn">+ Add program</button>
+        <button class="btn" id="addProgramBtn">+ Add programme</button>
       </div>
       <p class="block-sub" id="catalogStatus" style="margin-top:10px;"></p>
     </div>
@@ -5364,7 +5364,7 @@ try {
           const linkUrl = `${pageBaseUrl()}${currentProgram().file}?l=${l.id}`;
           const tenant = l.tenantId ? b.tenants.find(t => t.id === l.tenantId) : null;
           const scopeText = tenant ? esc(tenant.name) : 'Whole building';
-          const expiryText = l.expiresAtMs ? `expires ${new Date(l.expiresAtMs).toLocaleDateString()}` : 'no expiry';
+          const expiryText = l.expiresAtMs ? `expires ${new Date(l.expiresAtMs).toLocaleDateString('en-GB')}` : 'no expiry';
           return `
             <li data-link-id="${esc(l.id)}">
               <span class="tenant-name">${scopeText} — <span class="block-sub">${expiryText}</span></span>
@@ -5482,7 +5482,7 @@ try {
   function renderEnrolledBuildingsList(buildings){
     const container = document.getElementById('enrolledBuildingsList');
     if (buildings.length === 0){
-      container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet — enroll one above.</p>';
+      container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet — enrol one above.</p>';
       return;
     }
     container.innerHTML = buildings.map(b => {
@@ -5549,7 +5549,7 @@ try {
   function renderDistributionList(buildings){
     const container = document.getElementById('distributionList');
     if (buildings.length === 0){
-      container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet — enroll one in Enrolled Buildings first.</p>';
+      container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet — enrol one in Enrolled Buildings first.</p>';
       return;
     }
     container.innerHTML = buildings.map(b => {
@@ -5670,7 +5670,7 @@ try {
       await loadEnrolledData();
     } catch (err){
       console.error('Failed to enroll building:', err);
-      status.textContent = 'Failed to enroll — check the console for details.';
+      status.textContent = 'Failed to enrol — check the console for details.';
     }
   });
 
@@ -5851,7 +5851,7 @@ try {
       const id = archiveBtn.dataset.id;
       const confirmed = confirm(
         `Archive this induction?\n\n` +
-        `It stops appearing as an option for new enrollments/links and drops off the public demo ` +
+        `It stops appearing as an option for new enrolments/links and drops off the public demo ` +
         `catalog. Its data and every report already tied to it are NOT deleted — you can still see ` +
         `them, and you can unarchive it later.`
       );
@@ -6023,7 +6023,7 @@ try {
       const buildingId = deleteTenantBtn.closest('.building-row').dataset.buildingId;
       const tenantId = deleteTenantBtn.closest('li').dataset.tenantId;
       const confirmed = confirm(
-        `Delete this tenant? It disappears from every program immediately and any link scoped ` +
+        `Delete this tenant? It disappears from every programme immediately and any link scoped ` +
         `to it stops working. Its data and history are NOT deleted — only hidden — but there's ` +
         `no button yet to bring it back if you change your mind.`
       );
@@ -6186,8 +6186,8 @@ try {
       const building = enrolledBuildingsCache.find(b => b.id === buildingId);
       const confirmed = confirm(
         `Remove "${building ? building.name : 'this building'}" from ${currentProgram().name}?\n\n` +
-        `New links for this program stop working for this building right away. Its configuration ` +
-        `and history are kept and come back automatically if it's re-enrolled later. Its enrollment ` +
+        `New links for this programme stop working for this building right away. Its configuration ` +
+        `and history are kept and come back automatically if it's re-enrolled later. Its enrolment ` +
         `in any other induction is not affected.`
       );
       if (!confirmed) return;
@@ -6381,7 +6381,7 @@ try {
   const SETTINGS_HEADER = {
     eyebrow: '⚙ Settings · Applies to every induction',
     headline: 'Settings',
-    sub: 'Manage the buildings and tenants any induction can enroll, control who else can sign in as a reviewer, and register or archive inductions in the catalog.',
+    sub: 'Manage the buildings and tenants any induction can enrol, control who else can sign in as a reviewer, and register or archive inductions in the catalog.',
   };
 
   function showTab(tabName){
