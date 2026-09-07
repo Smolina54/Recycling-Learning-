@@ -312,7 +312,14 @@
   .score-of{font-family:var(--mono); font-size:14px; color:var(--ink-soft); padding-bottom:14px;}
   .gauge{height:14px; background:var(--line); border:1px solid var(--ink); margin:18px 0 8px; overflow:hidden;}
   .gauge-fill{height:100%; background:var(--forest); width:0%; transition:width .8s ease;}
-  .gauge-label{font-family:var(--mono); font-size:11px; color:var(--ink-soft); display:flex; justify-content:space-between;}
+  /* Absolutely positioned (not flex + space-between) so "75% pass mark" lines up with the
+     actual 75% point along the bar below it, instead of just sitting at the visual midpoint
+     between the 0% and 100% labels — a real bug caught in testing. */
+  .gauge-label{font-family:var(--mono); font-size:11px; color:var(--ink-soft); position:relative; height:14px;}
+  .gauge-label span{position:absolute; top:0; white-space:nowrap;}
+  .gauge-label span:first-child{left:0;}
+  .gauge-label span:last-child{right:0;}
+  .gauge-label span:nth-child(2){left:75%; transform:translateX(-50%);}
   .verdict{font-size:17px; font-weight:600; margin:22px 0 6px;}
   .verdict-sub{color:var(--ink-soft); font-size:14.5px; margin-bottom:26px;}
 
@@ -323,6 +330,9 @@
   }
   .save-warning .btn.secondary{border-color:var(--gw); color:var(--gw); padding:8px 16px; font-size:13px; white-space:nowrap;}
   .save-warning .btn.secondary:hover{background:var(--gw); color:var(--paper);}
+
+  .results-section-heading{font-family:var(--display); text-transform:uppercase; letter-spacing:0.02em; font-size:15px; margin:0 0 4px;}
+  .results-section-sub{color:var(--ink-soft); font-size:13px; margin:0 0 14px; max-width:560px;}
 
   .stream-breakdown{display:flex; flex-direction:column; gap:10px; margin-bottom:30px;}
   .breakdown-row{display:grid; grid-template-columns:130px 1fr 50px; align-items:center; gap:12px;}
@@ -680,7 +690,11 @@
     <div class="gauge-label"><span>0%</span><span>75% pass mark</span><span>100%</span></div>
     <p class="verdict" id="verdict"></p>
     <p class="verdict-sub" id="verdictSub"></p>
+    <h3 class="results-section-heading">Accuracy by stream</h3>
+    <p class="results-section-sub">How many of each stream's decoy items you correctly left out of the bin — a lower bar means that stream's rules are worth a second look.</p>
     <div class="stream-breakdown" id="streamBreakdown"></div>
+    <h3 class="results-section-heading">Item by item</h3>
+    <p class="results-section-sub">A closer look at each stream: what you sorted correctly, and anything you missed with a quick reminder why.</p>
     <div class="review-list" id="reviewList"></div>
     <div class="results-actions">
       <button class="btn" id="retryBtn">Retake the check</button>
