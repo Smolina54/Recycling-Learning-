@@ -6662,9 +6662,9 @@ try {
   document.getElementById('printBtn').addEventListener('click', () => window.print());
 
   // No building/tenant to pick here — just "what does the training itself look like".
-  // recycling-training.html?preview=1 with no ?b= skips the id-gate entirely for this case.
+  // <program file>?preview=1 with no ?b= skips the id-gate entirely for this case.
   document.getElementById('previewTrainingBtn').addEventListener('click', () => {
-    window.open(`${pageBaseUrl()}recycling-training.html?preview=1`, '_blank');
+    window.open(`${pageBaseUrl()}${currentProgram().file}?preview=1`, '_blank');
   });
 
   // Toggles the QR block open/closed rather than opening the demo itself — this button is
@@ -6673,7 +6673,11 @@ try {
   document.getElementById('demoTrainingBtn').addEventListener('click', () => {
     const block = document.getElementById('demoQrBlock');
     if (block.style.display !== 'none'){ block.style.display = 'none'; return; }
-    const link = `${pageBaseUrl()}recycling-training.html?demo=1`;
+    const program = currentProgram();
+    // Only recycling-sorting has a real short demo mode (?demo=1) built. Other inductions fall
+    // back to the full preview flow (?preview=1) until demo mode is built for them too.
+    const param = program.id === 'recycling-sorting' ? 'demo=1' : 'preview=1';
+    const link = `${pageBaseUrl()}${program.file}?${param}`;
     document.getElementById('demoLinkText').textContent = link;
     document.getElementById('copyDemoLinkBtn').dataset.link = link;
     renderQrInto(document.getElementById('demoQrContainer'), link);

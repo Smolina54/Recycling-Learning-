@@ -869,7 +869,15 @@ try {
       // that (caught by a manual board-item-count check before shipping).
       if (isDemoMode){
         const trimmedDecoyMap = {};
-        streams.forEach(s => { trimmedDecoyMap[s] = decoyMap[s].slice(0, 2); });
+        // Only keep decoys whose real home stream is also one of the 3 demo streams — the
+        // results screen's review cards are grouped by each item's TRUE stream (streams.map()
+        // in showResults()), so a decoy whose true stream got cut from the demo (e.g. a Paper &
+        // Cardboard item as an mr decoy) would silently have nowhere to show up in that review,
+        // even though it still counted toward the score. Filtering here keeps every decoy's
+        // true stream inside the set actually being taught/reviewed in this shortened demo.
+        streams.forEach(s => {
+          trimmedDecoyMap[s] = decoyMap[s].filter(id => streams.includes(itemById(id).stream)).slice(0, 2);
+        });
         currentDecoyMap = trimmedDecoyMap;
       }
       allResults = freshResults();
@@ -959,7 +967,13 @@ try {
     window.scrollTo(0,0);
   });
 
-  const streams = ['gw','mr','pc','og','ew'];
+  // Demo mode (see isDemoMode above) reviews and evaluates only these 3 streams instead of all
+  // 5, so a live presentation run-through stays short — Sergio's call, 2026-09-07. Kept in the
+  // same relative order as the full lineup (gw, mr, og) so the existing "next stream" wiring
+  // below still lines up correctly; the wiring further down (demo-only block) handles the
+  // renumbering and the fact that 'og' is no longer physically the last panel in the DOM.
+  const DEMO_STREAMS = ['gw','mr','og'];
+  const streams = isDemoMode ? DEMO_STREAMS : ['gw','mr','pc','og','ew'];
   const streamNames = {gw:'General Waste', mr:'Mixed Recycling', pc:'Paper & Cardboard', og:'Organics', ew:'E-Waste'};
   const binIcons = {
     gw: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
@@ -973,7 +987,7 @@ try {
   const panels = document.querySelectorAll('.detail-panel');
   const progressFill = document.getElementById('progressFill');
   const progressLabel = document.getElementById('progressLabel');
-  const visited = new Set(['gw']); // General Waste is the panel shown by default, before any click
+  const visited = new Set([streams[0]]); // the first stream's panel is shown by default, before any click
   let gameStarted = false;
 
   function showStream(id){
@@ -992,7 +1006,7 @@ try {
     const status = document.getElementById('gameLockStatus');
     if (n < total){
       btn.disabled = true;
-      status.textContent = `Review all 5 streams above to unlock the sorting challenge — ${n} of ${total} reviewed.`;
+      status.textContent = `Review all ${total} streams above to unlock the sorting challenge — ${n} of ${total} reviewed.`;
       status.classList.remove('ready');
     } else {
       btn.disabled = false;
@@ -1017,15 +1031,55 @@ try {
   }
 
   tabs.forEach(t => t.addEventListener('click', () => showStream(t.dataset.stream)));
-  document.getElementById('startBtn').addEventListener('click', () => showStream('gw'));
+  document.getElementById('startBtn').addEventListener('click', () => showStream(streams[0]));
 
+  // .onclick (not addEventListener) so the demo-mode block below can cleanly override a
+  // button's target/label by reassigning .onclick, instead of stacking a second listener that
+  // would fire alongside the original.
   document.querySelectorAll('.next-stream').forEach((btn, i) => {
-    btn.addEventListener('click', () => showStream(streams[i+1]));
+    btn.onclick = () => showStream(streams[i+1]);
   });
 
-  document.getElementById('toGameBtn').addEventListener('click', () => {
+  document.getElementById('toGameBtn').onclick = () => {
     document.getElementById('gameSection').scrollIntoView({behavior:'smooth', block:'start'});
-  });
+  };
+
+  // Demo mode only reviews/evaluates DEMO_STREAMS (3 of the 5) — hide the other tabs/panels,
+  // and re-point each visible panel's footer button at the correct "next" stream (or at the
+  // game, for whichever panel is now last) since the hardcoded HTML/labels above assume all 5
+  // streams are shown back-to-back. The full (non-demo) flow is completely untouched by this.
+  if (isDemoMode){
+    const demoSet = new Set(streams);
+    tabs.forEach(t => { if (!demoSet.has(t.dataset.stream)) t.style.display = 'none'; });
+    panels.forEach(p => { if (!demoSet.has(p.dataset.stream)) p.style.display = 'none'; });
+    // .station is a fixed 5-column grid — with 2 tabs hidden, the remaining 3 would otherwise
+    // be squeezed into the left 3/5 of the row instead of spanning it. Inline style wins over
+    // both the base rule and its mobile media-query override, so this holds at every width.
+    document.querySelector('.station').style.gridTemplateColumns = `repeat(${streams.length}, minmax(0,1fr))`;
+
+    streams.forEach((s, i) => {
+      const tabCode = document.querySelector(`.bin-tab[data-stream="${s}"] .code`);
+      if (tabCode) tabCode.textContent = String(i+1).padStart(2,'0');
+      const streamCode = document.querySelector(`.detail-panel[data-stream="${s}"] .stream-code`);
+      if (streamCode) streamCode.textContent = streamCode.textContent.replace(/^Stream \d+/, `Stream ${String(i+1).padStart(2,'0')}`);
+
+      const navBtn = document.querySelector(`.detail-panel[data-stream="${s}"] .detail-nav button`);
+      if (!navBtn) return;
+      if (i < streams.length - 1){
+        navBtn.textContent = `Next: ${streamNames[streams[i+1]]} →`;
+        navBtn.onclick = () => showStream(streams[i+1]);
+      } else {
+        navBtn.textContent = 'Take the sorting challenge →';
+        navBtn.classList.remove('secondary'); // matches the real final panel's primary-button styling
+        navBtn.onclick = () => document.getElementById('gameSection').scrollIntoView({behavior:'smooth', block:'start'});
+      }
+    });
+
+    document.querySelector('.hero .eyebrow').textContent = `Waste Stream Training · ${streams.length} Streams · Demo`;
+    document.querySelector('.hero .hero-sub').textContent = `A quick walkthrough of ${streams.length} waste streams, followed by a short interactive quiz — just for trying it out.`;
+    document.querySelector('#gameIntro .hero-sub').textContent = `${streams.length} rounds, one stream at a time. Each round drops a few items on the board — only some belong in that round's bin.`;
+    document.querySelector('#gameIntro .quiz-meta').innerHTML = `<span><b>${streams.length}</b> phases</span><span><b>~1 min</b></span><span>Pass mark: <b>75%</b></span>`;
+  }
 
   // ---------------- Sorting game: item catalogue ----------------
   const ALL_ITEMS = [
@@ -2715,7 +2769,7 @@ try {
     const stream = streams[idx];
     phaseCorrectTarget = correctItemsForStream(stream).length;
 
-    document.getElementById('phaseLabel').textContent = `Phase ${idx+1} of 5 — ${streamNames[stream]}`;
+    document.getElementById('phaseLabel').textContent = `Phase ${idx+1} of ${streams.length} — ${streamNames[stream]}`;
     document.getElementById('phaseCounter').textContent = `Sorted 0 of ${phaseCorrectTarget}`;
     phaseBin.dataset.stream = stream;
     document.getElementById('phaseBinIcon').style.cssText = `background:var(--${stream}-tint); border:2px solid var(--${stream}); color:var(--${stream});`;
