@@ -322,6 +322,7 @@
   .score-of{font-family:var(--mono); font-size:14px; color:var(--ink-soft); padding-bottom:14px;}
   .gauge{height:14px; background:var(--line); border:1px solid var(--ink); margin:18px 0 8px; overflow:hidden;}
   .gauge-fill{height:100%; background:var(--forest); width:0%; transition:width .8s ease;}
+  .gauge-fill.failed{background:var(--gw);}
   .gauge-label{font-family:var(--mono); font-size:11px; color:var(--ink-soft); display:flex; justify-content:space-between;}
   .verdict{font-size:17px; font-weight:600; margin:22px 0 6px;}
   .verdict-sub{color:var(--ink-soft); font-size:14.5px; margin-bottom:26px;}
@@ -911,6 +912,7 @@ try {
     document.getElementById('scorePct').textContent = pct + '%';
     document.getElementById('scoreOf').textContent = correctCount + ' / ' + total + ' correct';
     document.getElementById('gaugeFill').style.width = pct + '%';
+    document.getElementById('gaugeFill').classList.toggle('failed', pct < 75);
 
     const verdict = document.getElementById('verdict');
     const verdictSub = document.getElementById('verdictSub');

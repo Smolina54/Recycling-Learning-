@@ -3052,6 +3052,10 @@ try {
       catch (err) { /* user already exists from a previous test run — fine */ }
       await signInWithEmailAndPassword(auth, email, password);
     };
+    // Local convenience: auto sign in as the owner account so ?emulator=1 never needs the
+    // login form typed by hand — never runs outside ?emulator=1, so never on the real page.
+    window.__testSignIn('esgtradeflex@gmail.com', 'probando123')
+      .catch(err => console.error('Local auto sign-in failed', err));
   }
 } catch (err) {
   console.error('Firebase is not configured yet — sign-in and live data will stay unavailable until firebaseConfig is filled in.', err);
