@@ -1985,10 +1985,19 @@ try {
 </g></svg>`,
       explain:"Newspaper is clean, dry fibre — fold it flat, same as any other clean cardboard or paper.",
       shortWhy:"Recycles better than composting" },
-    { id:'pc-tube', name:'Cardboard tube', stream:'pc',
+    // Retired from the active 5 in favour of pc-shredded below (Sergio, 2026-09-08) — kept as
+    // an inactive backup rather than deleted, same as every other catalog swap (see og-teabag,
+    // ew-battery/ew-toner above).
+    { id:'pc-tube', name:'Cardboard tube', stream:'pc', active:false,
       icon:`<svg viewBox="0 0 24 24"><rect x="7" y="4" width="10" height="16" rx="1" fill="#C9A66B" stroke="var(--ink)" stroke-width="1.2"/><ellipse cx="12" cy="4.3" rx="5" ry="1.4" fill="#B8935A" stroke="var(--ink)" stroke-width="1"/><ellipse cx="12" cy="4.3" rx="2.6" ry="0.8" fill="#6B5636"/></svg>`,
       explain:"An empty cardboard tube is clean paper fibre — treat it just like a flattened box.",
       shortWhy:"Cardboard, not electronic waste" },
+    // Placeholder icon only (simple stripes) — pending the icon redesign; do not treat this
+    // artwork as final.
+    { id:'pc-shredded', name:'Shredded paper', stream:'pc',
+      icon:`<svg viewBox="0 0 24 24"><g stroke="var(--ink)" stroke-width="1" fill="#F2EEE3"><rect x="4" y="6" width="2.5" height="14" rx="0.5"/><rect x="7.5" y="5" width="2.5" height="15" rx="0.5"/><rect x="11" y="6" width="2.5" height="14" rx="0.5"/><rect x="14.5" y="5" width="2.5" height="15" rx="0.5"/><rect x="18" y="6" width="2.5" height="14" rx="0.5"/></g></svg>`,
+      explain:"Shredded paper is still clean paper fibre once it's been through a shredder — it recycles the same as any other paper, though many buildings ask for it in its own bag so the short strips don't scatter and jam sorting equipment.",
+      shortWhy:"Shredded paper still recycles" },
 
     // Organics
     { id:'og-banana', name:'Banana peel', stream:'og',
@@ -2430,7 +2439,7 @@ try {
     mr: ['gw-pizza','pc-paper','pc-envelope','og-eggshell','ew-cables'],
     pc: ['gw-cup','mr-can','og-apple','og-coffee','ew-phone'],
     og: ['gw-mug','mr-tin','pc-newspaper','ew-monitor','ew-mouse'],
-    ew: ['gw-chips','gw-tissue','mr-tub','pc-tube','og-fish']
+    ew: ['gw-chips','gw-tissue','mr-tub','pc-shredded','og-fish']
   };
 
   // Built from ALL_ITEMS (not `items`) so a currently-inactive item still has a default

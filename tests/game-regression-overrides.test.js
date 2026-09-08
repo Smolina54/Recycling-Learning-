@@ -59,7 +59,7 @@ const FULL_MERGE_ITEM_OVERRIDES = {
   'pc-paper': { stream: 'og' },
   'pc-envelope': { stream: 'og' },
   'pc-newspaper': { stream: 'og' },
-  'pc-tube': { stream: 'og' },
+  'pc-shredded': { stream: 'og' },
 };
 
 // pc's 5 items redirected to mr — the exact "no Paper & Cardboard bin" case that started this.
@@ -68,7 +68,7 @@ const ITEM_OVERRIDES = {
   'pc-paper': { stream: 'mr' },
   'pc-envelope': { stream: 'mr' },
   'pc-newspaper': { stream: 'mr' },
-  'pc-tube': { stream: 'mr' },
+  'pc-shredded': { stream: 'mr' },
 };
 const STREAM_ORDER = ['gw', 'mr', 'pc', 'og', 'ew'];
 

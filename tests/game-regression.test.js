@@ -243,7 +243,7 @@ async function runFlow(page){
   // not by the item's own real category — so "Paper & Cardboard" could show a phone or coffee
   // grounds (real decoys used to test that bin, not paper themselves). Confirm the fix: the
   // Paper & Cardboard card only ever contains the 5 real paper/cardboard catalog items.
-  const REAL_PC_ITEM_NAMES = ['Flattened cardboard box', 'Stack of office paper', 'Used envelope', 'Folded newspaper', 'Cardboard tube'];
+  const REAL_PC_ITEM_NAMES = ['Flattened cardboard box', 'Stack of office paper', 'Used envelope', 'Folded newspaper', 'Shredded paper'];
   const pcCardItemNames = await page.evaluate(() => {
     const card = [...document.querySelectorAll('.review-stream-card')].find(c => c.querySelector('.review-stream-name').textContent === 'Paper & Cardboard');
     const correctNames = [...card.querySelectorAll('.review-correct-row .item-thumb')].map(el => el.title);

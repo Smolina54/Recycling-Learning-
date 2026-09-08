@@ -454,11 +454,11 @@ async function runFlow(page, seedEnv){
   check('opening "Configure streams" shows the item-streams editor',
     Boolean(await page.$(`${enrolledSelector} .items-editor`)));
 
-  // Every catalog item (both the 25 in rotation and the 25 backups) shows up here now — an
+  // Every catalog item (both the 25 in rotation and the 28 backups) shows up here now — an
   // admin can personalize any of them per building via the on/off toggle.
   const totalItemCards = await page.$$eval(`${enrolledSelector} .items-card`, els => els.length);
-  check('the editor shows all 52 catalog items, backups included',
-    totalItemCards === 52, totalItemCards);
+  check('the editor shows all 53 catalog items, backups included',
+    totalItemCards === 53, totalItemCards);
   const benchItemInactive = await page.$eval(`${enrolledSelector} .item-active-toggle[data-item-id="gw-glass"]`,
     el => !el.checked).catch(() => null);
   check('a specific bench item (gw-glass) is present but shown off by default', benchItemInactive === true);
@@ -587,7 +587,7 @@ async function runFlow(page, seedEnv){
   await page.select(`${enrolledSelector} .quick-merge-to`, 'mr');
   await page.$eval(`${enrolledSelector} .quick-merge-btn`, el => el.click());
   await new Promise(r => setTimeout(r, 200));
-  const pcItemIds = ['pc-box', 'pc-paper', 'pc-envelope', 'pc-newspaper', 'pc-tube'];
+  const pcItemIds = ['pc-box', 'pc-paper', 'pc-envelope', 'pc-newspaper', 'pc-shredded'];
   const mergedValues = await Promise.all(pcItemIds.map(id =>
     page.$eval(`${enrolledSelector} .item-stream-select[data-item-id="${id}"]`, el => el.value)));
   check('quick-merge moves all 5 items from one stream to another in a single action',
