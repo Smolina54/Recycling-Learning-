@@ -2524,7 +2524,10 @@ var qrcode = function() {
   .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
   .tenant-row-actions{display:flex; gap:8px; flex-shrink:0; margin-left:auto;}
   .remove-admin-btn{margin-left:auto;}
-  .tenant-edit-row{gap:8px; align-items:flex-start;}
+  /* ".tenant-list li" (a descendant selector) beats a plain ".tenant-edit-row" class selector on
+     specificity alone, regardless of source order — align-items:center from that base rule was
+     silently winning here. Match its selector shape (with the extra class) to actually override it. */
+  .tenant-list li.tenant-edit-row{gap:8px; align-items:flex-start;}
   .tenant-edit-row > .edit-tenant-name-input{flex:1; min-width:120px;}
   .levels-editor{display:flex; flex-direction:column; gap:8px; flex:1; min-width:220px;}
   .level-row{display:flex; align-items:center; gap:6px;}
@@ -3131,7 +3134,7 @@ try {
           <option value="Ground"${t === 'Ground' ? ' selected' : ''}>Ground</option>
           <option value="Other"${t === 'Other' ? ' selected' : ''}>Other</option>
         </select>
-        <input type="text" class="level-number-input" placeholder="4" value="${t === 'Level' ? esc(value) : ''}" style="${t === 'Level' ? '' : 'display:none;'}">
+        <input type="text" class="level-number-input" value="${t === 'Level' ? esc(value) : ''}" style="${t === 'Level' ? '' : 'display:none;'}">
         <input type="text" class="level-other-input" placeholder="e.g. Basement" value="${t === 'Other' ? esc(value) : ''}" style="${t === 'Other' ? '' : 'display:none;'}">
         <button type="button" class="remove-level-row-btn" title="Remove this level">×</button>
       </div>`;
@@ -3164,10 +3167,32 @@ try {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(str || '').trim());
   }
 
+  // A tenant with many "Level N" rows reads as a long, repetitive "Level 1, Level 2, Level 3…"
+  // list — group those into one "Levels 1, 2, 3" and leave anything else (Ground, a custom
+  // "Other" name) as its own literal entry. A single level (of any kind) stays exactly as-is.
+  function formatLevelsDisplay(levels){
+    if (!levels || levels.length === 0) return '';
+    if (levels.length === 1) return levels[0];
+    const numbers = [];
+    const others = [];
+    for (const lvl of levels){
+      const m = /^level\s+(.+)$/i.exec(String(lvl).trim());
+      if (m) numbers.push(m[1]);
+      else others.push(lvl);
+    }
+    const parts = [];
+    if (numbers.length === 1) parts.push(`Level ${numbers[0]}`);
+    else if (numbers.length > 1) parts.push(`Levels ${numbers.join(', ')}`);
+    parts.push(...others);
+    return parts.join(', ');
+  }
+
   // Same add/remove-row interaction as the levels editor above, but simpler — no type
-  // dropdown, and it may start with zero rows since a contact email is optional (a level
-  // isn't). `extraClass` distinguishes an "add tenant" editor from an "edit tenant" one,
-  // same reasoning as renderLevelsEditorHtml.
+  // dropdown. Starts with one empty row, same as the levels editor, so the field is visibly
+  // there to fill in rather than just a bare "+ Add another email" button — but unlike levels,
+  // an empty row here is fine to save as-is (readEmailsFromEditor drops blanks; email is
+  // optional, a level isn't). `extraClass` distinguishes an "add tenant" editor from an "edit
+  // tenant" one, same reasoning as renderLevelsEditorHtml.
   function emailRowHtml(value){
     return `
       <div class="email-row">
@@ -3177,7 +3202,7 @@ try {
   }
 
   function renderEmailsEditorHtml(existingEmails, extraClass){
-    const rows = (existingEmails && existingEmails.length) ? existingEmails : [];
+    const rows = (existingEmails && existingEmails.length) ? existingEmails : [''];
     return `
       <div class="emails-editor ${extraClass}">
         ${rows.map(emailRowHtml).join('')}
@@ -5511,7 +5536,7 @@ try {
             }
             return `<li data-tenant-id="${t.id}">
               <span class="tenant-name">${esc(t.name)}</span>
-              <span class="tenant-levels">${esc(t.levels.join(', '))}</span>
+              <span class="tenant-levels">${esc(formatLevelsDisplay(t.levels))}</span>
               ${t.emails && t.emails.length ? `<span class="tenant-emails">${esc(t.emails.join(', '))}</span>` : ''}
               <span class="tenant-row-actions">
                 <button class="btn secondary edit-tenant-btn">Edit</button>
@@ -5520,12 +5545,24 @@ try {
             </li>`;
           }).join('')
         : '<li class="block-sub">No tenants yet.</li>';
+      const withEmail = b.tenants.filter(t => (t.emails || []).length).length;
       return `
       <div class="report-block building-row" data-building-id="${b.id}">
         ${headerHtml}
         <ul class="tenant-list">${tenantsHtml}</ul>
+        <p class="block-sub contacts-coverage-note">${withEmail} of ${b.tenants.length} tenants have a contact email saved.</p>
+        <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+          <button class="btn secondary export-contacts-btn">Export contacts template →</button>
+          <label class="btn secondary import-contacts-label">
+            Import contact emails →
+            <input type="file" class="import-contacts-input" accept=".xlsx" style="display:none;">
+          </label>
+        </div>
+        <div class="import-contacts-review" style="display:none;"></div>
+        <p class="generate-link-title"><strong>Add tenant</strong></p>
+        <p class="block-sub">Add a new tenant to this building — its name, the level(s) it occupies, and an optional contact email for sending induction links later.</p>
         <div class="filter-row">
-          <label class="filter-field"><span>Tenant name</span><input type="text" class="new-tenant-name"></label>
+          <label class="filter-field"><span>Tenant name</span><input type="text" class="new-tenant-name" placeholder="e.g. Acme Legal"></label>
           <label class="filter-field"><span>Levels</span>${renderLevelsEditorHtml([], 'new-tenant-levels-editor')}</label>
           <label class="filter-field"><span>Contact email(s)</span>${renderEmailsEditorHtml([], 'new-tenant-emails-editor')}</label>
         </div>
@@ -5621,8 +5658,6 @@ try {
     }
     container.innerHTML = buildings.map(b => {
       const link = `${pageBaseUrl()}${currentProgram().file}?b=${b.id}`;
-      const enabledTenants = b.tenants.filter(t => !Array.isArray(b.enabledTenantIds) || b.enabledTenantIds.includes(t.id));
-      const withEmail = enabledTenants.filter(t => (t.emails || []).length).length;
       return `
       <div class="report-block distribution-building-row" data-building-id="${b.id}">
         <h3>${esc(b.name)}</h3>
@@ -5632,15 +5667,6 @@ try {
           <button class="btn secondary preview-link-btn" data-link="${link}">Preview →</button>
         </div>
         <div class="building-qr" data-link="${link}"></div>
-        <p class="block-sub contacts-coverage-note">${withEmail} of ${enabledTenants.length} enabled tenants have a contact email saved.</p>
-        <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
-          <button class="btn secondary export-contacts-btn">Export contacts template →</button>
-          <label class="btn secondary import-contacts-label">
-            Import contact emails →
-            <input type="file" class="import-contacts-input" accept=".xlsx" style="display:none;">
-          </label>
-        </div>
-        <div class="import-contacts-review" style="display:none;"></div>
         ${renderDistributionLinksHtml(b)}
       </div>
     `;
@@ -6278,6 +6304,64 @@ try {
       }
       return;
     }
+
+    const exportContactsBtn = e.target.closest('.export-contacts-btn');
+    if (exportContactsBtn){
+      const row = exportContactsBtn.closest('.building-row');
+      const buildingId = row.dataset.buildingId;
+      const b = buildingsCache.find(x => x.id === buildingId);
+      // Every tenant of the building, regardless of which induction(s) it's enrolled in or
+      // enabled for — a contact email is a property of the tenant itself, not of any one
+      // program, so it belongs here in program-agnostic Edificios, not scoped by induction.
+      const rows = b.tenants.map(t => ({
+        'Tenant ID': t.id, Tenant: t.name, Levels: t.levels.join(', '), Email: (t.emails || []).join('; '),
+      }));
+      const wb = xlsxUtils.book_new();
+      xlsxUtils.book_append_sheet(wb, xlsxUtils.json_to_sheet(rows), 'Contacts');
+      xlsxWriteFile(wb, `${b.name} — contacts.xlsx`);
+      return;
+    }
+
+    const cancelContactsBtn = e.target.closest('.import-contacts-cancel-btn');
+    if (cancelContactsBtn){
+      cancelContactsBtn.closest('.import-contacts-review').style.display = 'none';
+      return;
+    }
+
+    const confirmContactsBtn = e.target.closest('.import-contacts-confirm-btn');
+    if (confirmContactsBtn){
+      const row = confirmContactsBtn.closest('.building-row');
+      const buildingId = row.dataset.buildingId;
+      const b = buildingsCache.find(x => x.id === buildingId);
+      const toWrite = [...row.querySelectorAll('.import-row:not(.import-row-unmatched)')]
+        .filter(r => r.querySelector('.import-contacts-check').checked)
+        .map(r => {
+          const tenantId = r.dataset.tenantId;
+          const tenant = b.tenants.find(t => t.id === tenantId);
+          const emails = r.dataset.emails ? r.dataset.emails.split(';').filter(Boolean) : [];
+          return { tenantId, tenant, emails };
+        });
+      if (toWrite.length === 0){ alert('Nothing selected to import.'); return; }
+      confirmContactsBtn.disabled = true;
+      confirmContactsBtn.textContent = 'Importing…';
+      try {
+        // One atomic batch, not one setDoc per tenant — a network hiccup mid-import can't
+        // leave some tenants updated and others not.
+        const batch = writeBatch(db);
+        for (const { tenantId, tenant, emails } of toWrite){
+          batch.set(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: tenant.name, levels: tenant.levels, emails });
+        }
+        await batch.commit();
+        row.querySelector('.import-contacts-review').style.display = 'none';
+        await loadMasterBuildings();
+      } catch (err){
+        console.error('Failed to import contact emails:', err);
+        alert('Import failed — check the console for details.');
+        confirmContactsBtn.disabled = false;
+        confirmContactsBtn.textContent = 'Import selected →';
+      }
+      return;
+    }
   });
 
   // Pulled out of the .save-items-btn click handler so the programSelector's change handler can
@@ -6481,82 +6565,6 @@ try {
       return;
     }
 
-    const exportContactsBtn = e.target.closest('.export-contacts-btn');
-    if (exportContactsBtn){
-      const row = exportContactsBtn.closest('.distribution-building-row');
-      const buildingId = row.dataset.buildingId;
-      const b = enrolledBuildingsCache.find(x => x.id === buildingId);
-      const enabledTenants = b.tenants.filter(t => !Array.isArray(b.enabledTenantIds) || b.enabledTenantIds.includes(t.id));
-      const rows = enabledTenants.map(t => ({
-        'Tenant ID': t.id, Tenant: t.name, Levels: t.levels.join(', '), Email: (t.emails || []).join('; '),
-      }));
-      const wb = xlsxUtils.book_new();
-      xlsxUtils.book_append_sheet(wb, xlsxUtils.json_to_sheet(rows), 'Contacts');
-      xlsxWriteFile(wb, `${b.name} — contacts.xlsx`);
-      return;
-    }
-
-    const cancelContactsBtn = e.target.closest('.import-contacts-cancel-btn');
-    if (cancelContactsBtn){
-      cancelContactsBtn.closest('.import-contacts-review').style.display = 'none';
-      return;
-    }
-
-    const confirmContactsBtn = e.target.closest('.import-contacts-confirm-btn');
-    if (confirmContactsBtn){
-      const row = confirmContactsBtn.closest('.distribution-building-row');
-      const buildingId = row.dataset.buildingId;
-      const b = enrolledBuildingsCache.find(x => x.id === buildingId);
-      const toWrite = [...row.querySelectorAll('.import-row:not(.import-row-unmatched)')]
-        .filter(r => r.querySelector('.import-contacts-check').checked)
-        .map(r => {
-          const tenantId = r.dataset.tenantId;
-          const tenant = b.tenants.find(t => t.id === tenantId);
-          const emails = r.dataset.emails ? r.dataset.emails.split(';').filter(Boolean) : [];
-          return { tenantId, tenant, emails };
-        });
-      if (toWrite.length === 0){ alert('Nothing selected to import.'); return; }
-      confirmContactsBtn.disabled = true;
-      confirmContactsBtn.textContent = 'Importing…';
-      try {
-        // One atomic batch, not one setDoc per tenant — a network hiccup mid-import can't
-        // leave some tenants updated and others not.
-        const batch = writeBatch(db);
-        for (const { tenantId, tenant, emails } of toWrite){
-          batch.set(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: tenant.name, levels: tenant.levels, emails });
-        }
-        await batch.commit();
-        row.querySelector('.import-contacts-review').style.display = 'none';
-        await loadEnrolledData();
-      } catch (err){
-        console.error('Failed to import contact emails:', err);
-        alert('Import failed — check the console for details.');
-        confirmContactsBtn.disabled = false;
-        confirmContactsBtn.textContent = 'Import selected →';
-      }
-      return;
-    }
-  });
-
-  document.getElementById('distributionList').addEventListener('change', async (e) => {
-    const input = e.target.closest('.import-contacts-input');
-    if (!input || !input.files[0]) return;
-    const row = input.closest('.distribution-building-row');
-    const buildingId = row.dataset.buildingId;
-    const b = enrolledBuildingsCache.find(x => x.id === buildingId);
-    const file = input.files[0];
-    try {
-      const buf = await file.arrayBuffer();
-      const workbook = readWorkbook(buf);
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = xlsxUtils.sheet_to_json(sheet, { header: 1 });
-      const parsed = parseContactsFromRows(rows, b.tenants);
-      renderContactsImportReview(row, parsed);
-    } catch (err){
-      console.error('Failed to read Excel file:', err);
-      alert("Could not read that file — make sure it's a valid .xlsx export.");
-    }
-    input.value = '';
   });
 
   // ⚙ Edificios (master) again — tenant-levels editor + bulk Excel import, both only ever
@@ -6571,21 +6579,44 @@ try {
     }
 
     const input = e.target.closest('.import-xlsx-input');
-    if (!input || !input.files[0]) return;
-    const row = input.closest('.building-row');
-    const file = input.files[0];
-    try {
-      const buf = await file.arrayBuffer();
-      const workbook = readWorkbook(buf);
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = xlsxUtils.sheet_to_json(sheet, { header: 1 });
-      const candidates = groupTenantsFromRows(rows);
-      renderImportReview(row, candidates);
-    } catch (err){
-      console.error('Failed to read Excel file:', err);
-      alert("Could not read that file — make sure it's a valid .xlsx export.");
+    if (input && input.files[0]){
+      const row = input.closest('.building-row');
+      const file = input.files[0];
+      try {
+        const buf = await file.arrayBuffer();
+        const workbook = readWorkbook(buf);
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = xlsxUtils.sheet_to_json(sheet, { header: 1 });
+        const candidates = groupTenantsFromRows(rows);
+        renderImportReview(row, candidates);
+      } catch (err){
+        console.error('Failed to read Excel file:', err);
+        alert("Could not read that file — make sure it's a valid .xlsx export.");
+      }
+      input.value = '';
+      return;
     }
-    input.value = '';
+
+    const contactsInput = e.target.closest('.import-contacts-input');
+    if (contactsInput && contactsInput.files[0]){
+      const row = contactsInput.closest('.building-row');
+      const buildingId = row.dataset.buildingId;
+      const b = buildingsCache.find(x => x.id === buildingId);
+      const file = contactsInput.files[0];
+      try {
+        const buf = await file.arrayBuffer();
+        const workbook = readWorkbook(buf);
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = xlsxUtils.sheet_to_json(sheet, { header: 1 });
+        const parsed = parseContactsFromRows(rows, b.tenants);
+        renderContactsImportReview(row, parsed);
+      } catch (err){
+        console.error('Failed to read Excel file:', err);
+        alert("Could not read that file — make sure it's a valid .xlsx export.");
+      }
+      contactsInput.value = '';
+      return;
+    }
   });
 
   document.getElementById('enrolledBuildingsList').addEventListener('change', (e) => {

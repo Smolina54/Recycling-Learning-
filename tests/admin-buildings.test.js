@@ -320,12 +320,31 @@ async function runFlow(page, seedEnv, consoleErrors){
 
   const tenantEntries = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
   const matchingTenant = tenantEntries.find(t => t.includes(tenantName));
-  check('new tenant appears under its building with both levels',
-    Boolean(matchingTenant) && matchingTenant.includes('Level 1') && matchingTenant.includes('Level 2'),
+  check('new tenant appears under its building with both levels, compacted into one "Levels 1, 2"',
+    Boolean(matchingTenant) && matchingTenant.includes('Levels 1, 2'),
     tenantEntries.join(' || '));
   check('the new tenant persisted both saved contact emails',
     Boolean(matchingTenant) && matchingTenant.includes('jane@example.com') && matchingTenant.includes('bob@example.com'),
     tenantEntries.join(' || '));
+
+  // A tenant with many "Level N" rows should compact into one "Levels 1, 2, 3, 4, 5" line
+  // instead of the old repetitive "Level 1, Level 2, Level 3, Level 4, Level 5".
+  const fiveLevelRowHandle = await findRowByName(page, '.building-row', buildingName);
+  await fiveLevelRowHandle.$eval('.new-tenant-name', (el, v) => { el.value = v; }, 'Five Level Co');
+  const fiveLevelEditor = await fiveLevelRowHandle.$('.new-tenant-levels-editor');
+  await fillLevelsEditor(fiveLevelEditor, ['Level 1', 'Level 2', 'Level 3', 'Level 4', 'Level 5']);
+  await fiveLevelRowHandle.$eval('.add-tenant-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+  const tenantEntriesAfterFiveLevel = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
+  check('a tenant with 5 levels shows one compact "Levels 1, 2, 3, 4, 5" line, not 5 repeated "Level N"s',
+    tenantEntriesAfterFiveLevel.some(t => t.includes('Five Level Co') && t.includes('Levels 1, 2, 3, 4, 5')),
+    tenantEntriesAfterFiveLevel.join(' || '));
+  // Delete it right away — later checks in this file hardcode a tenant count (6) that this
+  // one-off addition would otherwise throw off.
+  const fiveLevelRowForDelete = await findRowByName(page, '.building-row', buildingName);
+  const fiveLevelLi = await findTenantLi(fiveLevelRowForDelete, 'Five Level Co');
+  await fiveLevelLi.$eval('.delete-tenant-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 400));
 
   // Attempting to add a tenant with an invalid email should block the save with an alert,
   // not silently drop the bad address.
@@ -376,8 +395,8 @@ async function runFlow(page, seedEnv, consoleErrors){
   await new Promise(r => setTimeout(r, 800));
 
   const tenantEntriesAfterImport = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
-  check('Widgetco was imported with both its levels merged',
-    tenantEntriesAfterImport.some(t => t.includes('Widgetco') && t.includes('Level 3') && t.includes('Level 4')),
+  check('Widgetco was imported with both its levels merged, compacted into one "Levels 3, 4"',
+    tenantEntriesAfterImport.some(t => t.includes('Widgetco') && t.includes('Levels 3, 4')),
     tenantEntriesAfterImport.join(' || '));
   check('unticked junk rows (Vacant, Base Building) were NOT imported',
     !tenantEntriesAfterImport.some(t => t.includes('Vacant')) && !tenantEntriesAfterImport.some(t => t.includes('Base Building')),
@@ -408,8 +427,8 @@ async function runFlow(page, seedEnv, consoleErrors){
   await new Promise(r => setTimeout(r, 600));
 
   let tenantEntriesLive = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
-  check('tenant rename + level change saved correctly',
-    tenantEntriesLive.some(t => t.includes('Test Tenant Renamed') && t.includes('Level 5') && t.includes('Level 6')),
+  check('tenant rename + level change saved correctly, compacted into one "Levels 5, 6"',
+    tenantEntriesLive.some(t => t.includes('Test Tenant Renamed') && t.includes('Levels 5, 6')),
     tenantEntriesLive.join(' || '));
   check('editing name/levels did NOT drop the previously-saved contact emails',
     tenantEntriesLive.some(t => t.includes('Test Tenant Renamed') && t.includes('jane@example.com') && t.includes('bob@example.com')),
@@ -831,10 +850,12 @@ async function runFlow(page, seedEnv, consoleErrors){
       copyBtnText.includes('Copied') || copyBtnText.includes('Copy link'), copyBtnText);
   }
 
-  // --- Contact-email features in Distribution: coverage counter, Send via email / Copy
-  // addresses on tenant-scoped links, and the bulk Excel contacts round-trip. Give "Widgetco"
-  // (one of the 6 surviving tenants) a contact email first — the others stay email-less so the
-  // "no email -> no buttons" and coverage-count paths have something real to check against.
+  // --- Contact-email features. "Coverage counter" and the bulk Excel contacts round-trip live
+  // in Edificios (a tenant's email isn't scoped to any one induction); "Send via email"/"Copy
+  // addresses" on generated links stay in Distribution (that's about the link itself). Give
+  // "Widgetco" (one of the 6 surviving tenants) a contact email first — the others stay
+  // email-less so the "no email -> no buttons" and coverage-count paths have something real to
+  // check against.
   await page.click('#settingsBtn');
   await new Promise(r => setTimeout(r, 100));
   await page.click('#tabBuildingsBtn');
@@ -849,26 +870,73 @@ async function runFlow(page, seedEnv, consoleErrors){
   await widgetcoEditRow.$eval('.save-tenant-btn', el => el.click());
   await new Promise(r => setTimeout(r, 600));
 
-  // #tabDistributionBtn lives in the main Reports nav, not the ⚙ Settings sub-view we're
-  // currently in (Buildings/Admins/Catalog) — have to leave Settings first.
+  const buildingsRowForCoverage = await findRowByName(page, '.building-row', buildingName);
+  const coverageText = await buildingsRowForCoverage.$eval('.contacts-coverage-note', el => el.textContent);
+  check('the coverage counter (Edificios) reports exactly 1 of 6 tenants has a contact email',
+    coverageText.includes('1 of 6'), coverageText);
+
+  const buildingsTenantIds = await buildingsRowForCoverage.$$eval('.tenant-list li[data-tenant-id]', els =>
+    els.map(el => ({ id: el.dataset.tenantId, name: el.querySelector('.tenant-name').textContent })));
+  const widgetcoId = buildingsTenantIds.find(t => t.name === 'Widgetco').id;
+  const acmeLegalId = buildingsTenantIds.find(t => t.name === 'Acme Legal').id;
+
+  // --- Bulk contacts round-trip (Edificios): export doesn't throw, import matches by Tenant
+  // ID, unions emails split across two rows for the same tenant, and flags an unmatched row. ---
+  const errorsBeforeExport = consoleErrors.length;
+  await buildingsRowForCoverage.$eval('.export-contacts-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 300));
+  check('"Export contacts template" click does not throw (Edificios)', consoleErrors.length === errorsBeforeExport);
+
+  const contactsFixturePath = path.join(require('os').tmpdir(), `contacts-import-${Date.now()}.xlsx`);
+  const contactsWb = xlsxLib.utils.book_new();
+  xlsxLib.utils.book_append_sheet(contactsWb, xlsxLib.utils.json_to_sheet([
+    // Two rows for the same tenant (Acme Legal) — the import should union these into one
+    // tenant with both emails, not just keep the last row.
+    { 'Tenant ID': acmeLegalId, Tenant: 'Acme Legal', Email: 'acme-one@example.com' },
+    { 'Tenant ID': acmeLegalId, Tenant: 'Acme Legal', Email: 'acme-two@example.com' },
+    // A row whose Tenant ID doesn't exist and whose name doesn't match anything real either.
+    { 'Tenant ID': 'not-a-real-id', Tenant: 'Nonexistent Co', Email: 'ghost@example.com' },
+  ]), 'Contacts');
+  xlsxLib.writeFile(contactsWb, contactsFixturePath);
+
+  const contactsFileInput = await buildingsRowForCoverage.$('.import-contacts-input');
+  await contactsFileInput.uploadFile(contactsFixturePath);
+  await new Promise(r => setTimeout(r, 500));
+  fs.unlinkSync(contactsFixturePath);
+
+  const contactsReview = await buildingsRowForCoverage.$$eval('.import-contacts-review .import-row', rows =>
+    rows.map(r => ({
+      unmatched: r.classList.contains('import-row-unmatched'),
+      text: r.textContent,
+    })));
+  check('the import review unions both rows for Acme Legal into a single matched entry with both emails',
+    contactsReview.some(r => !r.unmatched && r.text.includes('Acme Legal') && r.text.includes('acme-one@example.com') && r.text.includes('acme-two@example.com')),
+    JSON.stringify(contactsReview));
+  check('the row with no matching tenant ID or name is flagged as unmatched, not silently dropped',
+    contactsReview.some(r => r.unmatched && r.text.includes('Nonexistent Co')),
+    JSON.stringify(contactsReview));
+
+  await buildingsRowForCoverage.$eval('.import-contacts-confirm-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  const acmeDocAfterImport = await readTenantDoc(seedEnv, buildingId, acmeLegalId);
+  check('after confirming the import, Acme Legal now shows both emails from the two merged rows',
+    Array.isArray(acmeDocAfterImport?.emails) && acmeDocAfterImport.emails.includes('acme-one@example.com') && acmeDocAfterImport.emails.includes('acme-two@example.com'),
+    JSON.stringify(acmeDocAfterImport));
+  const widgetcoDocAfterImport = await readTenantDoc(seedEnv, buildingId, widgetcoId);
+  check('the import left Widgetco\'s own, separately-saved email untouched',
+    Array.isArray(widgetcoDocAfterImport?.emails) && widgetcoDocAfterImport.emails.includes('widgetco-contact@example.com'),
+    JSON.stringify(widgetcoDocAfterImport));
+
+  // --- Send via email / Copy addresses on tenant-scoped Distribution links (Northwind
+  // Consulting stays untouched/email-less throughout this whole flow, so it's the reliable
+  // "no email -> no buttons" case here — Acme Legal now has emails from the import above). ---
   await page.click('#backToReportsLink');
   await new Promise(r => setTimeout(r, 200));
-  // Saving Widgetco's email only refreshed master Edificios' own cache (buildingsCache) —
-  // Distribution reads a separate one (enrolledBuildingsCache) that re-selecting the program
-  // refreshes, same as a real admin would get by navigating away and back.
   await selectProgram(page, 'recycling-sorting');
   await new Promise(r => setTimeout(r, 500));
   await page.click('#tabDistributionBtn');
   await new Promise(r => setTimeout(r, 200));
-
-  const coverageText = await page.$eval(`${distributionSelector} .contacts-coverage-note`, el => el.textContent);
-  check('the coverage counter reports exactly 1 of 6 enabled tenants has a contact email',
-    coverageText.includes('1 of 6'), coverageText);
-
-  const tenantOptions = await page.$$eval(`${distributionSelector} .new-link-tenant option`, els =>
-    els.filter(el => el.value).map(el => ({ id: el.value, name: el.textContent })));
-  const widgetcoId = tenantOptions.find(t => t.name === 'Widgetco').id;
-  const acmeLegalId = tenantOptions.find(t => t.name === 'Acme Legal').id;
 
   async function generateTenantLink(tenantId){
     await page.select(`${distributionSelector} .new-link-tenant`, tenantId);
@@ -877,9 +945,9 @@ async function runFlow(page, seedEnv, consoleErrors){
   }
 
   await generateTenantLink(widgetcoId);
-  const widgetcoLinkLi = await page.evaluateHandle((sel, id) => {
+  const widgetcoLinkLi = await page.evaluateHandle((sel) => {
     return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Widgetco'));
-  }, distributionSelector, widgetcoId).then(h => h.asElement());
+  }, distributionSelector).then(h => h.asElement());
   const widgetcoCopyBtns = await widgetcoLinkLi.$$('.copy-link-btn'); // [0] is "Copy link", [1] is "Copy addresses"
   check('a tenant-scoped link for a tenant WITH a saved email shows "Send via email" and "Copy addresses"',
     Boolean(await widgetcoLinkLi.$('.send-email-btn')) && widgetcoCopyBtns.length === 2,
@@ -889,13 +957,14 @@ async function runFlow(page, seedEnv, consoleErrors){
   check('the "Copy addresses" button carries the tenant\'s actual saved email in its data-link',
     copyAddressesDataLink === 'widgetco-contact@example.com', copyAddressesDataLink);
 
-  await generateTenantLink(acmeLegalId);
-  const acmeLinkLi = await page.evaluateHandle((sel) => {
-    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Acme Legal'));
+  const northwindId = buildingsTenantIds.find(t => t.name === 'Northwind Consulting').id;
+  await generateTenantLink(northwindId);
+  const northwindLinkLi = await page.evaluateHandle((sel) => {
+    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Northwind Consulting'));
   }, distributionSelector).then(h => h.asElement());
   check('a tenant-scoped link for a tenant with NO saved email shows neither button',
-    !(await acmeLinkLi.$('.send-email-btn')) && (await acmeLinkLi.$$('.copy-link-btn')).length === 1,
-    await acmeLinkLi.evaluate(el => el.textContent));
+    !(await northwindLinkLi.$('.send-email-btn')) && (await northwindLinkLi.$$('.copy-link-btn')).length === 1,
+    await northwindLinkLi.evaluate(el => el.textContent));
 
   const wholeBuildingRowText = await page.$eval(`${distributionSelector} .building-link-row`, el => el.textContent);
   check('the whole-building link row (no single tenant to address) never shows "Send via email"',
@@ -905,7 +974,7 @@ async function runFlow(page, seedEnv, consoleErrors){
   // clicking "Send via email" right now MUST fail gracefully: try, fail, tell the admin to use
   // "Copy addresses" instead, and leave the button clickable again — never a crash or a stuck
   // "Sending…" state.
-  // Re-query fresh — generating the Acme Legal link just above re-rendered #distributionList's
+  // Re-query fresh — generating the Northwind link just above re-rendered #distributionList's
   // innerHTML, detaching the earlier widgetcoLinkLi/its children from the live document.
   const alertCountBeforeSend = await page.evaluate(() => window.__alertCalls.length);
   const widgetcoLinkLiFresh = await page.evaluateHandle((sel) => {
@@ -921,57 +990,6 @@ async function runFlow(page, seedEnv, consoleErrors){
   const sendBtnDisabledAfterFailure = await sendBtn.evaluate(el => el.disabled);
   check('the "Send via email" button resets to its original label and stays usable after a failed send',
     sendBtnTextAfterFailure.includes('Send via email') && !sendBtnDisabledAfterFailure, sendBtnTextAfterFailure);
-
-  // --- Bulk contacts round-trip: export doesn't throw, import matches by Tenant ID, unions
-  // emails split across two rows for the same tenant, and flags an unmatched row. ---
-  const errorsBeforeExport = consoleErrors.length;
-  await page.click(`${distributionSelector} .export-contacts-btn`);
-  await new Promise(r => setTimeout(r, 300));
-  check('"Export contacts template" click does not throw', consoleErrors.length === errorsBeforeExport);
-
-  const contactsFixturePath = path.join(require('os').tmpdir(), `contacts-import-${Date.now()}.xlsx`);
-  const contactsWb = xlsxLib.utils.book_new();
-  xlsxLib.utils.book_append_sheet(contactsWb, xlsxLib.utils.json_to_sheet([
-    // Two rows for the same tenant (Acme Legal) — the import should union these into one
-    // tenant with both emails, not just keep the last row.
-    { 'Tenant ID': acmeLegalId, Tenant: 'Acme Legal', Email: 'acme-one@example.com' },
-    { 'Tenant ID': acmeLegalId, Tenant: 'Acme Legal', Email: 'acme-two@example.com' },
-    // A row whose Tenant ID doesn't exist and whose name doesn't match anything real either.
-    { 'Tenant ID': 'not-a-real-id', Tenant: 'Nonexistent Co', Email: 'ghost@example.com' },
-  ]), 'Contacts');
-  xlsxLib.writeFile(contactsWb, contactsFixturePath);
-
-  const contactsFileInput = await page.$(`${distributionSelector} .import-contacts-input`);
-  await contactsFileInput.uploadFile(contactsFixturePath);
-  await new Promise(r => setTimeout(r, 500));
-  fs.unlinkSync(contactsFixturePath);
-
-  const contactsReview = await page.$$eval(`${distributionSelector} .import-contacts-review .import-row`, rows =>
-    rows.map(r => ({
-      unmatched: r.classList.contains('import-row-unmatched'),
-      text: r.textContent,
-    })));
-  check('the import review unions both rows for Acme Legal into a single matched entry with both emails',
-    contactsReview.some(r => !r.unmatched && r.text.includes('Acme Legal') && r.text.includes('acme-one@example.com') && r.text.includes('acme-two@example.com')),
-    JSON.stringify(contactsReview));
-  check('the row with no matching tenant ID or name is flagged as unmatched, not silently dropped',
-    contactsReview.some(r => r.unmatched && r.text.includes('Nonexistent Co')),
-    JSON.stringify(contactsReview));
-
-  await page.click(`${distributionSelector} .import-contacts-confirm-btn`);
-  await new Promise(r => setTimeout(r, 600));
-
-  // Read straight from Firestore rather than the Edificios UI list — that list only refreshes
-  // from its own separate cache on specific Edificios-side actions, so it would still show
-  // stale pre-import data here even though the write (made from the Distribution tab) succeeded.
-  const acmeDocAfterImport = await readTenantDoc(seedEnv, buildingId, acmeLegalId);
-  check('after confirming the import, Acme Legal now shows both emails from the two merged rows',
-    Array.isArray(acmeDocAfterImport?.emails) && acmeDocAfterImport.emails.includes('acme-one@example.com') && acmeDocAfterImport.emails.includes('acme-two@example.com'),
-    JSON.stringify(acmeDocAfterImport));
-  const widgetcoDocAfterImport = await readTenantDoc(seedEnv, buildingId, widgetcoId);
-  check('the import left Widgetco\'s own, separately-saved email untouched',
-    Array.isArray(widgetcoDocAfterImport?.emails) && widgetcoDocAfterImport.emails.includes('widgetco-contact@example.com'),
-    JSON.stringify(widgetcoDocAfterImport));
 
   // --- Edit and delete the building itself (back in master Edificios) ---
   await page.click('#settingsBtn');
