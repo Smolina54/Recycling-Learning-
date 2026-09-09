@@ -10,7 +10,9 @@ const puppeteer = require('puppeteer-core');
 const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const { doc, setDoc, collection, getDocs, query, where } = require('firebase/firestore');
 
-const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+// Override via TEST_BROWSER_PATH if this machine's security software blocks Edge automation
+// (e.g. a corporate EDR flagging --remote-debugging-port on msedge.exe specifically).
+const EDGE_PATH = process.env.TEST_BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const GAME_PATH = path.join(__dirname, '..', 'outputs', 'battery-training.html');
 const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
 const BUILDING_ID = 'test-tower-battery';

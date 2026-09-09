@@ -2542,6 +2542,27 @@ var qrcode = function() {
   }
   .remove-level-row-btn:hover{color:var(--gw);}
   .add-level-row-btn{align-self:flex-start; padding:6px 14px; font-size:12.5px;}
+  .tenant-list .tenant-emails{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
+  .emails-editor{display:flex; flex-direction:column; gap:8px; flex:1; min-width:220px;}
+  .email-row{display:flex; align-items:center; gap:6px;}
+  .email-row input{
+    font-family:var(--body); font-size:13px; padding:6px 10px; border:1.5px solid var(--line);
+    border-radius:var(--radius); color:var(--ink); width:220px;
+  }
+  .remove-email-row-btn{
+    background:transparent; border:none; color:var(--ink-soft); font-size:18px; line-height:1;
+    cursor:pointer; padding:2px 6px;
+  }
+  .remove-email-row-btn:hover{color:var(--gw);}
+  .add-email-row-btn{align-self:flex-start; padding:6px 14px; font-size:12.5px;}
+  /* Overrides .import-row's 3-column grid (24px checkbox + 2 fields) — this row has no
+     checkbox, just a tag and a name, so it needs its own narrower layout instead of
+     squeezing the tag into that 24px first column. */
+  .import-row-unmatched{display:flex; align-items:center; gap:10px; opacity:0.75;}
+  .contacts-unmatched-tag{
+    font-family:var(--mono); font-size:10px; letter-spacing:0.03em; text-transform:uppercase;
+    color:var(--gw); border:1px solid var(--gw); padding:2px 6px; flex-shrink:0;
+  }
   .tenant-list .btn.secondary, .building-header-actions .btn, .building-edit-row .btn{padding:6px 14px; font-size:12.5px;}
   .danger-btn{border-color:var(--gw) !important; color:var(--gw) !important;}
   .danger-btn:hover{background:var(--gw) !important; color:var(--paper) !important;}
@@ -3002,14 +3023,15 @@ var qrcode = function() {
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, collection, getDoc, getDocs, deleteDoc, doc, setDoc, updateDoc, query, where, orderBy, limit, serverTimestamp, connectFirestoreEmulator
+  getFirestore, collection, getDoc, getDocs, deleteDoc, doc, setDoc, updateDoc, writeBatch, query, where, orderBy, limit, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
   createUserWithEmailAndPassword, signInWithEmailAndPassword
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
-import { read as readWorkbook, utils as xlsxUtils } from "https://cdn.sheetjs.com/xlsx-latest/package/xlsx.mjs";
+import { getFunctions, httpsCallable, connectFunctionsEmulator } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
+import { read as readWorkbook, utils as xlsxUtils, writeFile as xlsxWriteFile } from "https://cdn.sheetjs.com/xlsx-latest/package/xlsx.mjs";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAoWSx9FYa6UJa-6EZezgBYiDMuVVs9BBo",
@@ -3026,11 +3048,12 @@ const firebaseConfig = {
 // Key ID (kept for whenever this gets revisited): 6LcynpwtAAAAAJ5IdNxKtqXRmtXTHrXdGZehA6Vw
 const RECAPTCHA_SITE_KEY = '';
 
-let db = null, auth = null;
+let db = null, auth = null, functions = null;
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
   auth = getAuth(firebaseApp);
+  functions = getFunctions(firebaseApp);
   const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
   // Same reasoning as recycling-training.html: App Check's reCAPTCHA Enterprise call needs a
   // real round-trip from one of the key's registered domains, which file:// (what every
@@ -3045,6 +3068,7 @@ try {
   if (isEmulatorMode){
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
     connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    connectFunctionsEmulator(functions, '127.0.0.1', 5001);
     // Test-only sign-in hook (no real Google popup against the emulator) — never runs
     // outside ?emulator=1, so it never exists on the real deployed page.
     window.__testSignIn = async (email, password) => {
@@ -3054,7 +3078,10 @@ try {
     };
     // Local convenience: auto sign in as the owner account so ?emulator=1 never needs the
     // login form typed by hand — never runs outside ?emulator=1, so never on the real page.
-    window.__testSignIn('esgtradeflex@gmail.com', 'probando123')
+    // Same password the automated test suite already uses for this account (see
+    // ALLOWED_EMAIL in tests/admin-buildings.test.js) — using a different one here would
+    // create the emulator user first with the wrong password, breaking that test's own sign-in.
+    window.__testSignIn('esgtradeflex@gmail.com', 'test-password-123')
       .catch(err => console.error('Local auto sign-in failed', err));
   }
 } catch (err) {
@@ -3131,6 +3158,35 @@ try {
       if (type === 'Ground') return 'Ground';
       return row.querySelector('.level-other-input').value.trim() || null;
     }).filter(Boolean);
+  }
+
+  function isValidEmail(str){
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(str || '').trim());
+  }
+
+  // Same add/remove-row interaction as the levels editor above, but simpler — no type
+  // dropdown, and it may start with zero rows since a contact email is optional (a level
+  // isn't). `extraClass` distinguishes an "add tenant" editor from an "edit tenant" one,
+  // same reasoning as renderLevelsEditorHtml.
+  function emailRowHtml(value){
+    return `
+      <div class="email-row">
+        <input type="email" class="email-input" placeholder="name@company.com" value="${esc(value)}">
+        <button type="button" class="remove-email-row-btn" title="Remove this email">×</button>
+      </div>`;
+  }
+
+  function renderEmailsEditorHtml(existingEmails, extraClass){
+    const rows = (existingEmails && existingEmails.length) ? existingEmails : [];
+    return `
+      <div class="emails-editor ${extraClass}">
+        ${rows.map(emailRowHtml).join('')}
+        <button type="button" class="btn secondary add-email-row-btn">+ Add another email</button>
+      </div>`;
+  }
+
+  function readEmailsFromEditor(editorEl){
+    return [...editorEl.querySelectorAll('.email-row')].map(row => row.querySelector('.email-input').value.trim()).filter(Boolean);
   }
 
   // AUTO-GENERATED CATALOG START — do not edit by hand, run `npm run sync-catalog` after
@@ -5281,7 +5337,7 @@ try {
           name: d.data().name || '(untitled)',
           tenants: tenantsSnap.docs
             .filter(t => t.data().active !== false)
-            .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [] })),
+            .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [], emails: t.data().emails || [] })),
         };
       }));
       buildingsCache = buildings;
@@ -5336,7 +5392,7 @@ try {
         enabledTenantIds: enrollment.enabledTenantIds,
         tenants: tenantsSnap.docs
           .filter(t => t.data().active !== false)
-          .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [] })),
+          .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [], emails: t.data().emails || [] })),
         links: linksByBuilding[d.id] || [],
       };
     }));
@@ -5370,10 +5426,13 @@ try {
           const tenant = l.tenantId ? b.tenants.find(t => t.id === l.tenantId) : null;
           const scopeText = tenant ? esc(tenant.name) : 'Whole building';
           const expiryText = l.expiresAtMs ? `expires ${new Date(l.expiresAtMs).toLocaleDateString('en-GB')}` : 'no expiry';
+          const emailsCsv = tenant?.emails?.length ? tenant.emails.join(';') : '';
           return `
             <li data-link-id="${esc(l.id)}">
               <span class="tenant-name">${scopeText} — <span class="block-sub">${expiryText}</span></span>
               <button class="btn secondary copy-link-btn" data-link="${linkUrl}">Copy link →</button>
+              ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-subject="${esc(`${currentProgram().name} — ${b.name}`)}" data-body="${esc(`Hi,\n\nHere's the induction link for ${b.name}:\n${linkUrl}\n\nThanks.`)}">Send via email →</button>
+              <button class="btn secondary copy-link-btn" data-link="${esc(tenant.emails.join('; '))}">Copy addresses →</button>` : ''}
               <button class="btn secondary revoke-link-btn danger-btn">Revoke</button>
             </li>`;
         }).join('')
@@ -5445,6 +5504,7 @@ try {
               return `<li class="tenant-edit-row" data-tenant-id="${t.id}">
                 <input type="text" class="edit-tenant-name-input" value="${esc(t.name)}">
                 ${renderLevelsEditorHtml(t.levels, 'edit-tenant-levels-editor')}
+                ${renderEmailsEditorHtml(t.emails, 'edit-tenant-emails-editor')}
                 <button class="btn save-tenant-btn">Save</button>
                 <button class="btn secondary cancel-tenant-btn">Cancel</button>
               </li>`;
@@ -5452,6 +5512,7 @@ try {
             return `<li data-tenant-id="${t.id}">
               <span class="tenant-name">${esc(t.name)}</span>
               <span class="tenant-levels">${esc(t.levels.join(', '))}</span>
+              ${t.emails && t.emails.length ? `<span class="tenant-emails">${esc(t.emails.join(', '))}</span>` : ''}
               <span class="tenant-row-actions">
                 <button class="btn secondary edit-tenant-btn">Edit</button>
                 <button class="btn secondary delete-tenant-btn danger-btn">Delete</button>
@@ -5466,6 +5527,7 @@ try {
         <div class="filter-row">
           <label class="filter-field"><span>Tenant name</span><input type="text" class="new-tenant-name"></label>
           <label class="filter-field"><span>Levels</span>${renderLevelsEditorHtml([], 'new-tenant-levels-editor')}</label>
+          <label class="filter-field"><span>Contact email(s)</span>${renderEmailsEditorHtml([], 'new-tenant-emails-editor')}</label>
         </div>
         <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
           <button class="btn secondary add-tenant-btn">+ Add tenant</button>
@@ -5559,6 +5621,8 @@ try {
     }
     container.innerHTML = buildings.map(b => {
       const link = `${pageBaseUrl()}${currentProgram().file}?b=${b.id}`;
+      const enabledTenants = b.tenants.filter(t => !Array.isArray(b.enabledTenantIds) || b.enabledTenantIds.includes(t.id));
+      const withEmail = enabledTenants.filter(t => (t.emails || []).length).length;
       return `
       <div class="report-block distribution-building-row" data-building-id="${b.id}">
         <h3>${esc(b.name)}</h3>
@@ -5568,6 +5632,15 @@ try {
           <button class="btn secondary preview-link-btn" data-link="${link}">Preview →</button>
         </div>
         <div class="building-qr" data-link="${link}"></div>
+        <p class="block-sub contacts-coverage-note">${withEmail} of ${enabledTenants.length} enabled tenants have a contact email saved.</p>
+        <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+          <button class="btn secondary export-contacts-btn">Export contacts template →</button>
+          <label class="btn secondary import-contacts-label">
+            Import contact emails →
+            <input type="file" class="import-contacts-input" accept=".xlsx" style="display:none;">
+          </label>
+        </div>
+        <div class="import-contacts-review" style="display:none;"></div>
         ${renderDistributionLinksHtml(b)}
       </div>
     `;
@@ -5612,6 +5685,73 @@ try {
       if (level) groups.get(tenantName).add(level);
     });
     return [...groups.entries()].map(([name, levelSet]) => ({ name, levels: [...levelSet] }));
+  }
+
+  // Bulk contacts round-trip (Distribution tab): reads "Tenant ID" / "Tenant" / "Email"
+  // columns by header name (order-tolerant, same leniency as groupTenantsFromRows above).
+  // Matches each row to an EXISTING tenant by Tenant ID first, falling back to a trimmed/
+  // case-insensitive name match — this import only updates tenants, it never creates one.
+  // Groups by resolved tenant (not by row) since a building manager may add a second row for
+  // the same tenant instead of comma-separating emails in one cell, and drops-but-counts
+  // anything that doesn't look like a real email rather than silently keeping garbage.
+  function parseContactsFromRows(rows, tenants){
+    const header = (rows[0] || []).map(h => String(h || '').trim().toLowerCase());
+    const idIdx = header.indexOf('tenant id');
+    const nameIdx = header.indexOf('tenant');
+    const emailIdx = header.indexOf('email');
+    const byId = new Map(tenants.map(t => [t.id, t]));
+    const byName = new Map(tenants.map(t => [t.name.trim().toLowerCase(), t]));
+
+    const matchedById = new Map(); // tenantId -> { tenant, emails: Set, invalidCount }
+    const unmatched = [];
+
+    rows.slice(1).forEach(row => {
+      const rawId = idIdx !== -1 ? String(row[idIdx] ?? '').trim() : '';
+      const rawName = nameIdx !== -1 ? String(row[nameIdx] ?? '').trim() : '';
+      const rawEmail = emailIdx !== -1 ? String(row[emailIdx] ?? '').trim() : '';
+      if (!rawId && !rawName && !rawEmail) return;
+
+      const tenant = (rawId && byId.get(rawId)) || byName.get(rawName.toLowerCase());
+      if (!tenant){
+        unmatched.push({ name: rawName || rawId || '(blank)' });
+        return;
+      }
+      if (!matchedById.has(tenant.id)) matchedById.set(tenant.id, { tenant, emails: new Set(), invalidCount: 0 });
+      const entry = matchedById.get(tenant.id);
+      rawEmail.split(/[,;]/).map(s => s.trim()).filter(Boolean).forEach(email => {
+        if (isValidEmail(email)) entry.emails.add(email);
+        else entry.invalidCount++;
+      });
+    });
+
+    return { matched: [...matchedById.values()], unmatched };
+  }
+
+  function renderContactsImportReview(row, parsed){
+    const reviewEl = row.querySelector('.import-contacts-review');
+    reviewEl.style.display = 'block';
+    reviewEl.innerHTML = `
+      <p class="block-sub" style="margin-top:14px;">Review before importing.${parsed.unmatched.length ? ' Rows that didn’t match an existing tenant are shown below, skipped — nothing was written for them.' : ''}</p>
+      <div class="import-candidates">
+        ${parsed.matched.map(m => `
+          <div class="import-row" data-tenant-id="${esc(m.tenant.id)}" data-emails="${esc([...m.emails].join(';'))}">
+            <input type="checkbox" class="import-contacts-check" checked>
+            <span class="tenant-name">${esc(m.tenant.name)}</span>
+            <span class="block-sub">${esc([...m.emails].join(', ')) || '(no valid emails found)'}${m.invalidCount ? ` — ${m.invalidCount} invalid, skipped` : ''}</span>
+          </div>
+        `).join('')}
+        ${parsed.unmatched.map(u => `
+          <div class="import-row import-row-unmatched">
+            <span class="contacts-unmatched-tag">Not matched</span>
+            <span class="tenant-name">${esc(u.name)}</span>
+          </div>
+        `).join('')}
+      </div>
+      <div class="print-row" style="justify-content:flex-start; margin-top:12px;">
+        <button class="btn import-contacts-confirm-btn">Import selected →</button>
+        <button class="btn secondary import-contacts-cancel-btn">Cancel</button>
+      </div>
+    `;
   }
 
   function renderImportReview(row, candidates){
@@ -5904,6 +6044,30 @@ try {
       }
       return;
     }
+
+    // Calls the sendInductionEmail Cloud Function (Microsoft Graph, application permissions —
+    // see the plan) — not deployable until Blaze + the Entra ID app + its secrets are in place.
+    // "Copy addresses →" right next to this button is the manual fallback for meanwhile, or for
+    // whenever the automated send fails.
+    const sendEmailBtn = e.target.closest('.send-email-btn');
+    if (sendEmailBtn){
+      const original = sendEmailBtn.textContent;
+      sendEmailBtn.disabled = true;
+      sendEmailBtn.textContent = 'Sending…';
+      try {
+        const to = sendEmailBtn.dataset.emails.split(';').filter(Boolean);
+        const sendInductionEmail = httpsCallable(functions, 'sendInductionEmail');
+        await sendInductionEmail({ to, subject: sendEmailBtn.dataset.subject, text: sendEmailBtn.dataset.body });
+        sendEmailBtn.textContent = 'Sent ✓';
+        setTimeout(() => { sendEmailBtn.textContent = original; sendEmailBtn.disabled = false; }, 2500);
+      } catch (err){
+        console.error('sendInductionEmail failed:', err);
+        alert('Could not send automatically — use "Copy addresses" and send it yourself instead.');
+        sendEmailBtn.textContent = original;
+        sendEmailBtn.disabled = false;
+      }
+      return;
+    }
   });
 
   // ---------------- ⚙ Edificios (master): building/tenant CRUD, program-agnostic ----------------
@@ -5918,6 +6082,18 @@ try {
     if (removeLevelRowBtn){
       const editor = removeLevelRowBtn.closest('.levels-editor');
       if (editor.querySelectorAll('.level-row').length > 1) removeLevelRowBtn.closest('.level-row').remove();
+      return;
+    }
+
+    const addEmailRowBtn = e.target.closest('.add-email-row-btn');
+    if (addEmailRowBtn){
+      addEmailRowBtn.insertAdjacentHTML('beforebegin', emailRowHtml(''));
+      return;
+    }
+
+    const removeEmailRowBtn = e.target.closest('.remove-email-row-btn');
+    if (removeEmailRowBtn){
+      removeEmailRowBtn.closest('.email-row').remove(); // no "keep at least 1" guard — email is optional
       return;
     }
 
@@ -6011,9 +6187,14 @@ try {
       const tenantId = li.dataset.tenantId;
       const newName = li.querySelector('.edit-tenant-name-input').value.trim();
       const newLevels = readLevelsFromEditor(li.querySelector('.edit-tenant-levels-editor'));
+      const newEmails = readEmailsFromEditor(li.querySelector('.edit-tenant-emails-editor'));
       if (!newName || newLevels.length === 0){ alert('Enter a tenant name and at least one level.'); return; }
+      const badEmail = newEmails.find(addr => !isValidEmail(addr));
+      if (badEmail){ alert(`"${badEmail}" doesn't look like a valid email address.`); return; }
       try {
-        await setDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: newName, levels: newLevels });
+        // No {merge:true} here — this fully replaces the tenant doc, so every field that
+        // should survive an edit (emails included) must be listed explicitly.
+        await setDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: newName, levels: newLevels, emails: newEmails });
         editingTenant = null;
         await loadMasterBuildings();
       } catch (err){
@@ -6050,9 +6231,12 @@ try {
       const buildingId = row.dataset.buildingId;
       const tenantName = row.querySelector('.new-tenant-name').value.trim();
       const levels = readLevelsFromEditor(row.querySelector('.new-tenant-levels-editor'));
+      const emails = readEmailsFromEditor(row.querySelector('.new-tenant-emails-editor'));
       if (!tenantName || levels.length === 0){ alert('Enter a tenant name and at least one level.'); return; }
+      const badEmail = emails.find(addr => !isValidEmail(addr));
+      if (badEmail){ alert(`"${badEmail}" doesn't look like a valid email address.`); return; }
       try {
-        await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: tenantName, levels });
+        await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: tenantName, levels, emails });
         await loadMasterBuildings(); // re-renders the whole tab, including a fresh blank "add tenant" form
       } catch (err){
         console.error('Failed to add tenant:', err);
@@ -6296,6 +6480,83 @@ try {
       }
       return;
     }
+
+    const exportContactsBtn = e.target.closest('.export-contacts-btn');
+    if (exportContactsBtn){
+      const row = exportContactsBtn.closest('.distribution-building-row');
+      const buildingId = row.dataset.buildingId;
+      const b = enrolledBuildingsCache.find(x => x.id === buildingId);
+      const enabledTenants = b.tenants.filter(t => !Array.isArray(b.enabledTenantIds) || b.enabledTenantIds.includes(t.id));
+      const rows = enabledTenants.map(t => ({
+        'Tenant ID': t.id, Tenant: t.name, Levels: t.levels.join(', '), Email: (t.emails || []).join('; '),
+      }));
+      const wb = xlsxUtils.book_new();
+      xlsxUtils.book_append_sheet(wb, xlsxUtils.json_to_sheet(rows), 'Contacts');
+      xlsxWriteFile(wb, `${b.name} — contacts.xlsx`);
+      return;
+    }
+
+    const cancelContactsBtn = e.target.closest('.import-contacts-cancel-btn');
+    if (cancelContactsBtn){
+      cancelContactsBtn.closest('.import-contacts-review').style.display = 'none';
+      return;
+    }
+
+    const confirmContactsBtn = e.target.closest('.import-contacts-confirm-btn');
+    if (confirmContactsBtn){
+      const row = confirmContactsBtn.closest('.distribution-building-row');
+      const buildingId = row.dataset.buildingId;
+      const b = enrolledBuildingsCache.find(x => x.id === buildingId);
+      const toWrite = [...row.querySelectorAll('.import-row:not(.import-row-unmatched)')]
+        .filter(r => r.querySelector('.import-contacts-check').checked)
+        .map(r => {
+          const tenantId = r.dataset.tenantId;
+          const tenant = b.tenants.find(t => t.id === tenantId);
+          const emails = r.dataset.emails ? r.dataset.emails.split(';').filter(Boolean) : [];
+          return { tenantId, tenant, emails };
+        });
+      if (toWrite.length === 0){ alert('Nothing selected to import.'); return; }
+      confirmContactsBtn.disabled = true;
+      confirmContactsBtn.textContent = 'Importing…';
+      try {
+        // One atomic batch, not one setDoc per tenant — a network hiccup mid-import can't
+        // leave some tenants updated and others not.
+        const batch = writeBatch(db);
+        for (const { tenantId, tenant, emails } of toWrite){
+          batch.set(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: tenant.name, levels: tenant.levels, emails });
+        }
+        await batch.commit();
+        row.querySelector('.import-contacts-review').style.display = 'none';
+        await loadEnrolledData();
+      } catch (err){
+        console.error('Failed to import contact emails:', err);
+        alert('Import failed — check the console for details.');
+        confirmContactsBtn.disabled = false;
+        confirmContactsBtn.textContent = 'Import selected →';
+      }
+      return;
+    }
+  });
+
+  document.getElementById('distributionList').addEventListener('change', async (e) => {
+    const input = e.target.closest('.import-contacts-input');
+    if (!input || !input.files[0]) return;
+    const row = input.closest('.distribution-building-row');
+    const buildingId = row.dataset.buildingId;
+    const b = enrolledBuildingsCache.find(x => x.id === buildingId);
+    const file = input.files[0];
+    try {
+      const buf = await file.arrayBuffer();
+      const workbook = readWorkbook(buf);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = xlsxUtils.sheet_to_json(sheet, { header: 1 });
+      const parsed = parseContactsFromRows(rows, b.tenants);
+      renderContactsImportReview(row, parsed);
+    } catch (err){
+      console.error('Failed to read Excel file:', err);
+      alert("Could not read that file — make sure it's a valid .xlsx export.");
+    }
+    input.value = '';
   });
 
   // ⚙ Edificios (master) again — tenant-levels editor + bulk Excel import, both only ever

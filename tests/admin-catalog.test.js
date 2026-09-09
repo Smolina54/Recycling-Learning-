@@ -8,7 +8,9 @@ const path = require('path');
 const url = require('url');
 const puppeteer = require('puppeteer-core');
 
-const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+// Override via TEST_BROWSER_PATH if this machine's security software blocks Edge automation
+// (e.g. a corporate EDR flagging --remote-debugging-port on msedge.exe specifically).
+const EDGE_PATH = process.env.TEST_BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const REPORT_URL = `${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'sorting-station-report.html')).href}?emulator=1`;
 const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
 

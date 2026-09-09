@@ -10,11 +10,14 @@ const path = require('path');
 const url = require('url');
 const fs = require('fs');
 const puppeteer = require('puppeteer-core');
+const xlsxLib = require('xlsx');
 const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const { doc, setDoc, getDoc } = require('firebase/firestore');
 
 // Known limitation: hardcoded to Sergio's installed Edge path — single-machine internal tool, not solved with OS-detection.
-const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+// Override via TEST_BROWSER_PATH if this machine's security software blocks Edge automation
+// (e.g. a corporate EDR flagging --remote-debugging-port on msedge.exe specifically).
+const EDGE_PATH = process.env.TEST_BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const REPORT_URL = `${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'sorting-station-report.html')).href}?emulator=1`;
 const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
 const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
@@ -75,6 +78,16 @@ async function fillLevelsEditor(editorHandle, levels){
   }
 }
 
+// Fills an `.emails-editor` (which starts with zero rows, unlike the levels editor — a
+// contact email is optional) by clicking "+ Add another email" once per address.
+async function fillEmailsEditor(editorHandle, emails){
+  for (let i = 0; i < emails.length; i++){
+    await editorHandle.$eval('.add-email-row-btn', el => el.click());
+    const rows = await editorHandle.$$('.email-row');
+    await rows[i].$eval('.email-input', (el, v) => { el.value = v; }, emails[i]);
+  }
+}
+
 // Seeds one attempt (no matching submission -> shows in "Pending completion") and one
 // submission (-> shows in "Completed") — an anonymous, unauthenticated trainee could write
 // exactly either of these (name/tenantName are free text, only bounded/shape-checked by
@@ -122,6 +135,20 @@ async function seedMaliciousAttempt(){
 // tenant-enable checklist's 3-state model (absent/null vs [] vs a real array), which the UI
 // alone can't distinguish: both "null" and "everyone individually checked" render every
 // checkbox checked identically.
+// Direct Firestore read of one tenant doc — needed after writes made from the Distribution tab
+// (the bulk contacts import), since that only refreshes Distribution's own cache
+// (enrolledBuildingsCache), not master Edificios' separate one (buildingsCache) — checking via
+// the Edificios UI right after would see stale, pre-import data even though the write itself
+// succeeded, so read the real, authoritative Firestore state instead of fighting cache timing.
+async function readTenantDoc(testEnv, buildingId, tenantId){
+  let result;
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const snap = await getDoc(doc(context.firestore(), 'buildings', buildingId, 'tenants', tenantId));
+    result = snap.data();
+  });
+  return result;
+}
+
 async function readEnrollment(testEnv, enrollmentId){
   // withSecurityRulesDisabled (this SDK version) awaits the callback but discards its return
   // value — capture the result via an outer variable instead of `return`ing it from the callback.
@@ -143,7 +170,7 @@ async function main(){
   page.on('dialog', (d) => { consoleErrors.push('unexpected dialog: ' + d.message()); d.dismiss(); });
 
   try {
-    await runFlow(page, seedEnv);
+    await runFlow(page, seedEnv, consoleErrors);
   } catch (err) {
     console.error('CRASHED — dumping diagnostics:', err.message);
     await page.screenshot({ path: path.join(__dirname, '..', 'debug-crash.png') }).catch(() => {});
@@ -154,7 +181,7 @@ async function main(){
   await finishAndReport(page, browser, consoleErrors, seedEnv);
 }
 
-async function runFlow(page, seedEnv){
+async function runFlow(page, seedEnv, consoleErrors){
   await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded' });
   await new Promise(r => setTimeout(r, 300));
 
@@ -200,6 +227,8 @@ async function runFlow(page, seedEnv){
   await page.evaluate(() => {
     window.__confirmCalls = [];
     window.confirm = (msg) => { window.__confirmCalls.push(msg); return true; };
+    window.__alertCalls = [];
+    window.alert = (msg) => { window.__alertCalls.push(msg); };
   });
 
   // --- Master Edificios (⚙): program-agnostic building/tenant CRUD. Per the rework, this is
@@ -284,6 +313,8 @@ async function runFlow(page, seedEnv){
   await rowHandle.$eval('.new-tenant-name', (el, v) => { el.value = v; }, tenantName);
   const newTenantLevelsEditor = await rowHandle.$('.new-tenant-levels-editor');
   await fillLevelsEditor(newTenantLevelsEditor, ['Level 1', 'Level 2']);
+  const newTenantEmailsEditor = await rowHandle.$('.new-tenant-emails-editor');
+  await fillEmailsEditor(newTenantEmailsEditor, ['jane@example.com', 'bob@example.com']);
   await rowHandle.$eval('.add-tenant-btn', el => el.click());
   await new Promise(r => setTimeout(r, 600));
 
@@ -292,6 +323,27 @@ async function runFlow(page, seedEnv){
   check('new tenant appears under its building with both levels',
     Boolean(matchingTenant) && matchingTenant.includes('Level 1') && matchingTenant.includes('Level 2'),
     tenantEntries.join(' || '));
+  check('the new tenant persisted both saved contact emails',
+    Boolean(matchingTenant) && matchingTenant.includes('jane@example.com') && matchingTenant.includes('bob@example.com'),
+    tenantEntries.join(' || '));
+
+  // Attempting to add a tenant with an invalid email should block the save with an alert,
+  // not silently drop the bad address.
+  const badEmailRowHandle = await findRowByName(page, '.building-row', buildingName);
+  await badEmailRowHandle.$eval('.new-tenant-name', (el, v) => { el.value = v; }, 'Bad Email Tenant');
+  const badEmailLevelsEditor = await badEmailRowHandle.$('.new-tenant-levels-editor');
+  await fillLevelsEditor(badEmailLevelsEditor, ['Level 1']);
+  const badEmailEmailsEditor = await badEmailRowHandle.$('.new-tenant-emails-editor');
+  await fillEmailsEditor(badEmailEmailsEditor, ['not-an-email']);
+  const alertCountBeforeBadEmail = await page.evaluate(() => window.__alertCalls.length);
+  await badEmailRowHandle.$eval('.add-tenant-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 300));
+  const alertsAfterBadEmail = await page.evaluate((n) => window.__alertCalls.slice(n), alertCountBeforeBadEmail);
+  check('an invalid contact email blocks the add-tenant save with a clear alert',
+    alertsAfterBadEmail.some(a => a.includes('not-an-email')), JSON.stringify(alertsAfterBadEmail));
+  const tenantEntriesAfterBadEmail = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
+  check('the tenant with the invalid email was never created',
+    !tenantEntriesAfterBadEmail.some(t => t.includes('Bad Email Tenant')), tenantEntriesAfterBadEmail.join(' || '));
 
   // --- Bulk import from a synthetic "collection point" style Excel export ---
   const freshRowHandle = await findRowByName(page, '.building-row', buildingName);
@@ -339,6 +391,14 @@ async function runFlow(page, seedEnv){
 
   const editRowVisible = await page.$('.tenant-edit-row');
   check('editing a tenant shows inline name/levels inputs', Boolean(editRowVisible));
+  // The edit-mode emails editor should already show this tenant's two saved emails, pre-filled
+  // — this is the no-merge setDoc regression: renaming/re-levelling without touching this
+  // editor must still carry these two forward, not silently drop them.
+  const editEmailsEditorPrefill = await editRowVisible.$('.edit-tenant-emails-editor');
+  const prefilledEmails = await editEmailsEditorPrefill.$$eval('.email-input', els => els.map(el => el.value));
+  check('the edit-mode emails editor is pre-filled with both saved emails',
+    prefilledEmails.includes('jane@example.com') && prefilledEmails.includes('bob@example.com'),
+    prefilledEmails.join(', '));
   await editRowVisible.$eval('.edit-tenant-name-input', el => { el.value = 'Test Tenant Renamed'; });
   const editLevelsEditor = await editRowVisible.$('.edit-tenant-levels-editor');
   const editLevelNumberInputs = await editLevelsEditor.$$('.level-number-input');
@@ -351,6 +411,30 @@ async function runFlow(page, seedEnv){
   check('tenant rename + level change saved correctly',
     tenantEntriesLive.some(t => t.includes('Test Tenant Renamed') && t.includes('Level 5') && t.includes('Level 6')),
     tenantEntriesLive.join(' || '));
+  check('editing name/levels did NOT drop the previously-saved contact emails',
+    tenantEntriesLive.some(t => t.includes('Test Tenant Renamed') && t.includes('jane@example.com') && t.includes('bob@example.com')),
+    tenantEntriesLive.join(' || '));
+
+  // Now remove one of the two emails during a real edit and confirm only that one disappears.
+  row = await findRowByName(page, '.building-row', buildingName);
+  const renamedTenantLiForEmailEdit = await findTenantLi(row, 'Test Tenant Renamed');
+  await renamedTenantLiForEmailEdit.$eval('.edit-tenant-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  const editRowForEmailRemoval = await page.$('.tenant-edit-row');
+  const editEmailsEditorForRemoval = await editRowForEmailRemoval.$('.edit-tenant-emails-editor');
+  const emailRowsToRemove = await editEmailsEditorForRemoval.$$('.email-row');
+  const bobRow = (await Promise.all(emailRowsToRemove.map(async (r2) => ({
+    handle: r2, value: await r2.$eval('.email-input', el => el.value),
+  })))).find(r2 => r2.value === 'bob@example.com');
+  await bobRow.handle.$eval('.remove-email-row-btn', el => el.click());
+  await editRowForEmailRemoval.$eval('.save-tenant-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  tenantEntriesLive = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
+  const renamedEntry = tenantEntriesLive.find(t => t.includes('Test Tenant Renamed'));
+  check('removing one email row keeps the other and drops only the removed one',
+    Boolean(renamedEntry) && renamedEntry.includes('jane@example.com') && !renamedEntry.includes('bob@example.com'),
+    renamedEntry);
 
   row = await findRowByName(page, '.building-row', buildingName);
   const renamedTenantLi = await findTenantLi(row, 'Test Tenant Renamed');
@@ -747,6 +831,148 @@ async function runFlow(page, seedEnv){
       copyBtnText.includes('Copied') || copyBtnText.includes('Copy link'), copyBtnText);
   }
 
+  // --- Contact-email features in Distribution: coverage counter, Send via email / Copy
+  // addresses on tenant-scoped links, and the bulk Excel contacts round-trip. Give "Widgetco"
+  // (one of the 6 surviving tenants) a contact email first — the others stay email-less so the
+  // "no email -> no buttons" and coverage-count paths have something real to check against.
+  await page.click('#settingsBtn');
+  await new Promise(r => setTimeout(r, 100));
+  await page.click('#tabBuildingsBtn');
+  await new Promise(r => setTimeout(r, 200));
+  const buildingsRowForEmail = await findRowByName(page, '.building-row', buildingName);
+  const widgetcoLi = await findTenantLi(buildingsRowForEmail, 'Widgetco');
+  await widgetcoLi.$eval('.edit-tenant-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  const widgetcoEditRow = await page.$('.tenant-edit-row');
+  const widgetcoEmailsEditor = await widgetcoEditRow.$('.edit-tenant-emails-editor');
+  await fillEmailsEditor(widgetcoEmailsEditor, ['widgetco-contact@example.com']);
+  await widgetcoEditRow.$eval('.save-tenant-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 600));
+
+  // #tabDistributionBtn lives in the main Reports nav, not the ⚙ Settings sub-view we're
+  // currently in (Buildings/Admins/Catalog) — have to leave Settings first.
+  await page.click('#backToReportsLink');
+  await new Promise(r => setTimeout(r, 200));
+  // Saving Widgetco's email only refreshed master Edificios' own cache (buildingsCache) —
+  // Distribution reads a separate one (enrolledBuildingsCache) that re-selecting the program
+  // refreshes, same as a real admin would get by navigating away and back.
+  await selectProgram(page, 'recycling-sorting');
+  await new Promise(r => setTimeout(r, 500));
+  await page.click('#tabDistributionBtn');
+  await new Promise(r => setTimeout(r, 200));
+
+  const coverageText = await page.$eval(`${distributionSelector} .contacts-coverage-note`, el => el.textContent);
+  check('the coverage counter reports exactly 1 of 6 enabled tenants has a contact email',
+    coverageText.includes('1 of 6'), coverageText);
+
+  const tenantOptions = await page.$$eval(`${distributionSelector} .new-link-tenant option`, els =>
+    els.filter(el => el.value).map(el => ({ id: el.value, name: el.textContent })));
+  const widgetcoId = tenantOptions.find(t => t.name === 'Widgetco').id;
+  const acmeLegalId = tenantOptions.find(t => t.name === 'Acme Legal').id;
+
+  async function generateTenantLink(tenantId){
+    await page.select(`${distributionSelector} .new-link-tenant`, tenantId);
+    await page.click(`${distributionSelector} .generate-link-btn`);
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  await generateTenantLink(widgetcoId);
+  const widgetcoLinkLi = await page.evaluateHandle((sel, id) => {
+    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Widgetco'));
+  }, distributionSelector, widgetcoId).then(h => h.asElement());
+  const widgetcoCopyBtns = await widgetcoLinkLi.$$('.copy-link-btn'); // [0] is "Copy link", [1] is "Copy addresses"
+  check('a tenant-scoped link for a tenant WITH a saved email shows "Send via email" and "Copy addresses"',
+    Boolean(await widgetcoLinkLi.$('.send-email-btn')) && widgetcoCopyBtns.length === 2,
+    await widgetcoLinkLi.evaluate(el => el.textContent));
+  const copyAddressesBtn = widgetcoCopyBtns[1];
+  const copyAddressesDataLink = await copyAddressesBtn.evaluate(el => el.dataset.link);
+  check('the "Copy addresses" button carries the tenant\'s actual saved email in its data-link',
+    copyAddressesDataLink === 'widgetco-contact@example.com', copyAddressesDataLink);
+
+  await generateTenantLink(acmeLegalId);
+  const acmeLinkLi = await page.evaluateHandle((sel) => {
+    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Acme Legal'));
+  }, distributionSelector).then(h => h.asElement());
+  check('a tenant-scoped link for a tenant with NO saved email shows neither button',
+    !(await acmeLinkLi.$('.send-email-btn')) && (await acmeLinkLi.$$('.copy-link-btn')).length === 1,
+    await acmeLinkLi.evaluate(el => el.textContent));
+
+  const wholeBuildingRowText = await page.$eval(`${distributionSelector} .building-link-row`, el => el.textContent);
+  check('the whole-building link row (no single tenant to address) never shows "Send via email"',
+    !wholeBuildingRowText.includes('Send via email'), wholeBuildingRowText);
+
+  // The Cloud Function isn't deployed yet (needs Blaze + the Entra ID app — see the plan), so
+  // clicking "Send via email" right now MUST fail gracefully: try, fail, tell the admin to use
+  // "Copy addresses" instead, and leave the button clickable again — never a crash or a stuck
+  // "Sending…" state.
+  // Re-query fresh — generating the Acme Legal link just above re-rendered #distributionList's
+  // innerHTML, detaching the earlier widgetcoLinkLi/its children from the live document.
+  const alertCountBeforeSend = await page.evaluate(() => window.__alertCalls.length);
+  const widgetcoLinkLiFresh = await page.evaluateHandle((sel) => {
+    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Widgetco'));
+  }, distributionSelector).then(h => h.asElement());
+  const sendBtn = await widgetcoLinkLiFresh.$('.send-email-btn');
+  await sendBtn.click();
+  await new Promise(r => setTimeout(r, 1500));
+  const alertsAfterSend = await page.evaluate((n) => window.__alertCalls.slice(n), alertCountBeforeSend);
+  check('clicking "Send via email" before the Cloud Function is deployed fails gracefully with a clear alert',
+    alertsAfterSend.some(a => a.includes('Copy addresses')), JSON.stringify(alertsAfterSend));
+  const sendBtnTextAfterFailure = await sendBtn.evaluate(el => el.textContent);
+  const sendBtnDisabledAfterFailure = await sendBtn.evaluate(el => el.disabled);
+  check('the "Send via email" button resets to its original label and stays usable after a failed send',
+    sendBtnTextAfterFailure.includes('Send via email') && !sendBtnDisabledAfterFailure, sendBtnTextAfterFailure);
+
+  // --- Bulk contacts round-trip: export doesn't throw, import matches by Tenant ID, unions
+  // emails split across two rows for the same tenant, and flags an unmatched row. ---
+  const errorsBeforeExport = consoleErrors.length;
+  await page.click(`${distributionSelector} .export-contacts-btn`);
+  await new Promise(r => setTimeout(r, 300));
+  check('"Export contacts template" click does not throw', consoleErrors.length === errorsBeforeExport);
+
+  const contactsFixturePath = path.join(require('os').tmpdir(), `contacts-import-${Date.now()}.xlsx`);
+  const contactsWb = xlsxLib.utils.book_new();
+  xlsxLib.utils.book_append_sheet(contactsWb, xlsxLib.utils.json_to_sheet([
+    // Two rows for the same tenant (Acme Legal) — the import should union these into one
+    // tenant with both emails, not just keep the last row.
+    { 'Tenant ID': acmeLegalId, Tenant: 'Acme Legal', Email: 'acme-one@example.com' },
+    { 'Tenant ID': acmeLegalId, Tenant: 'Acme Legal', Email: 'acme-two@example.com' },
+    // A row whose Tenant ID doesn't exist and whose name doesn't match anything real either.
+    { 'Tenant ID': 'not-a-real-id', Tenant: 'Nonexistent Co', Email: 'ghost@example.com' },
+  ]), 'Contacts');
+  xlsxLib.writeFile(contactsWb, contactsFixturePath);
+
+  const contactsFileInput = await page.$(`${distributionSelector} .import-contacts-input`);
+  await contactsFileInput.uploadFile(contactsFixturePath);
+  await new Promise(r => setTimeout(r, 500));
+  fs.unlinkSync(contactsFixturePath);
+
+  const contactsReview = await page.$$eval(`${distributionSelector} .import-contacts-review .import-row`, rows =>
+    rows.map(r => ({
+      unmatched: r.classList.contains('import-row-unmatched'),
+      text: r.textContent,
+    })));
+  check('the import review unions both rows for Acme Legal into a single matched entry with both emails',
+    contactsReview.some(r => !r.unmatched && r.text.includes('Acme Legal') && r.text.includes('acme-one@example.com') && r.text.includes('acme-two@example.com')),
+    JSON.stringify(contactsReview));
+  check('the row with no matching tenant ID or name is flagged as unmatched, not silently dropped',
+    contactsReview.some(r => r.unmatched && r.text.includes('Nonexistent Co')),
+    JSON.stringify(contactsReview));
+
+  await page.click(`${distributionSelector} .import-contacts-confirm-btn`);
+  await new Promise(r => setTimeout(r, 600));
+
+  // Read straight from Firestore rather than the Edificios UI list — that list only refreshes
+  // from its own separate cache on specific Edificios-side actions, so it would still show
+  // stale pre-import data here even though the write (made from the Distribution tab) succeeded.
+  const acmeDocAfterImport = await readTenantDoc(seedEnv, buildingId, acmeLegalId);
+  check('after confirming the import, Acme Legal now shows both emails from the two merged rows',
+    Array.isArray(acmeDocAfterImport?.emails) && acmeDocAfterImport.emails.includes('acme-one@example.com') && acmeDocAfterImport.emails.includes('acme-two@example.com'),
+    JSON.stringify(acmeDocAfterImport));
+  const widgetcoDocAfterImport = await readTenantDoc(seedEnv, buildingId, widgetcoId);
+  check('the import left Widgetco\'s own, separately-saved email untouched',
+    Array.isArray(widgetcoDocAfterImport?.emails) && widgetcoDocAfterImport.emails.includes('widgetco-contact@example.com'),
+    JSON.stringify(widgetcoDocAfterImport));
+
   // --- Edit and delete the building itself (back in master Edificios) ---
   await page.click('#settingsBtn');
   await new Promise(r => setTimeout(r, 100));
@@ -907,7 +1133,11 @@ async function finishAndReport(page, browser, consoleErrors, seedEnv){
   // log line for the failed create-user request underneath it (can't be suppressed from app code).
   const unexpectedErrors = consoleErrors.filter(e =>
     !e.includes('auth/email-already-in-use') && !e.includes('Failed to load resource') && !e.includes('400')
-    && !e.includes('Clipboard write failed') && !e.includes('Could not copy automatically'));
+    && !e.includes('Clipboard write failed') && !e.includes('Could not copy automatically')
+    // Expected: this suite doesn't start the Functions emulator (only firestore,auth), so the
+    // "Send via email" test's real fetch to sendInductionEmail is expected to fail — that's the
+    // exact graceful-failure path being tested, not a real bug.
+    && !e.includes('sendInductionEmail') && !e.includes('CORS policy'));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
   await browser.close();
