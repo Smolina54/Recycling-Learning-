@@ -4,6 +4,14 @@ firestore-debug.log
 node_modules/
 debug-crash.png
 
+# Local placeholder values for functions' defineSecret()s (Functions emulator reads this
+# instead of prompting/hitting real Secret Manager) — never real credentials, never committed.
+functions/.secret.local
+
+# Machine-local port override for the Functions emulator (this machine has another project's
+# dev server parked on 5001) — see firebase.json for the real, committed emulator ports.
+firebase.local-test.json
+
 # Real client data dropped in uploads/ for reference (e.g. real building/tenant
 # exports) — never goes into git, even in a private repo.
 uploads/*.xlsx
