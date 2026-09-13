@@ -13,6 +13,24 @@ service cloud.firestore {
          exists(/databases/$(database)/documents/admins/$(request.auth.token.email)));
     }
 
+    // Narrow-scope counterpart to isAllowedReviewer(): does this signed-in user have an
+    // explicit grant for THIS ONE building (via a buildingAccess doc), rather than access
+    // to everything. Deliberately a SEPARATE collection from /admins — isAllowedReviewer()
+    // is a bare exists() check with no field inspection, so a scoped grant living inside
+    // /admins would itself satisfy isAllowedReviewer() and hand out full global access.
+    // Not yet referenced by any collection's rules below (added inert first, wired in once
+    // its own tests are green — see the roadmap plan for the staged rollout).
+    function isBuildingScopedReviewer(buildingId) {
+      return request.auth != null && buildingId is string && buildingId.size() > 0 &&
+        exists(/databases/$(database)/documents/buildingAccess/$(request.auth.token.email + '__' + buildingId));
+    }
+
+    // Additive only: always at least as permissive as isAllowedReviewer() alone, since that's
+    // the first operand of the ||. A global admin is never narrowed by this.
+    function canReviewBuilding(buildingId) {
+      return isAllowedReviewer() || isBuildingScopedReviewer(buildingId);
+    }
+
     // Bounds + a loose shape check on the person-identifying + program fields shared by
     // submissions and attempts — both are created by anonymous, unauthenticated
     // trainees, so this is the only server-side defense against garbage/oversized/
@@ -48,6 +66,19 @@ service cloud.firestore {
     // reachable once signed in as an allowed reviewer in the first place).
     match /admins/{email} {
       allow read, write: if isAllowedReviewer();
+    }
+
+    // Per-building grants for external/scoped clients (e.g. a building's own property
+    // manager) — see isBuildingScopedReviewer() above. One doc per (email, building) pair,
+    // keyed `${email}__${buildingId}`, not one doc per client with an array, so granting/
+    // revoking one building is a single independent write with no read-modify-write race.
+    // Only an internal reviewer can grant/revoke; a scoped client may read only their own
+    // grant docs (to discover which buildings they can see), never anyone else's or write
+    // any of them.
+    match /buildingAccess/{grantId} {
+      allow read: if isAllowedReviewer() ||
+        (request.auth != null && resource.data.email == request.auth.token.email);
+      allow write: if isAllowedReviewer();
     }
 
     // Building + tenant catalog: readable by anyone with a link (needed to
@@ -105,7 +136,11 @@ service cloud.firestore {
         && isValidLinkIfPresent(request.resource.data)
         && request.resource.data.score is number
         && request.resource.data.score >= 0 && request.resource.data.score <= 100;
-      allow read, delete: if isAllowedReviewer();
+      // read: a global reviewer sees any submission; a scoped client (via /buildingAccess)
+      // sees only submissions for their own granted building(s). delete stays reviewer-only —
+      // a scoped client is view-only, never allowed to remove a training record.
+      allow read: if canReviewBuilding(resource.data.buildingId);
+      allow delete: if isAllowedReviewer();
       allow update: if false;
     }
 
@@ -114,7 +149,9 @@ service cloud.firestore {
     // Same shape/rules as submissions, minus the score field this doesn't have.
     match /attempts/{attemptId} {
       allow create: if isValidPersonFields(request.resource.data) && isValidLinkIfPresent(request.resource.data);
-      allow read: if isAllowedReviewer();
+      // Same scoping as submissions.read above — global reviewer sees all, scoped client
+      // sees only their granted building(s).
+      allow read: if canReviewBuilding(resource.data.buildingId);
       allow update, delete: if false;
     }
   }

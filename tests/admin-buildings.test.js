@@ -1029,37 +1029,8 @@ async function runFlow(page, seedEnv, consoleErrors){
   check('a soft-deleted building\'s real link now shows the invalid-link fallback, same as a real delete would', invalidShownForDeleted);
   await deletedBuildingPage.close();
 
-  // --- Admins panel: its own tab, program-agnostic, reachable regardless of induction selected ---
-  await page.click('#settingsBtn');
-  await new Promise(r => setTimeout(r, 100));
-  await page.click('#tabAdminsBtn');
-  await new Promise(r => setTimeout(r, 200));
-  check('Admins tab becomes visible on click',
-    await page.$eval('#adminsSection', el => getComputedStyle(el).display !== 'none'));
-  check('Buildings section hides when Admins tab is active',
-    await page.$eval('#buildingsSection', el => getComputedStyle(el).display === 'none'));
-  check('Reports section hides when Admins tab is active',
-    await page.$eval('#reportSection', el => getComputedStyle(el).display === 'none'));
-
-  // --- Admins panel: grant/revoke a second reviewer without touching firestore.rules ---
-  check('owner email note is shown', (await page.$eval('#ownerEmailNote', el => el.textContent)) === ALLOWED_EMAIL);
-  check('no additional admins yet', (await page.$eval('#adminsList', el => el.textContent)).includes('just you'));
-
-  const newAdminEmail = 'second.admin@example.com';
-  await page.type('#newAdminEmail', newAdminEmail);
-  await page.click('#addAdminBtn');
-  await new Promise(r => setTimeout(r, 600));
-
-  const adminsStatus = await page.$eval('#adminsStatus', el => el.textContent);
-  check('adding an admin confirms via status text', adminsStatus.includes(newAdminEmail), adminsStatus);
-  const adminEmails = await page.$$eval('#adminsList .tenant-name', els => els.map(el => el.textContent));
-  check('the new admin appears in the list', adminEmails.includes(newAdminEmail), adminEmails.join('|'));
-
-  await page.click('.remove-admin-btn');
-  await new Promise(r => setTimeout(r, 600));
-
-  const adminEmailsAfterRemove = await page.$$eval('#adminsList .tenant-name', els => els.map(el => el.textContent));
-  check('the removed admin no longer appears in the list', !adminEmailsAfterRemove.includes(newAdminEmail), adminEmailsAfterRemove.join('|') || '(empty)');
+  // Admins management (grant/revoke a reviewer) now has its own page and its own test —
+  // see tests/admin-admins.test.js. Nothing left to check for it on this page.
 
   // --- Sign out must actually clear real data from the screen, not just hide a tab ---
   await page.click('#signOutBtn');
@@ -1070,8 +1041,6 @@ async function runFlow(page, seedEnv, consoleErrors){
   check('signing out clears the KPI numbers, not just hides them', kpiRowEmptyAfterSignOut);
   const completedTableEmptyAfterSignOut = await page.$eval('#completedTable', el => el.innerHTML.trim() === '');
   check('signing out clears the Completed table\'s real names/emails', completedTableEmptyAfterSignOut);
-  const adminsListEmptyAfterSignOut = await page.$eval('#adminsList', el => el.innerHTML.trim() === '');
-  check('signing out also clears the Admins list', adminsListEmptyAfterSignOut);
   check('signing out hides the program tabs',
     await page.$eval('#programTabs', el => getComputedStyle(el).display === 'none'));
   check('signing out hides the induction selector row and clears its options',
@@ -1098,13 +1067,12 @@ async function runFlow(page, seedEnv, consoleErrors){
     () => getComputedStyle(document.getElementById('programTabs')).display !== 'none',
     { timeout: 10000 }
   );
-  await page.click('#settingsBtn');
-  await new Promise(r => setTimeout(r, 100));
-  await page.click('#tabAdminsBtn');
-  await new Promise(r => setTimeout(r, 300));
-  await page.type('#newAdminEmail', emailAdmin);
-  await page.click('#addAdminBtn');
-  await new Promise(r => setTimeout(r, 600));
+  // Granting this admin is now admin-admins.html's own job (see tests/admin-admins.test.js) —
+  // here it's just a precondition for the real thing this block tests (email/password sign-in),
+  // so seed it directly rather than driving a page that isn't this one.
+  await seedEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'admins', emailAdmin), { addedAt: 'now', addedBy: ALLOWED_EMAIL });
+  });
 
   // Stand-in for Sergio creating this person's login in Firebase Console.
   await page.evaluate(async (email, password) => { await window.__testSignIn(email, password); }, emailAdmin, emailAdminPassword);

@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recycling Training — Admins</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232F6F4E'/%3E%3Cpath d='M16 6 L26 16 L16 26 L6 16 Z' fill='%23EEEBE1'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#EEEBE1;
+    --panel:#F7F5EE;
+    --ink:#1E2A22;
+    --ink-soft:#4A5850;
+    --line: rgba(30,42,34,0.14);
+    --forest:#2F6F4E;
+    --forest-dark:#1F4A34;
+
+    --gw: #8C2F39;
+    --gw-tint: #F3E1E1;
+    --mr: #C98E12;
+    --mr-tint: #F6ECD3;
+    --pc: #2B5C8A;
+    --pc-tint: #DEE7EE;
+    --og: #5C7A29;
+    --og-tint: #E5EAD8;
+    --ew: #5B4B8A;
+    --ew-tint: #E4E0EF;
+
+    /* Warning/notice color, distinct from every stream color above (gw/mr/pc/og/ew) so it never
+       reads as "this relates to a specific stream" — used by .custom-config-badge, which
+       referenced these three variables without them ever being defined (silently invisible). */
+    --amber-ink: #8A5A12;
+    --amber-bg: #FBEEDA;
+    --amber-line: #D9A441;
+
+    /* Neutral gray-blue "this is system configuration, not induction data" family — deliberately
+       not a stream color and not --forest (the "Viewing: X" badge's green), so the ⚙ Buildings/
+       Admins/Catalog screens read as a different zone of the app on sight, not as another
+       induction. See body.settings-mode below. */
+    --settings-bg: #E4E6E7;
+    --settings-ink: #4B5860;
+    --settings-tint: #E1E5E7;
+    --settings-line: #8FA0A8;
+
+    --radius: 4px;
+    --display: 'Oswald', sans-serif;
+    --body: 'Inter', sans-serif;
+    --mono: 'Space Mono', monospace;
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--body); line-height:1.5;}
+  .wrap{max-width:920px; margin:0 auto; padding:0 24px 80px;}
+
+  header.top{padding:40px 0 28px; border-bottom:1px solid var(--line); margin-bottom:32px;}
+  .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:0.16em; text-transform:uppercase; color:var(--forest-dark); margin:0 0 12px;}
+  h1{font-family:var(--display); font-weight:700; text-transform:uppercase; font-size:clamp(28px,5vw,44px); line-height:1; margin:0 0 12px;}
+  .sub{color:var(--ink-soft); font-size:15px; max-width:600px;}
+
+  .btn{
+    font-family:var(--body); font-weight:600; font-size:14.5px;
+    padding:12px 22px; border-radius:var(--radius); border:none; cursor:pointer;
+    background:var(--ink); color:var(--paper);
+    display:inline-flex; align-items:center; gap:10px;
+  }
+  .btn.secondary{background:transparent; color:var(--ink); border:1.5px solid var(--ink);}
+  .btn:hover{background:var(--forest-dark);}
+  .btn.secondary:hover{background:var(--ink); color:var(--paper);}
+  /* This panel had almost no :focus-visible styling anywhere (only one rule, on the tenant
+     toggle switch) — a keyboard user got no visible indication of what's focused on the one
+     screen with real destructive actions (delete admin, remove building, etc.). The three
+     trainee-facing pages already style this consistently; matching that here. */
+  .btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+
+  .upload-zone{
+    background:var(--panel); border:1.5px dashed var(--line); padding:36px; text-align:center; margin-bottom:16px;
+  }
+  .upload-zone p{color:var(--ink-soft); font-size:14.5px; margin:0 0 18px;}
+  .upload-actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap;}
+
+  .admin-tabs{display:flex; gap:4px; align-items:flex-start; border-bottom:1.5px solid var(--line); margin-bottom:28px;}
+  .tab-btn{
+    font-family:var(--body); font-weight:600; font-size:14.5px; color:var(--ink-soft);
+    background:none; border:none; border-bottom:2.5px solid transparent; padding:10px 4px; margin-bottom:-1.5px;
+    cursor:pointer;
+  }
+  .tab-btn.active{color:var(--ink); border-bottom-color:var(--forest);}
+  .tab-btn:hover{color:var(--ink);}
+  .tab-btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+
+  .corner-settings{
+    position:fixed; top:16px; right:16px; z-index:45; max-width:calc(100% - 32px);
+    display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;
+  }
+  /* .btn.secondary is transparent by design (the outline look used everywhere else in this
+     app) — fine for a button inline in the document flow, but these three live in
+     .corner-settings' fixed-position bar, floating over scrollable page content, so a
+     transparent background lets that content show through. Giving just these an opaque
+     background fixes it without changing the outline style anywhere it isn't a problem. */
+  .corner-btn{font-size:13px; padding:8px 14px; background:var(--panel);}
+  .viewing-badge{
+    font-family:var(--mono); font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;
+    color:var(--forest-dark); background:var(--og-tint, #E5EAD8); border:1px solid var(--forest);
+    padding:6px 12px; border-radius:var(--radius);
+  }
+  .settings-btn{font-size:16px; padding:6px 12px; line-height:1;}
+
+  /* Full-bleed sidebar for the program-agnostic ⚙ screens (Buildings/Admins/Catalog) — a
+     deliberate structural break from .wrap's centered 960px column used everywhere else, so
+     this reads as a distinct "mode" rather than a flatter variant of the same page. Hidden by
+     default; .page-shell.sidebar-mode (toggled in showTab() for every un-scoped tab) reveals it
+     and narrows .wrap to sit beside it instead of self-centering. */
+  .page-shell{display:flex;}
+  .settings-sidebar{
+    display:none; width:220px; flex-shrink:0; background:var(--ink); color:var(--paper);
+    padding:28px 20px; box-sizing:border-box; min-height:100vh;
+  }
+  .page-shell.sidebar-mode .settings-sidebar{display:block;}
+  .page-shell.sidebar-mode .wrap{margin:0; max-width:900px;}
+  .settings-sidebar-label{
+    font-family:var(--mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase;
+    color:#9AABA0; margin-bottom:20px;
+  }
+  .settings-sidebar-nav{display:flex; flex-direction:column; gap:4px;}
+  .settings-sidebar-nav .tab-btn{
+    text-align:left; border-bottom:none; margin-bottom:0; padding:10px 12px; border-radius:var(--radius);
+    color:#C7D1CA;
+  }
+  .settings-sidebar-nav .tab-btn.active{background:#33443A; color:var(--paper);}
+  .settings-sidebar-nav .tab-btn:hover{background:#2A362F; color:var(--paper);}
+  .settings-sidebar-nav .tab-btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+  .settings-sidebar-exit{margin-top:32px; padding-top:20px; border-top:1px solid #33443A;}
+  .settings-sidebar-exit a{font-family:var(--mono); font-size:11.5px; color:#9AABA0; text-decoration:none;}
+  .settings-sidebar-exit a:hover{color:var(--paper);}
+  .settings-sidebar-exit a:focus-visible{outline:2px solid var(--paper); outline-offset:2px;}
+
+  .import-xlsx-label{cursor:pointer;}
+  .import-candidates{max-height:280px; overflow-y:auto; border:1px solid var(--line); padding:10px; margin-top:10px; background:var(--paper);}
+  .import-row{display:grid; grid-template-columns:24px 1fr 1fr; gap:8px; align-items:center; padding:6px 0;}
+  .import-row input[type=text]{
+    font-family:var(--body); font-size:13px; padding:6px 8px; border:1px solid var(--line);
+    border-radius:var(--radius); background:var(--panel); color:var(--ink); width:100%;
+  }
+  @media (max-width:640px){.import-row{grid-template-columns:20px 1fr;} .import-row .import-levels{grid-column:2;}}
+
+  .building-row, .enrolled-building-row, .distribution-building-row{margin-bottom:20px;}
+  .building-link-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
+  .building-link-text{
+    font-family:var(--mono); font-size:12px; background:var(--paper); border:1px solid var(--line);
+    padding:8px 12px; border-radius:var(--radius); overflow-x:auto; white-space:nowrap; max-width:100%;
+  }
+  .building-qr{width:120px; height:120px; margin-bottom:16px;}
+  .building-qr svg{width:100%; height:100%;}
+  .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
+  .building-row:has(> .building-header-row:only-child) .building-header-row{margin-bottom:0;}
+  .building-header-row h3{margin-bottom:0;}
+  .building-toggle-btn{
+    background:transparent; border:none; cursor:pointer; font-size:16px; color:var(--ink-soft);
+    padding:2px 4px; flex-shrink:0;
+  }
+  .building-tenant-count{
+    font-family:var(--mono); font-size:11.5px; color:var(--ink-soft);
+    background:var(--line); padding:3px 9px; border-radius:20px; flex-shrink:0;
+  }
+  .building-header-actions{display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;}
+  .custom-config-badge{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:0.03em; text-transform:uppercase;
+    background:var(--amber-bg); color:var(--amber-ink); border:1px solid var(--amber-line);
+    padding:3px 8px; border-radius:20px; flex-shrink:0;
+  }
+  .items-editor{margin:18px 0; padding:18px; background:var(--paper); border:1px solid var(--line); border-radius:var(--radius);}
+  .items-editor-summary{font-size:13px; color:var(--ink-soft); margin-bottom:14px;}
+  .quick-merge-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--line);}
+  .quick-merge-row select{
+    font-family:var(--body); font-size:13px; padding:6px 8px; border:1.5px solid var(--line);
+    background:var(--panel); border-radius:var(--radius); color:var(--ink);
+  }
+  .items-stream-section{margin-bottom:22px;}
+  .items-stream-section:last-child{margin-bottom:0;}
+  .items-stream-head{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
+  .items-stream-swatch{width:10px; height:22px; flex-shrink:0;}
+  .items-stream-head h4{margin:0; font-size:14px; text-transform:uppercase; letter-spacing:0.02em;}
+  .items-card-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:10px;}
+  .items-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:10px 10px 8px; display:flex; flex-direction:column; gap:6px; font-size:12.5px;
+  }
+  .items-card-head{display:flex; align-items:center; gap:6px;}
+  .items-card-icon{width:20px; height:20px; flex-shrink:0; display:inline-flex;}
+  .items-card-icon svg, .items-card-icon img{width:20px; height:20px; object-fit:contain;}
+  .items-card-name{font-weight:600; line-height:1.25; flex:1;}
+  .items-card-inactive .items-card-icon, .items-card-inactive .items-card-name{opacity:0.45;}
+  .item-toggle{position:relative; display:inline-block; width:34px; height:20px; flex-shrink:0; cursor:pointer;}
+  .item-toggle input{position:absolute; inset:0; opacity:0; margin:0; cursor:pointer;}
+  .item-toggle-track{position:absolute; inset:0; background:var(--ink-soft); border-radius:20px; transition:background .15s ease;}
+  .item-toggle-thumb{position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; transition:transform .15s ease;}
+  .item-toggle input:checked + .item-toggle-track{background:#2ECC5F;}
+  .item-toggle input:checked + .item-toggle-track .item-toggle-thumb{transform:translateX(14px);}
+  .item-toggle input:focus-visible + .item-toggle-track{outline:2px solid var(--ink); outline-offset:2px;}
+  .items-card select{
+    font-family:var(--body); font-size:12px; padding:5px 6px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink);
+  }
+  .acceptable-details{font-size:11.5px;}
+  .acceptable-details summary{color:var(--ink-soft); cursor:pointer; user-select:none;}
+  .acceptable-checkbox-group{display:flex; flex-direction:column; gap:3px; margin-top:6px;}
+  .acceptable-checkbox-label{display:flex; align-items:center; gap:5px; font-weight:400; cursor:pointer;}
+  .items-editor-actions{display:flex; gap:8px; margin-top:20px;}
+  .items-editor-error{color:var(--gw); font-size:13px; margin:10px 0 0;}
+  .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
+  .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
+  .building-edit-row input{flex:1; min-width:160px;}
+  .tenant-list{list-style:none; margin:0 0 16px; padding:0; font-size:13.5px;}
+  .tenant-list li{padding:8px 0; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+  .tenant-list li:last-child{border-bottom:none;}
+  .tenant-list .tenant-name{font-weight:600;}
+  .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
+  .tenant-row-actions{display:flex; gap:8px; flex-shrink:0; margin-left:auto;}
+  .remove-admin-btn{margin-left:auto;}
+  /* ".tenant-list li" (a descendant selector) beats a plain ".tenant-edit-row" class selector on
+     specificity alone, regardless of source order — align-items:center from that base rule was
+     silently winning here. Match its selector shape (with the extra class) to actually override it. */
+  .tenant-list li.tenant-edit-row{gap:8px; align-items:flex-start;}
+  .tenant-edit-row > .edit-tenant-name-input{flex:1; min-width:120px;}
+  .levels-editor{display:flex; flex-direction:column; gap:8px; flex:1; min-width:220px;}
+  .level-row{display:flex; align-items:center; gap:6px;}
+  .level-row select{
+    font-family:var(--body); font-size:13px; padding:6px 8px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink);
+  }
+  .level-row input{
+    font-family:var(--body); font-size:13px; padding:6px 10px; border:1.5px solid var(--line);
+    border-radius:var(--radius); color:var(--ink); width:110px;
+  }
+  .remove-level-row-btn{
+    background:transparent; border:none; color:var(--ink-soft); font-size:18px; line-height:1;
+    cursor:pointer; padding:2px 6px;
+  }
+  .remove-level-row-btn:hover{color:var(--gw);}
+  .add-level-row-btn{align-self:flex-start; padding:6px 14px; font-size:12.5px;}
+  .tenant-list .tenant-emails{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
+  .emails-editor{display:flex; flex-direction:column; gap:8px; flex:1; min-width:220px;}
+  .email-row{display:flex; align-items:center; gap:6px;}
+  .email-row input{
+    font-family:var(--body); font-size:13px; padding:6px 10px; border:1.5px solid var(--line);
+    border-radius:var(--radius); color:var(--ink); width:220px;
+  }
+  .remove-email-row-btn{
+    background:transparent; border:none; color:var(--ink-soft); font-size:18px; line-height:1;
+    cursor:pointer; padding:2px 6px;
+  }
+  .remove-email-row-btn:hover{color:var(--gw);}
+  .add-email-row-btn{align-self:flex-start; padding:6px 14px; font-size:12.5px;}
+  /* Overrides .import-row's 3-column grid (24px checkbox + 2 fields) — this row has no
+     checkbox, just a tag and a name, so it needs its own narrower layout instead of
+     squeezing the tag into that 24px first column. */
+  .import-row-unmatched{display:flex; align-items:center; gap:10px; opacity:0.75;}
+  .contacts-unmatched-tag{
+    font-family:var(--mono); font-size:10px; letter-spacing:0.03em; text-transform:uppercase;
+    color:var(--gw); border:1px solid var(--gw); padding:2px 6px; flex-shrink:0;
+  }
+  .tenant-list .btn.secondary, .building-header-actions .btn, .building-edit-row .btn{padding:6px 14px; font-size:12.5px;}
+  .danger-btn{border-color:var(--gw) !important; color:var(--gw) !important;}
+  .danger-btn:hover{background:var(--gw) !important; color:var(--paper) !important;}
+  input[type=file]{display:none;}
+  .file-name{font-family:var(--mono); font-size:12px; color:var(--ink-soft); margin-top:14px;}
+
+  #reportSection{display:none;}
+
+  .report-header-row{display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px; margin:36px 0 20px;}
+  .report-header-row h2{font-family:var(--display); text-transform:uppercase; font-size:24px; margin:0;}
+  .source-note{font-family:var(--mono); font-size:11.5px; color:var(--ink-soft);}
+
+  /* Print-only document header (see the @media print rule further down for why it's hidden on
+     screen) — the induction name, its short description, and the building/period this specific
+     report covers, so the PDF opens with real cover context instead of launching into charts. */
+  .print-header{display:none;}
+
+  .kpi-row{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:2px; background:var(--line); border:1px solid var(--line); margin-bottom:36px;}
+  .kpi-tile{background:var(--panel); padding:20px 18px;}
+  .kpi-label{font-family:var(--mono); font-size:10.5px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft); margin-bottom:8px;}
+  .kpi-value{font-family:var(--display); font-size:32px; color:var(--ink);}
+  .kpi-value.good{color:var(--forest-dark);}
+  .kpi-value.bad{color:var(--gw);}
+
+  .report-block{background:var(--panel); border:1px solid var(--line); padding:28px 30px; margin-bottom:24px;}
+  .report-block h3{font-family:var(--display); text-transform:uppercase; font-size:17px; margin:0 0 6px;}
+  .block-sub{font-size:13.5px; color:var(--ink-soft); margin:0 0 20px;}
+
+  .stream-bar-row{display:grid; grid-template-columns:150px 1fr 60px; align-items:center; gap:12px; margin-bottom:12px;}
+  .stream-bar-row:last-child{margin-bottom:0;}
+  .stream-bar-label{font-family:var(--mono); font-size:12px; text-transform:uppercase; letter-spacing:0.03em;}
+  .stream-bar-track{height:16px; background:var(--paper); border:1px solid var(--ink); overflow:hidden;}
+  .stream-bar-fill{height:100%; transition:width .5s ease;}
+  .stream-bar-value{font-family:var(--mono); font-size:12.5px; text-align:right;}
+
+  .missed-list{display:flex; flex-direction:column; gap:10px;}
+  .missed-row{display:grid; grid-template-columns:22px 1fr 90px 50px; align-items:center; gap:12px; padding:10px 14px; background:var(--paper); border:1px solid var(--line);}
+  .missed-rank{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
+  .missed-name{font-size:14px; font-weight:600;}
+  .missed-name .stream-tag{font-family:var(--mono); font-size:10.5px; font-weight:400; color:var(--ink-soft); text-transform:uppercase; margin-left:6px;}
+  .missed-bar-track{height:10px; background:var(--line); overflow:hidden;}
+  .missed-bar-fill{height:100%; background:var(--gw);}
+  .missed-pct{font-family:var(--mono); font-size:12.5px; text-align:right; color:var(--gw); font-weight:700;}
+
+  /* Plain-language summary generated from the same aggregates the charts/tables below already
+     compute (streamAgg, groupRows, KPI values) — see generateKeyInsights(). Management-report
+     tone: the number up front, the takeaway right after, no filler. */
+  .key-insights-list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px;}
+  .key-insights-list li{
+    padding:12px 16px; background:var(--paper); border-left:3px solid var(--forest);
+    font-size:14px; line-height:1.5;
+  }
+  .key-insights-list li.concern{border-left-color:var(--gw);}
+
+  table.group-table{width:100%; border-collapse:collapse; font-size:13.5px;}
+  table.group-table th{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:0.05em; text-transform:uppercase; color:var(--ink-soft);
+    text-align:left; padding:8px 10px; border-bottom:1.5px solid var(--ink);
+  }
+  table.group-table td{padding:9px 10px; border-bottom:1px solid var(--line);}
+  table.group-table tr:last-child td{border-bottom:none;}
+  .pass-pill{font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:2px; display:inline-block;}
+  .pass-pill.pass{background:var(--og-tint); color:var(--forest-dark);}
+  .pass-pill.fail{background:var(--gw-tint); color:var(--gw);}
+
+  /* Completed/Pending rosters — one row per person, and a real induction can run into the
+     hundreds, so collapsed-by-default with an explicit count is the only thing that scales on
+     screen (and stays collapsed in print — see the @media print rule above). */
+  .roster-details{margin-top:4px;}
+  .roster-details summary{
+    font-family:var(--body); font-weight:600; font-size:14px; cursor:pointer;
+    color:var(--forest-dark); list-style:none; display:inline-flex; align-items:center; gap:6px;
+  }
+  .roster-details summary::-webkit-details-marker{display:none;}
+  .roster-details summary::before{content:'▸'; font-size:11px;}
+  .roster-details[open] summary::before{content:'▾';}
+  .roster-details summary:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+  .roster-details > div{margin-top:14px;}
+
+  .print-row{display:flex; justify-content:flex-end; gap:12px; margin-top:8px; flex-wrap:wrap;}
+
+  .filter-row{display:flex; gap:16px; flex-wrap:wrap;}
+  .filter-field{display:flex; flex-direction:column; gap:6px; min-width:180px; flex:1;}
+  /* Native date inputs don't stretch gracefully — filling the flex row's leftover space (like
+     the <select> fields do) just leaves visible dead space around the small date control. Cap
+     their growth instead of letting them inherit .filter-field's flex:1. */
+  .filter-field-date{flex:0 1 170px; min-width:150px;}
+  .filter-field span{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft);}
+  #trendChart{position:relative;}
+  .trend-svg{width:100%; height:220px; display:block; cursor:crosshair;}
+  .trend-tooltip{
+    position:absolute; top:4px; transform:translateX(-50%);
+    background:var(--ink); color:var(--paper); font-family:var(--mono); font-size:11px;
+    padding:4px 8px; border-radius:var(--radius); white-space:nowrap; pointer-events:none;
+  }
+
+  .filter-field select, .filter-field input[type=date]{
+    font-family:var(--body); font-size:14px; padding:9px 12px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink); width:100%;
+  }
+  .filter-field select:focus-visible, .filter-field input[type=date]:focus-visible{
+    outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);
+  }
+
+  @media (max-width:640px){
+    .stream-bar-row{grid-template-columns:100px 1fr 46px;}
+    .missed-row{grid-template-columns:18px 1fr 60px;}
+    .missed-bar-track{display:none;}
+    table.group-table{font-size:12px;}
+  }
+
+  /* The client-facing PDF ("Print / Save as PDF") is this same Reports screen printed, not a
+     separate template — but it must never look like a screenshot of an internal admin tool.
+     Anything interactive/admin-only (buttons, nav tabs, filter controls, the ⚙ bar) is hidden;
+     every actual data element (KPIs, charts, tables) stays exactly as on screen. */
+  @media print{
+    /* Chrome/Edge reserve a margin band to print their OWN header/footer (page title, the
+       file:// URL, date/time, page number) — a browser default, not this page's doing, but it's
+       exactly the kind of thing that makes a printed report look like a raw file instead of a
+       deliverable. Zeroing the @page margin removes the space those get printed into (Chromium
+       skips them when there's no margin to put them in); .wrap's own padding below restores a
+       normal-looking page margin under our control instead. */
+    @page{ margin:0; }
+    .wrap{ padding:0.6in 0.7in !important; }
+
+    /* Browsers drop background colors/images by default when printing, to save ink — this page
+       actually carries real information in backgrounds (the stream accuracy bars, the missed-
+       items bars, KPI tiles, pass/fail pills, the Key Insights accent), not just decoration, so
+       stripping them would silently lose data from the delivered report, not just look plainer.
+       Forces the browser to print exactly what's on screen instead. */
+    *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
+
+    /* header.top (the generic app title/eyebrow/sub) and #programSelectorRow (the induction
+       <select> plus its "Viewing: X" badge) are hidden wholesale rather than picked apart child
+       by child — .print-header below covers the same ground (induction name + description +
+       building/period) once, prominently, as an actual document title instead of leaving the
+       generic app chrome duplicating it above. Same reasoning for #filterBlock: once it's
+       filtered, "Focused on: ..." wasn't going to survive alongside the print-header's own
+       building/period line either — hiding the whole block avoids the alternative of an empty
+       bordered box left behind once its h3/description/controls are stripped out of it. */
+    .upload-zone, .print-row, header.top, #programSelectorRow, #filterBlock{display:none !important;}
+    .corner-settings, .admin-tabs, .report-header-row .btn, #demoQrBlock{display:none !important;}
+    /* Completed/Pending print exactly as collapsed as they are on screen (never force-expand a
+       roster of what could be hundreds of names into the delivered document) — see
+       .roster-details below, used by both. */
+    .roster-details > div{display:none !important;}
+    body{background:#fff;}
+    .report-block, .kpi-tile{break-inside:avoid;}
+
+    .print-header{
+      display:block; margin-bottom:28px; padding-bottom:18px; border-bottom:2px solid var(--ink);
+    }
+    .print-header-induction{font-family:var(--display); text-transform:uppercase; font-size:26px;}
+    .print-header-desc{color:var(--ink-soft); font-size:13.5px; margin:6px 0 0; max-width:640px;}
+    .print-header-meta{
+      font-family:var(--mono); font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;
+      color:var(--ink-soft); margin:12px 0 0;
+    }
+  }
+  /* .tab-btn is a <button> everywhere else in this app — here in the settings sidebar it's a
+     real <a> (this page is a real separate page now, not a JS-toggled tab), which needs the
+     underline reset a <button> never did. */
+  .settings-sidebar-nav a.tab-btn{text-decoration:none; display:block;}
+</style>
+</head>
+<body>
+
+<div class="page-shell sidebar-mode" id="pageShell">
+  <aside class="settings-sidebar" id="settingsSidebar">
+    <div class="settings-sidebar-label">⚙ Settings</div>
+    <nav class="settings-sidebar-nav">
+      <a class="tab-btn" href="sorting-station-report.html?tab=buildings">Buildings</a>
+      <a class="tab-btn active" href="admin-admins.html" aria-current="page">Admins</a>
+      <a class="tab-btn" href="sorting-station-report.html?tab=catalog">Catalog</a>
+    </nav>
+    <div class="settings-sidebar-exit">
+      <a href="sorting-station-report.html">← Back to reports</a>
+    </div>
+  </aside>
+
+<div class="wrap">
+  <header class="top">
+    <p class="eyebrow" id="pageEyebrow">Recycling Training · Settings</p>
+    <h1 id="pageHeadline">Admins</h1>
+    <p class="sub" id="pageSub">Who else can sign in here and view/export/delete results or manage buildings.</p>
+  </header>
+
+  <div class="corner-settings" id="cornerSettings">
+    <button class="btn secondary corner-btn" id="signOutBtn" style="display:none;">Sign out</button>
+  </div>
+
+  <div class="upload-zone" id="authZone">
+    <p id="authStatus">Sign in with an authorized account to manage admins.</p>
+    <div class="upload-actions">
+      <button class="btn" id="signInBtn">Sign in with Google →</button>
+      <button class="btn secondary" id="showEmailSignInBtn">Sign in with email →</button>
+    </div>
+    <form id="emailSignInForm" style="display:none; margin-top:16px;">
+      <div class="filter-row">
+        <label class="filter-field"><span>Email</span><input type="email" id="emailSignInEmail" autocomplete="username" required></label>
+        <label class="filter-field"><span>Password</span><input type="password" id="emailSignInPassword" autocomplete="current-password" required></label>
+      </div>
+      <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
+        <button class="btn secondary" type="submit">Sign in →</button>
+      </div>
+    </form>
+  </div>
+
+  <section id="adminsSection" style="display:none;">
+    <div class="report-header-row">
+      <h2>Admins</h2>
+    </div>
+
+    <div class="report-block">
+      <p class="block-sub">Google accounts allowed to sign in here and view/export/delete results or manage buildings. <span id="ownerEmailNote"></span> always has access. Adding someone here takes effect immediately — no code change or deploy needed.</p>
+      <div class="filter-row">
+        <label class="filter-field"><span>Google account email</span><input type="email" id="newAdminEmail" placeholder="name@company.com"></label>
+      </div>
+      <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
+        <button class="btn" id="addAdminBtn">+ Add admin</button>
+      </div>
+      <p class="block-sub" id="adminsStatus" style="margin-top:10px;"></p>
+      <ul class="tenant-list admin-list" id="adminsList"></ul>
+    </div>
+  </section>
+</div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {
+  getFirestore, collection, getDocs, deleteDoc, doc, setDoc, serverTimestamp, connectFirestoreEmulator
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
+  createUserWithEmailAndPassword, signInWithEmailAndPassword
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
+import { getFunctions, connectFunctionsEmulator } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
+
+// ---- Firebase init (deliberately duplicated per-page — see the architecture roadmap plan,
+// Workstream 2: a shared ES module breaks under file://, which every automated test and casual
+// local open of this page relies on) ----
+const firebaseConfig = {
+  apiKey: "AIzaSyAoWSx9FYa6UJa-6EZezgBYiDMuVVs9BBo",
+  authDomain: "esg-1-98f35.firebaseapp.com",
+  projectId: "esg-1-98f35",
+  storageBucket: "esg-1-98f35.firebasestorage.app",
+  messagingSenderId: "196747023122",
+  appId: "1:196747023122:web:3fbcc23c1532bed847d9cb"
+};
+const RECAPTCHA_SITE_KEY = ''; // disabled 2026-08-28 — see sorting-station-report.html's comment
+
+let db = null, auth = null, functions = null;
+try {
+  const firebaseApp = initializeApp(firebaseConfig);
+  db = getFirestore(firebaseApp);
+  auth = getAuth(firebaseApp);
+  functions = getFunctions(firebaseApp);
+  const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
+  if (RECAPTCHA_SITE_KEY && !isEmulatorMode && window.location.protocol !== 'file:'){
+    initializeAppCheck(firebaseApp, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+  }
+  if (isEmulatorMode){
+    connectFirestoreEmulator(db, '127.0.0.1', 8080);
+    connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+    window.__testSignIn = async (email, password) => {
+      try { await createUserWithEmailAndPassword(auth, email, password); }
+      catch (err) { /* user already exists from a previous test run — fine */ }
+      await signInWithEmailAndPassword(auth, email, password);
+    };
+    window.__testSignIn('esgtradeflex@gmail.com', 'test-password-123')
+      .catch(err => console.error('Local auto sign-in failed', err));
+  }
+} catch (err) {
+  console.error('Firebase is not configured yet — sign-in and admin management will stay unavailable until firebaseConfig is filled in.', err);
+}
+
+const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
+function esc(str){
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ESC_MAP[c]);
+}
+
+// ---------------- Admins: who else can sign in here ----------------
+// The owner email below is a permanent fallback baked into firestore.rules too (see
+// isAllowedReviewer) — it always has access regardless of what's in /admins, so it's
+// excluded from this list and can't be removed by mistake.
+const OWNER_EMAIL = 'esgtradeflex@gmail.com';
+
+async function loadAdmins(){
+  document.getElementById('ownerEmailNote').textContent = OWNER_EMAIL;
+  try {
+    const snap = await getDocs(collection(db, 'admins'));
+    const admins = snap.docs.map(d => d.id).filter(email => email !== OWNER_EMAIL);
+    renderAdminsList(admins);
+  } catch (err){
+    console.error('Failed to load admins:', err);
+    document.getElementById('adminsStatus').textContent = "Couldn't load admins — check your connection and reload the page.";
+  }
+}
+
+function renderAdminsList(admins){
+  const list = document.getElementById('adminsList');
+  if (!admins.length){
+    list.innerHTML = '<li class="block-sub">No additional admins yet — just you.</li>';
+    return;
+  }
+  list.innerHTML = admins.map(email => `
+    <li><span class="tenant-name">${esc(email)}</span><button class="btn secondary remove-admin-btn" data-email="${esc(email)}">Remove</button></li>
+  `).join('');
+}
+
+document.getElementById('addAdminBtn').addEventListener('click', async () => {
+  const input = document.getElementById('newAdminEmail');
+  const status = document.getElementById('adminsStatus');
+  const email = input.value.trim().toLowerCase();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ status.textContent = 'Enter a valid email first.'; return; }
+  if (email === OWNER_EMAIL){ status.textContent = `${OWNER_EMAIL} already always has access.`; return; }
+  status.textContent = 'Adding…';
+  try {
+    await setDoc(doc(db, 'admins', email), { addedAt: serverTimestamp(), addedBy: auth.currentUser.email });
+    input.value = '';
+    status.textContent = `${email} can now sign in here as an admin.`;
+    await loadAdmins();
+  } catch (err){
+    console.error('Failed to add admin:', err);
+    status.textContent = 'Failed to add — check the console for details.';
+  }
+});
+
+document.getElementById('adminsList').addEventListener('click', async (e) => {
+  const removeBtn = e.target.closest('.remove-admin-btn');
+  if (!removeBtn) return;
+  const email = removeBtn.dataset.email;
+  if (!confirm(`Remove admin access for ${email}?`)) return;
+  try {
+    await deleteDoc(doc(db, 'admins', email));
+    await loadAdmins();
+  } catch (err){
+    console.error('Failed to remove admin:', err);
+    alert('Could not remove — check the console for details.');
+  }
+});
+
+// ---------------- Sign-in ----------------
+document.getElementById('signInBtn').addEventListener('click', async () => {
+  if (!auth){ document.getElementById('authStatus').textContent = 'Firebase is not configured yet.'; return; }
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  catch (err){
+    console.error('Sign-in failed:', err);
+    document.getElementById('authStatus').textContent = 'Sign-in failed or was cancelled.';
+  }
+});
+
+document.getElementById('showEmailSignInBtn').addEventListener('click', () => {
+  document.getElementById('emailSignInForm').style.display = 'block';
+  document.getElementById('showEmailSignInBtn').style.display = 'none';
+  document.getElementById('emailSignInEmail').focus();
+});
+
+document.getElementById('emailSignInForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!auth){ document.getElementById('authStatus').textContent = 'Firebase is not configured yet.'; return; }
+  const email = document.getElementById('emailSignInEmail').value.trim();
+  const password = document.getElementById('emailSignInPassword').value;
+  try {
+    await signInWithEmailAndPassword(auth, email, password);
+  } catch (err){
+    console.error('Email sign-in failed:', err);
+    document.getElementById('authStatus').textContent = 'Sign-in failed — check the email and password and try again.';
+  }
+});
+
+document.getElementById('signOutBtn').addEventListener('click', () => { if (auth) signOut(auth); });
+
+if (auth){
+  onAuthStateChanged(auth, (user) => {
+    document.getElementById('signInBtn').style.display = user ? 'none' : 'inline-flex';
+    document.getElementById('signOutBtn').style.display = user ? 'inline-flex' : 'none';
+    if (user){
+      document.getElementById('authZone').style.display = 'none';
+      document.getElementById('showEmailSignInBtn').style.display = 'none';
+      document.getElementById('emailSignInForm').style.display = 'none';
+      document.getElementById('adminsSection').style.display = 'block';
+      loadAdmins();
+    } else {
+      document.getElementById('authZone').style.display = '';
+      document.getElementById('authStatus').textContent = 'Sign in with an authorized account to manage admins.';
+      document.getElementById('emailSignInForm').style.display = 'none';
+      document.getElementById('emailSignInForm').reset();
+      document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';
+      document.getElementById('adminsSection').style.display = 'none';
+      document.getElementById('adminsList').innerHTML = '';
+      document.getElementById('adminsStatus').textContent = '';
+    }
+  });
+}
+</script>
+</body>
+</html>

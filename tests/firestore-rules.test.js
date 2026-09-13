@@ -7,7 +7,7 @@ const {
   assertSucceeds,
   assertFails,
 } = require('@firebase/rules-unit-testing');
-const { doc, setDoc, getDoc, getDocs, collection, addDoc, deleteDoc, updateDoc } = require('firebase/firestore');
+const { doc, setDoc, getDoc, getDocs, collection, addDoc, deleteDoc, updateDoc, query, where } = require('firebase/firestore');
 
 const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
 const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
@@ -215,6 +215,65 @@ async function main(){
     assertSucceeds(deleteDoc(doc(allowedUser, 'admins', NEW_ADMIN_EMAIL))));
   await record('after revocation, that user CANNOT read submissions anymore', () =>
     assertFails(getDocs(collection(newAdminUser, 'submissions'))));
+
+  // ---- Per-building scoped access via /buildingAccess (roadmap Workstream 1, Step B) ----
+  // A scoped client is granted access to exactly ONE building — never full reviewer rights —
+  // while the existing global allowlist above must keep working completely unchanged.
+  const SCOPED_CLIENT_EMAIL = 'scoped-client@example.com';
+  const scopedClient = testEnv.authenticatedContext('u4', { email: SCOPED_CLIENT_EMAIL }).firestore();
+
+  let scopedSubmissionId, otherBuildingSubmissionId, scopedAttemptId;
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'buildings', 'building-scoped'), { name: 'Scoped Tower' });
+    await setDoc(doc(db, 'buildings', 'building-other'), { name: 'Other Tower' });
+    scopedSubmissionId = (await addDoc(collection(db, 'submissions'), { ...validSubmission, buildingId: 'building-scoped' })).id;
+    otherBuildingSubmissionId = (await addDoc(collection(db, 'submissions'), { ...validSubmission, buildingId: 'building-other' })).id;
+    scopedAttemptId = (await addDoc(collection(db, 'attempts'), { ...validAttempt, buildingId: 'building-scoped' })).id;
+  });
+
+  await record('a signed-in user with no /buildingAccess grant at all CANNOT read a submission by direct get', () =>
+    assertFails(getDoc(doc(scopedClient, 'submissions', scopedSubmissionId))));
+  await record('a non-admin user CANNOT self-grant building access by writing to /buildingAccess', () =>
+    assertFails(setDoc(doc(scopedClient, 'buildingAccess', `${SCOPED_CLIENT_EMAIL}__building-scoped`), { email: SCOPED_CLIENT_EMAIL, buildingId: 'building-scoped' })));
+  await record('the owner CAN grant a scoped client access to one building via /buildingAccess', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'buildingAccess', `${SCOPED_CLIENT_EMAIL}__building-scoped`), { email: SCOPED_CLIENT_EMAIL, buildingId: 'building-scoped', addedAt: 'now', addedBy: ALLOWED_EMAIL })));
+
+  await record('once granted, the scoped client CAN read a submission from THEIR granted building by direct get', () =>
+    assertSucceeds(getDoc(doc(scopedClient, 'submissions', scopedSubmissionId))));
+  await record('the scoped client CANNOT read a submission from a DIFFERENT building by direct get', () =>
+    assertFails(getDoc(doc(scopedClient, 'submissions', otherBuildingSubmissionId))));
+  await record('the scoped client CAN read an attempt from their granted building', () =>
+    assertSucceeds(getDoc(doc(scopedClient, 'attempts', scopedAttemptId))));
+
+  await record('the scoped client CANNOT run an unfiltered (no buildingId) list query on submissions — Firestore rejects the whole query, not just the disallowed rows', () =>
+    assertFails(getDocs(collection(scopedClient, 'submissions'))));
+  await record('the scoped client CAN run a submissions query filtered to their own granted building', () =>
+    assertSucceeds(getDocs(query(collection(scopedClient, 'submissions'), where('buildingId', 'in', ['building-scoped'])))));
+  await record('the scoped client CANNOT query submissions filtered to a building they were not granted', () =>
+    assertFails(getDocs(query(collection(scopedClient, 'submissions'), where('buildingId', 'in', ['building-other'])))));
+
+  await record('the global allowlisted admin is completely unaffected — still reads everything with the exact same unfiltered query as before', () =>
+    assertSucceeds(getDocs(collection(allowedUser, 'submissions'))));
+
+  await record('the scoped client still CANNOT write to buildings (view-only, no config/edit rights)', () =>
+    assertFails(setDoc(doc(scopedClient, 'buildings', 'building-scoped'), { name: 'Hacked' }, { merge: true })));
+  await record('the scoped client still CANNOT delete a submission (view-only, delete stays reviewer-only)', () =>
+    assertFails(deleteDoc(doc(scopedClient, 'submissions', scopedSubmissionId))));
+
+  await record('the scoped client CAN read their own /buildingAccess grant doc', () =>
+    assertSucceeds(getDoc(doc(scopedClient, 'buildingAccess', `${SCOPED_CLIENT_EMAIL}__building-scoped`))));
+  await record("the scoped client CANNOT read someone else's /buildingAccess grant doc", () =>
+    testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'buildingAccess', 'other-client@example.com__building-other'), { email: 'other-client@example.com', buildingId: 'building-other' });
+    }).then(() => assertFails(getDoc(doc(scopedClient, 'buildingAccess', 'other-client@example.com__building-other')))));
+  await record('the scoped client CANNOT revoke/modify their own /buildingAccess grant (grant management is admin-only)', () =>
+    assertFails(deleteDoc(doc(scopedClient, 'buildingAccess', `${SCOPED_CLIENT_EMAIL}__building-scoped`))));
+
+  await record("the owner CAN revoke the scoped client's access by deleting the /buildingAccess doc", () =>
+    assertSucceeds(deleteDoc(doc(allowedUser, 'buildingAccess', `${SCOPED_CLIENT_EMAIL}__building-scoped`))));
+  await record('after revocation, the scoped client CANNOT read that submission anymore', () =>
+    assertFails(getDoc(doc(scopedClient, 'submissions', scopedSubmissionId))));
 
   await testEnv.cleanup();
 

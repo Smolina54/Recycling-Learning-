@@ -2436,6 +2436,9 @@ var qrcode = function() {
   .settings-sidebar-nav .tab-btn.active{background:#33443A; color:var(--paper);}
   .settings-sidebar-nav .tab-btn:hover{background:#2A362F; color:var(--paper);}
   .settings-sidebar-nav .tab-btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+  /* Admins is a real separate page now (admin-admins.html) — its sidebar entry here is a real
+     <a>, which needs the underline reset a <button> never did. */
+  .settings-sidebar-nav a.tab-btn{text-decoration:none; display:block;}
   .settings-sidebar-exit{margin-top:32px; padding-top:20px; border-top:1px solid #33443A;}
   .settings-sidebar-exit a{font-family:var(--mono); font-size:11.5px; color:#9AABA0; text-decoration:none;}
   .settings-sidebar-exit a:hover{color:var(--paper);}
@@ -2740,7 +2743,7 @@ var qrcode = function() {
     <div class="settings-sidebar-label">⚙ Settings</div>
     <nav class="settings-sidebar-nav">
       <button class="tab-btn" id="tabBuildingsBtn">Buildings</button>
-      <button class="tab-btn" id="tabAdminsBtn">Admins</button>
+      <a class="tab-btn" href="admin-admins.html">Admins</a>
       <button class="tab-btn" id="tabCatalogBtn">Catalog</button>
     </nav>
     <div class="settings-sidebar-exit">
@@ -2850,24 +2853,6 @@ var qrcode = function() {
     <p class="block-sub">Links for whichever induction is selected above. A building must be enrolled (see Enrolled Buildings) before it shows up here.</p>
 
     <div id="distributionList"></div>
-  </section>
-
-  <section id="adminsSection" style="display:none;">
-    <div class="report-header-row">
-      <h2>Admins</h2>
-    </div>
-
-    <div class="report-block">
-      <p class="block-sub">Google accounts allowed to sign in here and view/export/delete results or manage buildings. <span id="ownerEmailNote"></span> always has access. Adding someone here takes effect immediately — no code change or deploy needed.</p>
-      <div class="filter-row">
-        <label class="filter-field"><span>Google account email</span><input type="email" id="newAdminEmail" placeholder="name@company.com"></label>
-      </div>
-      <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
-        <button class="btn" id="addAdminBtn">+ Add admin</button>
-      </div>
-      <p class="block-sub" id="adminsStatus" style="margin-top:10px;"></p>
-      <ul class="tenant-list admin-list" id="adminsList"></ul>
-    </div>
   </section>
 
   <section id="catalogSection" style="display:none;">
@@ -5021,6 +5006,46 @@ try {
   // Only ever called once a real program is selected (see the program selector's change
   // handler) — Reports has nothing meaningful to show before that, per Sergio's explicit
   // correction: no default selection, no data, until the admin actively picks one.
+  // Firestore's 'in' operator caps at 10 values — a scoped client with more than 10 granted
+  // buildings needs multiple chunked queries, merged back together client-side below.
+  const BUILDING_ID_CHUNK_SIZE = 10;
+  function chunkArray(arr, size){
+    const out = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  }
+
+  // A scoped client (granted access to specific buildings via /buildingAccess, see
+  // firestore.rules' canReviewBuilding()) can't run the plain programId-only query below — rules
+  // can only permit a query if every document it could possibly return is provably allowed, and
+  // an unfiltered-by-building query can't be proven safe for someone who isn't a global reviewer.
+  // Fetches this signed-in user's own grants, then re-queries both collections chunked by
+  // buildingId, merging and re-sorting the results back into the same shape/order as the
+  // unscoped path above.
+  async function loadScopedLiveData(){
+    const email = (auth.currentUser?.email || '').toLowerCase();
+    const grantsSnap = await getDocs(query(collection(db, 'buildingAccess'), where('email', '==', email)));
+    const buildingIds = grantsSnap.docs.map(d => d.data().buildingId);
+    if (!buildingIds.length) return null; // signed in, but no grant at all — genuinely not authorized
+
+    const chunks = chunkArray(buildingIds, BUILDING_ID_CHUNK_SIZE);
+    const [subSnaps, attSnaps] = await Promise.all([
+      Promise.all(chunks.map(ids => getDocs(query(
+        collection(db, 'submissions'), where('programId', '==', currentProgramId),
+        where('buildingId', 'in', ids), orderBy('timestamp', 'desc'), limit(MAX_ROWS)
+      )))),
+      Promise.all(chunks.map(ids => getDocs(query(
+        collection(db, 'attempts'), where('programId', '==', currentProgramId),
+        where('buildingId', 'in', ids), orderBy('timestamp', 'desc'), limit(MAX_ROWS)
+      )))),
+    ]);
+    const rows = subSnaps.flatMap(snap => snap.docs.map(d => submissionToRow(d.id, d.data())))
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, MAX_ROWS);
+    const attempts = attSnaps.flatMap(snap => snap.docs.map(d => attemptToRow(d.id, d.data())))
+      .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0)).slice(0, MAX_ROWS);
+    return { rows, attempts };
+  }
+
   async function loadLiveData(){
     if (!db){
       document.getElementById('authStatus').textContent = 'Firebase is not configured yet — check back once the project is connected.';
@@ -5039,8 +5064,20 @@ try {
       loadRows(rows, attempts, sourceLabel, true);
       await loadEnrolledData();
     } catch (err){
-      console.error('Failed to load submissions:', err);
-      document.getElementById('authStatus').textContent = "Your account isn't authorized to view this report, or something went wrong loading it.";
+      // A global reviewer never reaches here (their query above always succeeds). Only a
+      // non-global account lands here — try the scoped/building-limited path before giving up.
+      try {
+        const scoped = await loadScopedLiveData();
+        if (!scoped){
+          document.getElementById('authStatus').textContent = "Your account isn't authorized to view this report, or something went wrong loading it.";
+          return;
+        }
+        const sourceLabel = `Live data from Firestore · ${scoped.rows.length} submissions (scoped to your granted building(s))`;
+        loadRows(scoped.rows, scoped.attempts, sourceLabel, true);
+      } catch (scopedErr){
+        console.error('Failed to load submissions (both unscoped and scoped attempts failed):', err, scopedErr);
+        document.getElementById('authStatus').textContent = "Your account isn't authorized to view this report, or something went wrong loading it.";
+      }
     }
   }
 
@@ -5850,66 +5887,8 @@ try {
     refreshBuildingsView();
   });
 
-  // ---------------- Admins tab: who else can sign in here ----------------
-  // The owner email below is a permanent fallback baked into firestore.rules too (see
-  // isAllowedReviewer) — it always has access regardless of what's in /admins, so it's
-  // excluded from this list and can't be removed by mistake.
-  const OWNER_EMAIL = 'esgtradeflex@gmail.com';
-
-  async function loadAdmins(){
-    document.getElementById('ownerEmailNote').textContent = OWNER_EMAIL;
-    try {
-      const snap = await getDocs(collection(db, 'admins'));
-      const admins = snap.docs.map(d => d.id).filter(email => email !== OWNER_EMAIL);
-      renderAdminsList(admins);
-    } catch (err){
-      console.error('Failed to load admins:', err);
-      document.getElementById('adminsStatus').textContent = "Couldn't load admins — check your connection and reload the page.";
-    }
-  }
-
-  function renderAdminsList(admins){
-    const list = document.getElementById('adminsList');
-    if (!admins.length){
-      list.innerHTML = '<li class="block-sub">No additional admins yet — just you.</li>';
-      return;
-    }
-    list.innerHTML = admins.map(email => `
-      <li><span class="tenant-name">${esc(email)}</span><button class="btn secondary remove-admin-btn" data-email="${esc(email)}">Remove</button></li>
-    `).join('');
-  }
-
-  document.getElementById('addAdminBtn').addEventListener('click', async () => {
-    const input = document.getElementById('newAdminEmail');
-    const status = document.getElementById('adminsStatus');
-    const email = input.value.trim().toLowerCase();
-    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ status.textContent = 'Enter a valid email first.'; return; }
-    if (email === OWNER_EMAIL){ status.textContent = `${OWNER_EMAIL} already always has access.`; return; }
-    status.textContent = 'Adding…';
-    try {
-      await setDoc(doc(db, 'admins', email), { addedAt: serverTimestamp(), addedBy: auth.currentUser.email });
-      input.value = '';
-      status.textContent = `${email} can now sign in here as an admin.`;
-      await loadAdmins();
-    } catch (err){
-      console.error('Failed to add admin:', err);
-      status.textContent = 'Failed to add — check the console for details.';
-    }
-  });
-
-  document.getElementById('adminsList').addEventListener('click', async (e) => {
-    const removeBtn = e.target.closest('.remove-admin-btn');
-    if (!removeBtn) return;
-    const email = removeBtn.dataset.email;
-    if (!confirm(`Remove admin access for ${email}?`)) return;
-    try {
-      await deleteDoc(doc(db, 'admins', email));
-      await loadAdmins();
-    } catch (err){
-      console.error('Failed to remove admin:', err);
-      alert('Could not remove — check the console for details.');
-    }
-  });
+  // Admins management now lives entirely in admin-admins.html (Workstream 2, Phase 1 of the
+  // architecture roadmap).
 
   // ---------------- Catalog tab: register/archive inductions ----------------
   // Registering here never creates or edits the induction's own file/content — it only adds
@@ -6661,7 +6640,6 @@ try {
     enrolledBuildings: { btn: 'tabEnrolledBuildingsBtn', section: 'enrolledBuildingsSection', scoped: true },
     distribution: { btn: 'tabDistributionBtn', section: 'distributionSection', scoped: true },
     buildings: { btn: 'tabBuildingsBtn', section: 'buildingsSection', scoped: false },
-    admins: { btn: 'tabAdminsBtn', section: 'adminsSection', scoped: false },
     catalog: { btn: 'tabCatalogBtn', section: 'catalogSection', scoped: false },
   };
   // The big page header and the induction selector both talk about a specific induction's
@@ -6713,7 +6691,6 @@ try {
   document.getElementById('tabEnrolledBuildingsBtn').addEventListener('click', () => showTab('enrolledBuildings'));
   document.getElementById('tabDistributionBtn').addEventListener('click', () => showTab('distribution'));
   document.getElementById('tabBuildingsBtn').addEventListener('click', () => showTab('buildings'));
-  document.getElementById('tabAdminsBtn').addEventListener('click', () => showTab('admins'));
   document.getElementById('tabCatalogBtn').addEventListener('click', () => { showTab('catalog'); refreshProgramSelector(); });
 
   // Buildings/Admins/Catalog live behind this ⚙ button (program-agnostic, reachable regardless
@@ -6851,7 +6828,15 @@ try {
         document.getElementById('programSelectorRow').style.display = 'flex';
         refreshProgramSelector();
         loadMasterBuildings();
-        loadAdmins();
+        // Lets admin-admins.html's/admin-catalog.html's-to-be sidebar links land on the right
+        // still-in-this-file tab (?tab=buildings or ?tab=catalog) instead of always opening on
+        // whatever's default — same one-shot idea as ?program= for the scoped tabs, just for the
+        // program-agnostic ones that haven't been split into their own pages yet.
+        const requestedTab = new URLSearchParams(window.location.search).get('tab');
+        if (requestedTab === 'buildings' || requestedTab === 'catalog'){
+          showTab(requestedTab);
+          if (requestedTab === 'catalog') refreshProgramSelector();
+        }
       }
       else {
         // Real names/emails/scores were on screen the moment before this — signing out has to
@@ -6883,8 +6868,6 @@ try {
         // programs after sign-out, rather than the safe single-entry default — inconsistent with
         // how thoroughly everything else here resets on sign-out.
         programsCache = DEFAULT_PROGRAMS_CACHE();
-        document.getElementById('adminsSection').style.display = 'none';
-        document.getElementById('adminsList').innerHTML = '';
         document.getElementById('buildingsSection').style.display = 'none';
         document.getElementById('buildingsList').innerHTML = '';
         document.getElementById('enrolledBuildingsSection').style.display = 'none';
@@ -6911,7 +6894,6 @@ try {
         document.getElementById('tabEnrolledBuildingsBtn').classList.remove('active');
         document.getElementById('tabDistributionBtn').classList.remove('active');
         document.getElementById('tabBuildingsBtn').classList.remove('active');
-        document.getElementById('tabAdminsBtn').classList.remove('active');
         document.getElementById('tabCatalogBtn').classList.remove('active');
       }
     });
