@@ -78,12 +78,14 @@ async function runFlow(page){
   check('no additional admins yet', (await page.$eval('#adminsList', el => el.textContent)).includes('just you'));
 
   // --- Sidebar nav: links to the still-not-split-out tabs, and back to Reports ---
-  const buildingsHref = await page.$eval('a[href*="sorting-station-report.html?tab=buildings"]', el => el.getAttribute('href')).catch(() => null);
-  check('the Buildings sidebar link points at sorting-station-report.html?tab=buildings', buildingsHref === 'sorting-station-report.html?tab=buildings', buildingsHref);
-  const catalogHref = await page.$eval('a[href*="sorting-station-report.html?tab=catalog"]', el => el.getAttribute('href')).catch(() => null);
-  check('the Catalog sidebar link points at sorting-station-report.html?tab=catalog', catalogHref === 'sorting-station-report.html?tab=catalog', catalogHref);
+  // Every sidebar link gets ?emulator=1 appended on load (see the page's own patch right after
+  // its auto sign-in) so navigating between pages never falls out of the local test session.
+  const buildingsHref = await page.$eval('a[href*="admin-buildings.html"]', el => el.getAttribute('href')).catch(() => null);
+  check('the Buildings sidebar link points at admin-buildings.html (its own page, Workstream 2 Phase 2)', buildingsHref === 'admin-buildings.html?emulator=1', buildingsHref);
+  const catalogHref = await page.$eval('a[href*="admin-catalog.html"]', el => el.getAttribute('href')).catch(() => null);
+  check('the Catalog sidebar link points at admin-catalog.html (its own page, Workstream 2 Phase 3)', catalogHref === 'admin-catalog.html?emulator=1', catalogHref);
   const backHref = await page.$eval('.settings-sidebar-exit a', el => el.getAttribute('href')).catch(() => null);
-  check('"← Back to reports" points at sorting-station-report.html', backHref === 'sorting-station-report.html', backHref);
+  check('"← Back to reports" points at sorting-station-report.html', backHref === 'sorting-station-report.html?emulator=1', backHref);
 
   // --- Grant/revoke a second reviewer, exactly like the old in-page tab used to ---
   const newAdminEmail = 'second.admin@example.com';

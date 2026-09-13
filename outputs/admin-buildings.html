@@ -1,0 +1,1318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recycling Training — Buildings</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232F6F4E'/%3E%3Cpath d='M16 6 L26 16 L16 26 L6 16 Z' fill='%23EEEBE1'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#EEEBE1;
+    --panel:#F7F5EE;
+    --ink:#1E2A22;
+    --ink-soft:#4A5850;
+    --line: rgba(30,42,34,0.14);
+    --forest:#2F6F4E;
+    --forest-dark:#1F4A34;
+
+    --gw: #8C2F39;
+    --gw-tint: #F3E1E1;
+    --mr: #C98E12;
+    --mr-tint: #F6ECD3;
+    --pc: #2B5C8A;
+    --pc-tint: #DEE7EE;
+    --og: #5C7A29;
+    --og-tint: #E5EAD8;
+    --ew: #5B4B8A;
+    --ew-tint: #E4E0EF;
+
+    /* Warning/notice color, distinct from every stream color above (gw/mr/pc/og/ew) so it never
+       reads as "this relates to a specific stream" — used by .custom-config-badge, which
+       referenced these three variables without them ever being defined (silently invisible). */
+    --amber-ink: #8A5A12;
+    --amber-bg: #FBEEDA;
+    --amber-line: #D9A441;
+
+    /* Neutral gray-blue "this is system configuration, not induction data" family — deliberately
+       not a stream color and not --forest (the "Viewing: X" badge's green), so the ⚙ Buildings/
+       Admins/Catalog screens read as a different zone of the app on sight, not as another
+       induction. See body.settings-mode below. */
+    --settings-bg: #E4E6E7;
+    --settings-ink: #4B5860;
+    --settings-tint: #E1E5E7;
+    --settings-line: #8FA0A8;
+
+    --radius: 4px;
+    --display: 'Oswald', sans-serif;
+    --body: 'Inter', sans-serif;
+    --mono: 'Space Mono', monospace;
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--body); line-height:1.5;}
+  .wrap{max-width:920px; margin:0 auto; padding:0 24px 80px;}
+
+  header.top{padding:40px 0 28px; border-bottom:1px solid var(--line); margin-bottom:32px;}
+  .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:0.16em; text-transform:uppercase; color:var(--forest-dark); margin:0 0 12px;}
+  h1{font-family:var(--display); font-weight:700; text-transform:uppercase; font-size:clamp(28px,5vw,44px); line-height:1; margin:0 0 12px;}
+  .sub{color:var(--ink-soft); font-size:15px; max-width:600px;}
+
+  .btn{
+    font-family:var(--body); font-weight:600; font-size:14.5px;
+    padding:12px 22px; border-radius:var(--radius); border:none; cursor:pointer;
+    background:var(--ink); color:var(--paper);
+    display:inline-flex; align-items:center; gap:10px;
+  }
+  .btn.secondary{background:transparent; color:var(--ink); border:1.5px solid var(--ink);}
+  .btn:hover{background:var(--forest-dark);}
+  .btn.secondary:hover{background:var(--ink); color:var(--paper);}
+  /* This panel had almost no :focus-visible styling anywhere (only one rule, on the tenant
+     toggle switch) — a keyboard user got no visible indication of what's focused on the one
+     screen with real destructive actions (delete admin, remove building, etc.). The three
+     trainee-facing pages already style this consistently; matching that here. */
+  .btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+
+  .upload-zone{
+    background:var(--panel); border:1.5px dashed var(--line); padding:36px; text-align:center; margin-bottom:16px;
+  }
+  .upload-zone p{color:var(--ink-soft); font-size:14.5px; margin:0 0 18px;}
+  .upload-actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap;}
+
+  .admin-tabs{display:flex; gap:4px; align-items:flex-start; border-bottom:1.5px solid var(--line); margin-bottom:28px;}
+  .tab-btn{
+    font-family:var(--body); font-weight:600; font-size:14.5px; color:var(--ink-soft);
+    background:none; border:none; border-bottom:2.5px solid transparent; padding:10px 4px; margin-bottom:-1.5px;
+    cursor:pointer;
+  }
+  .tab-btn.active{color:var(--ink); border-bottom-color:var(--forest);}
+  .tab-btn:hover{color:var(--ink);}
+  .tab-btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+
+  .corner-settings{
+    position:fixed; top:16px; right:16px; z-index:45; max-width:calc(100% - 32px);
+    display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;
+  }
+  /* .btn.secondary is transparent by design (the outline look used everywhere else in this
+     app) — fine for a button inline in the document flow, but these three live in
+     .corner-settings' fixed-position bar, floating over scrollable page content, so a
+     transparent background lets that content show through. Giving just these an opaque
+     background fixes it without changing the outline style anywhere it isn't a problem. */
+  .corner-btn{font-size:13px; padding:8px 14px; background:var(--panel);}
+  .viewing-badge{
+    font-family:var(--mono); font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;
+    color:var(--forest-dark); background:var(--og-tint, #E5EAD8); border:1px solid var(--forest);
+    padding:6px 12px; border-radius:var(--radius);
+  }
+  .settings-btn{font-size:16px; padding:6px 12px; line-height:1;}
+
+  /* Full-bleed sidebar for the program-agnostic ⚙ screens (Buildings/Admins/Catalog) — a
+     deliberate structural break from .wrap's centered 960px column used everywhere else, so
+     this reads as a distinct "mode" rather than a flatter variant of the same page. Hidden by
+     default; .page-shell.sidebar-mode (toggled in showTab() for every un-scoped tab) reveals it
+     and narrows .wrap to sit beside it instead of self-centering. */
+  .page-shell{display:flex;}
+  .settings-sidebar{
+    display:none; width:220px; flex-shrink:0; background:var(--ink); color:var(--paper);
+    padding:28px 20px; box-sizing:border-box; min-height:100vh;
+  }
+  .page-shell.sidebar-mode .settings-sidebar{display:block;}
+  .page-shell.sidebar-mode .wrap{margin:0; max-width:900px;}
+  .settings-sidebar-label{
+    font-family:var(--mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase;
+    color:#9AABA0; margin-bottom:20px;
+  }
+  .settings-sidebar-nav{display:flex; flex-direction:column; gap:4px;}
+  .settings-sidebar-nav .tab-btn{
+    text-align:left; border-bottom:none; margin-bottom:0; padding:10px 12px; border-radius:var(--radius);
+    color:#C7D1CA;
+  }
+  .settings-sidebar-nav .tab-btn.active{background:#33443A; color:var(--paper);}
+  .settings-sidebar-nav .tab-btn:hover{background:#2A362F; color:var(--paper);}
+  .settings-sidebar-nav .tab-btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+  /* Admins is a real separate page now (admin-admins.html) — its sidebar entry here is a real
+     <a>, which needs the underline reset a <button> never did. */
+  .settings-sidebar-nav a.tab-btn{text-decoration:none; display:block;}
+  .settings-sidebar-exit{margin-top:32px; padding-top:20px; border-top:1px solid #33443A;}
+  .settings-sidebar-exit a{font-family:var(--mono); font-size:11.5px; color:#9AABA0; text-decoration:none;}
+  .settings-sidebar-exit a:hover{color:var(--paper);}
+  .settings-sidebar-exit a:focus-visible{outline:2px solid var(--paper); outline-offset:2px;}
+
+  .import-xlsx-label{cursor:pointer;}
+  .import-candidates{max-height:280px; overflow-y:auto; border:1px solid var(--line); padding:10px; margin-top:10px; background:var(--paper);}
+  .import-row{display:grid; grid-template-columns:24px 1fr 1fr; gap:8px; align-items:center; padding:6px 0;}
+  .import-row input[type=text]{
+    font-family:var(--body); font-size:13px; padding:6px 8px; border:1px solid var(--line);
+    border-radius:var(--radius); background:var(--panel); color:var(--ink); width:100%;
+  }
+  @media (max-width:640px){.import-row{grid-template-columns:20px 1fr;} .import-row .import-levels{grid-column:2;}}
+
+  .building-row, .enrolled-building-row, .distribution-building-row{margin-bottom:20px;}
+  .building-link-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
+  .building-link-text{
+    font-family:var(--mono); font-size:12px; background:var(--paper); border:1px solid var(--line);
+    padding:8px 12px; border-radius:var(--radius); overflow-x:auto; white-space:nowrap; max-width:100%;
+  }
+  .building-qr{width:120px; height:120px; margin-bottom:16px;}
+  .building-qr svg{width:100%; height:100%;}
+  .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
+  .building-row:has(> .building-header-row:only-child) .building-header-row{margin-bottom:0;}
+  .building-header-row h3{margin-bottom:0;}
+  .building-toggle-btn{
+    background:transparent; border:none; cursor:pointer; font-size:16px; color:var(--ink-soft);
+    padding:2px 4px; flex-shrink:0;
+  }
+  .building-tenant-count{
+    font-family:var(--mono); font-size:11.5px; color:var(--ink-soft);
+    background:var(--line); padding:3px 9px; border-radius:20px; flex-shrink:0;
+  }
+  .building-header-actions{display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;}
+  .custom-config-badge{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:0.03em; text-transform:uppercase;
+    background:var(--amber-bg); color:var(--amber-ink); border:1px solid var(--amber-line);
+    padding:3px 8px; border-radius:20px; flex-shrink:0;
+  }
+  .items-editor{margin:18px 0; padding:18px; background:var(--paper); border:1px solid var(--line); border-radius:var(--radius);}
+  .items-editor-summary{font-size:13px; color:var(--ink-soft); margin-bottom:14px;}
+  .quick-merge-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--line);}
+  .quick-merge-row select{
+    font-family:var(--body); font-size:13px; padding:6px 8px; border:1.5px solid var(--line);
+    background:var(--panel); border-radius:var(--radius); color:var(--ink);
+  }
+  .items-stream-section{margin-bottom:22px;}
+  .items-stream-section:last-child{margin-bottom:0;}
+  .items-stream-head{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
+  .items-stream-swatch{width:10px; height:22px; flex-shrink:0;}
+  .items-stream-head h4{margin:0; font-size:14px; text-transform:uppercase; letter-spacing:0.02em;}
+  .items-card-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:10px;}
+  .items-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:10px 10px 8px; display:flex; flex-direction:column; gap:6px; font-size:12.5px;
+  }
+  .items-card-head{display:flex; align-items:center; gap:6px;}
+  .items-card-icon{width:20px; height:20px; flex-shrink:0; display:inline-flex;}
+  .items-card-icon svg, .items-card-icon img{width:20px; height:20px; object-fit:contain;}
+  .items-card-name{font-weight:600; line-height:1.25; flex:1;}
+  .items-card-inactive .items-card-icon, .items-card-inactive .items-card-name{opacity:0.45;}
+  .item-toggle{position:relative; display:inline-block; width:34px; height:20px; flex-shrink:0; cursor:pointer;}
+  .item-toggle input{position:absolute; inset:0; opacity:0; margin:0; cursor:pointer;}
+  .item-toggle-track{position:absolute; inset:0; background:var(--ink-soft); border-radius:20px; transition:background .15s ease;}
+  .item-toggle-thumb{position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; transition:transform .15s ease;}
+  .item-toggle input:checked + .item-toggle-track{background:#2ECC5F;}
+  .item-toggle input:checked + .item-toggle-track .item-toggle-thumb{transform:translateX(14px);}
+  .item-toggle input:focus-visible + .item-toggle-track{outline:2px solid var(--ink); outline-offset:2px;}
+  .items-card select{
+    font-family:var(--body); font-size:12px; padding:5px 6px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink);
+  }
+  .acceptable-details{font-size:11.5px;}
+  .acceptable-details summary{color:var(--ink-soft); cursor:pointer; user-select:none;}
+  .acceptable-checkbox-group{display:flex; flex-direction:column; gap:3px; margin-top:6px;}
+  .acceptable-checkbox-label{display:flex; align-items:center; gap:5px; font-weight:400; cursor:pointer;}
+  .items-editor-actions{display:flex; gap:8px; margin-top:20px;}
+  .items-editor-error{color:var(--gw); font-size:13px; margin:10px 0 0;}
+  .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
+  .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
+  .building-edit-row input{flex:1; min-width:160px;}
+  .tenant-list{list-style:none; margin:0 0 16px; padding:0; font-size:13.5px;}
+  .tenant-list li{padding:8px 0; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+  .tenant-list li:last-child{border-bottom:none;}
+  .tenant-list .tenant-name{font-weight:600;}
+  .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
+  .tenant-row-actions{display:flex; gap:8px; flex-shrink:0; margin-left:auto;}
+  .remove-admin-btn{margin-left:auto;}
+  /* ".tenant-list li" (a descendant selector) beats a plain ".tenant-edit-row" class selector on
+     specificity alone, regardless of source order — align-items:center from that base rule was
+     silently winning here. Match its selector shape (with the extra class) to actually override it. */
+  .tenant-list li.tenant-edit-row{gap:8px; align-items:flex-start;}
+  .tenant-edit-row > .edit-tenant-name-input{flex:1; min-width:120px;}
+  .levels-editor{display:flex; flex-direction:column; gap:8px; flex:1; min-width:220px;}
+  .level-row{display:flex; align-items:center; gap:6px;}
+  .level-row select{
+    font-family:var(--body); font-size:13px; padding:6px 8px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink);
+  }
+  .level-row input{
+    font-family:var(--body); font-size:13px; padding:6px 10px; border:1.5px solid var(--line);
+    border-radius:var(--radius); color:var(--ink); width:110px;
+  }
+  .remove-level-row-btn{
+    background:transparent; border:none; color:var(--ink-soft); font-size:18px; line-height:1;
+    cursor:pointer; padding:2px 6px;
+  }
+  .remove-level-row-btn:hover{color:var(--gw);}
+  .add-level-row-btn{align-self:flex-start; padding:6px 14px; font-size:12.5px;}
+  .tenant-list .tenant-emails{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
+  .emails-editor{display:flex; flex-direction:column; gap:8px; flex:1; min-width:220px;}
+  .email-row{display:flex; align-items:center; gap:6px;}
+  .email-row input{
+    font-family:var(--body); font-size:13px; padding:6px 10px; border:1.5px solid var(--line);
+    border-radius:var(--radius); color:var(--ink); width:220px;
+  }
+  .remove-email-row-btn{
+    background:transparent; border:none; color:var(--ink-soft); font-size:18px; line-height:1;
+    cursor:pointer; padding:2px 6px;
+  }
+  .remove-email-row-btn:hover{color:var(--gw);}
+  .add-email-row-btn{align-self:flex-start; padding:6px 14px; font-size:12.5px;}
+  /* Overrides .import-row's 3-column grid (24px checkbox + 2 fields) — this row has no
+     checkbox, just a tag and a name, so it needs its own narrower layout instead of
+     squeezing the tag into that 24px first column. */
+  .import-row-unmatched{display:flex; align-items:center; gap:10px; opacity:0.75;}
+  .contacts-unmatched-tag{
+    font-family:var(--mono); font-size:10px; letter-spacing:0.03em; text-transform:uppercase;
+    color:var(--gw); border:1px solid var(--gw); padding:2px 6px; flex-shrink:0;
+  }
+  .tenant-list .btn.secondary, .building-header-actions .btn, .building-edit-row .btn{padding:6px 14px; font-size:12.5px;}
+  .danger-btn{border-color:var(--gw) !important; color:var(--gw) !important;}
+  .danger-btn:hover{background:var(--gw) !important; color:var(--paper) !important;}
+  input[type=file]{display:none;}
+  .file-name{font-family:var(--mono); font-size:12px; color:var(--ink-soft); margin-top:14px;}
+
+  #reportSection{display:none;}
+
+  .report-header-row{display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px; margin:36px 0 20px;}
+  .report-header-row h2{font-family:var(--display); text-transform:uppercase; font-size:24px; margin:0;}
+  .source-note{font-family:var(--mono); font-size:11.5px; color:var(--ink-soft);}
+
+  /* Print-only document header (see the @media print rule further down for why it's hidden on
+     screen) — the induction name, its short description, and the building/period this specific
+     report covers, so the PDF opens with real cover context instead of launching into charts. */
+  .print-header{display:none;}
+
+  .kpi-row{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:2px; background:var(--line); border:1px solid var(--line); margin-bottom:36px;}
+  .kpi-tile{background:var(--panel); padding:20px 18px;}
+  .kpi-label{font-family:var(--mono); font-size:10.5px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft); margin-bottom:8px;}
+  .kpi-value{font-family:var(--display); font-size:32px; color:var(--ink);}
+  .kpi-value.good{color:var(--forest-dark);}
+  .kpi-value.bad{color:var(--gw);}
+
+  .report-block{background:var(--panel); border:1px solid var(--line); padding:28px 30px; margin-bottom:24px;}
+  .report-block h3{font-family:var(--display); text-transform:uppercase; font-size:17px; margin:0 0 6px;}
+  .block-sub{font-size:13.5px; color:var(--ink-soft); margin:0 0 20px;}
+
+  .stream-bar-row{display:grid; grid-template-columns:150px 1fr 60px; align-items:center; gap:12px; margin-bottom:12px;}
+  .stream-bar-row:last-child{margin-bottom:0;}
+  .stream-bar-label{font-family:var(--mono); font-size:12px; text-transform:uppercase; letter-spacing:0.03em;}
+  .stream-bar-track{height:16px; background:var(--paper); border:1px solid var(--ink); overflow:hidden;}
+  .stream-bar-fill{height:100%; transition:width .5s ease;}
+  .stream-bar-value{font-family:var(--mono); font-size:12.5px; text-align:right;}
+
+  .missed-list{display:flex; flex-direction:column; gap:10px;}
+  .missed-row{display:grid; grid-template-columns:22px 1fr 90px 50px; align-items:center; gap:12px; padding:10px 14px; background:var(--paper); border:1px solid var(--line);}
+  .missed-rank{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
+  .missed-name{font-size:14px; font-weight:600;}
+  .missed-name .stream-tag{font-family:var(--mono); font-size:10.5px; font-weight:400; color:var(--ink-soft); text-transform:uppercase; margin-left:6px;}
+  .missed-bar-track{height:10px; background:var(--line); overflow:hidden;}
+  .missed-bar-fill{height:100%; background:var(--gw);}
+  .missed-pct{font-family:var(--mono); font-size:12.5px; text-align:right; color:var(--gw); font-weight:700;}
+
+  /* Plain-language summary generated from the same aggregates the charts/tables below already
+     compute (streamAgg, groupRows, KPI values) — see generateKeyInsights(). Management-report
+     tone: the number up front, the takeaway right after, no filler. */
+  .key-insights-list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px;}
+  .key-insights-list li{
+    padding:12px 16px; background:var(--paper); border-left:3px solid var(--forest);
+    font-size:14px; line-height:1.5;
+  }
+  .key-insights-list li.concern{border-left-color:var(--gw);}
+
+  table.group-table{width:100%; border-collapse:collapse; font-size:13.5px;}
+  table.group-table th{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:0.05em; text-transform:uppercase; color:var(--ink-soft);
+    text-align:left; padding:8px 10px; border-bottom:1.5px solid var(--ink);
+  }
+  table.group-table td{padding:9px 10px; border-bottom:1px solid var(--line);}
+  table.group-table tr:last-child td{border-bottom:none;}
+  .pass-pill{font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:2px; display:inline-block;}
+  .pass-pill.pass{background:var(--og-tint); color:var(--forest-dark);}
+  .pass-pill.fail{background:var(--gw-tint); color:var(--gw);}
+
+  /* Completed/Pending rosters — one row per person, and a real induction can run into the
+     hundreds, so collapsed-by-default with an explicit count is the only thing that scales on
+     screen (and stays collapsed in print — see the @media print rule above). */
+  .roster-details{margin-top:4px;}
+  .roster-details summary{
+    font-family:var(--body); font-weight:600; font-size:14px; cursor:pointer;
+    color:var(--forest-dark); list-style:none; display:inline-flex; align-items:center; gap:6px;
+  }
+  .roster-details summary::-webkit-details-marker{display:none;}
+  .roster-details summary::before{content:'▸'; font-size:11px;}
+  .roster-details[open] summary::before{content:'▾';}
+  .roster-details summary:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+  .roster-details > div{margin-top:14px;}
+
+  .print-row{display:flex; justify-content:flex-end; gap:12px; margin-top:8px; flex-wrap:wrap;}
+
+  .filter-row{display:flex; gap:16px; flex-wrap:wrap;}
+  .filter-field{display:flex; flex-direction:column; gap:6px; min-width:180px; flex:1;}
+  /* Native date inputs don't stretch gracefully — filling the flex row's leftover space (like
+     the <select> fields do) just leaves visible dead space around the small date control. Cap
+     their growth instead of letting them inherit .filter-field's flex:1. */
+  .filter-field-date{flex:0 1 170px; min-width:150px;}
+  .filter-field span{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft);}
+  #trendChart{position:relative;}
+  .trend-svg{width:100%; height:220px; display:block; cursor:crosshair;}
+  .trend-tooltip{
+    position:absolute; top:4px; transform:translateX(-50%);
+    background:var(--ink); color:var(--paper); font-family:var(--mono); font-size:11px;
+    padding:4px 8px; border-radius:var(--radius); white-space:nowrap; pointer-events:none;
+  }
+
+  .filter-field select, .filter-field input[type=date]{
+    font-family:var(--body); font-size:14px; padding:9px 12px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink); width:100%;
+  }
+  .filter-field select:focus-visible, .filter-field input[type=date]:focus-visible{
+    outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);
+  }
+
+  @media (max-width:640px){
+    .stream-bar-row{grid-template-columns:100px 1fr 46px;}
+    .missed-row{grid-template-columns:18px 1fr 60px;}
+    .missed-bar-track{display:none;}
+    table.group-table{font-size:12px;}
+  }
+
+  /* The client-facing PDF ("Print / Save as PDF") is this same Reports screen printed, not a
+     separate template — but it must never look like a screenshot of an internal admin tool.
+     Anything interactive/admin-only (buttons, nav tabs, filter controls, the ⚙ bar) is hidden;
+     every actual data element (KPIs, charts, tables) stays exactly as on screen. */
+  @media print{
+    /* Chrome/Edge reserve a margin band to print their OWN header/footer (page title, the
+       file:// URL, date/time, page number) — a browser default, not this page's doing, but it's
+       exactly the kind of thing that makes a printed report look like a raw file instead of a
+       deliverable. Zeroing the @page margin removes the space those get printed into (Chromium
+       skips them when there's no margin to put them in); .wrap's own padding below restores a
+       normal-looking page margin under our control instead. */
+    @page{ margin:0; }
+    .wrap{ padding:0.6in 0.7in !important; }
+
+    /* Browsers drop background colors/images by default when printing, to save ink — this page
+       actually carries real information in backgrounds (the stream accuracy bars, the missed-
+       items bars, KPI tiles, pass/fail pills, the Key Insights accent), not just decoration, so
+       stripping them would silently lose data from the delivered report, not just look plainer.
+       Forces the browser to print exactly what's on screen instead. */
+    *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
+
+    /* header.top (the generic app title/eyebrow/sub) and #programSelectorRow (the induction
+       <select> plus its "Viewing: X" badge) are hidden wholesale rather than picked apart child
+       by child — .print-header below covers the same ground (induction name + description +
+       building/period) once, prominently, as an actual document title instead of leaving the
+       generic app chrome duplicating it above. Same reasoning for #filterBlock: once it's
+       filtered, "Focused on: ..." wasn't going to survive alongside the print-header's own
+       building/period line either — hiding the whole block avoids the alternative of an empty
+       bordered box left behind once its h3/description/controls are stripped out of it. */
+    .upload-zone, .print-row, header.top, #programSelectorRow, #filterBlock{display:none !important;}
+    .corner-settings, .admin-tabs, .report-header-row .btn, #demoQrBlock{display:none !important;}
+    /* Completed/Pending print exactly as collapsed as they are on screen (never force-expand a
+       roster of what could be hundreds of names into the delivered document) — see
+       .roster-details below, used by both. */
+    .roster-details > div{display:none !important;}
+    body{background:#fff;}
+    .report-block, .kpi-tile{break-inside:avoid;}
+
+    .print-header{
+      display:block; margin-bottom:28px; padding-bottom:18px; border-bottom:2px solid var(--ink);
+    }
+    .print-header-induction{font-family:var(--display); text-transform:uppercase; font-size:26px;}
+    .print-header-desc{color:var(--ink-soft); font-size:13.5px; margin:6px 0 0; max-width:640px;}
+    .print-header-meta{
+      font-family:var(--mono); font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;
+      color:var(--ink-soft); margin:12px 0 0;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="page-shell sidebar-mode" id="pageShell">
+  <aside class="settings-sidebar" id="settingsSidebar">
+    <div class="settings-sidebar-label">⚙ Settings</div>
+    <nav class="settings-sidebar-nav">
+      <a class="tab-btn active" href="admin-buildings.html" aria-current="page">Buildings</a>
+      <a class="tab-btn" href="admin-admins.html">Admins</a>
+      <a class="tab-btn" href="admin-catalog.html">Catalog</a>
+    </nav>
+    <div class="settings-sidebar-exit">
+      <a href="sorting-station-report.html">← Back to reports</a>
+    </div>
+  </aside>
+
+<div class="wrap">
+  <header class="top">
+    <p class="eyebrow" id="pageEyebrow">Recycling Training · Settings</p>
+    <h1 id="pageHeadline">Buildings</h1>
+    <p class="sub" id="pageSub">Manage the buildings and tenants any induction can enrol — program-agnostic, applies to every induction.</p>
+  </header>
+
+  <div class="corner-settings" id="cornerSettings">
+    <button class="btn secondary corner-btn" id="signOutBtn" style="display:none;">Sign out</button>
+  </div>
+
+  <div class="upload-zone" id="authZone">
+    <p id="authStatus">Sign in with an authorized account to manage buildings.</p>
+    <div class="upload-actions">
+      <button class="btn" id="signInBtn">Sign in with Google →</button>
+      <button class="btn secondary" id="showEmailSignInBtn">Sign in with email →</button>
+    </div>
+    <form id="emailSignInForm" style="display:none; margin-top:16px;">
+      <div class="filter-row">
+        <label class="filter-field"><span>Email</span><input type="email" id="emailSignInEmail" autocomplete="username" required></label>
+        <label class="filter-field"><span>Password</span><input type="password" id="emailSignInPassword" autocomplete="current-password" required></label>
+      </div>
+      <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
+        <button class="btn secondary" type="submit">Sign in →</button>
+      </div>
+    </form>
+  </div>
+
+  <section id="buildingsSection" style="display:none;">
+    <div class="report-header-row">
+      <h2>Buildings</h2>
+    </div>
+
+    <div class="report-block">
+      <h3>Add a building</h3>
+      <div class="filter-row">
+        <label class="filter-field"><span>Building name</span><input type="text" id="newBuildingName" placeholder="e.g. 123 Example Tower"></label>
+      </div>
+      <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
+        <button class="btn" id="addBuildingBtn">+ Add building</button>
+      </div>
+      <p class="block-sub" id="buildingsStatus" style="margin-top:10px;"></p>
+    </div>
+
+    <div class="filter-row" style="margin-bottom:16px;">
+      <label class="filter-field"><span>Search</span><input type="text" id="buildingSearchInput" placeholder="Search buildings by name…"></label>
+    </div>
+
+    <div id="buildingsList"></div>
+  </section>
+</div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {
+  getFirestore, collection, getDoc, getDocs, doc, setDoc, updateDoc, writeBatch, serverTimestamp, connectFirestoreEmulator
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
+  createUserWithEmailAndPassword, signInWithEmailAndPassword
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
+import { getFunctions, connectFunctionsEmulator } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
+import { read as readWorkbook, utils as xlsxUtils, writeFile as xlsxWriteFile } from "https://cdn.sheetjs.com/xlsx-latest/package/xlsx.mjs";
+
+// ---- Firebase init (deliberately duplicated per-page — see the architecture roadmap plan,
+// Workstream 2: a shared ES module breaks under file://, which every automated test and casual
+// local open of this app relies on) ----
+const firebaseConfig = {
+  apiKey: "AIzaSyAoWSx9FYa6UJa-6EZezgBYiDMuVVs9BBo",
+  authDomain: "esg-1-98f35.firebaseapp.com",
+  projectId: "esg-1-98f35",
+  storageBucket: "esg-1-98f35.firebasestorage.app",
+  messagingSenderId: "196747023122",
+  appId: "1:196747023122:web:3fbcc23c1532bed847d9cb"
+};
+const RECAPTCHA_SITE_KEY = ''; // disabled 2026-08-28 — see sorting-station-report.html's comment
+
+let db = null, auth = null, functions = null;
+try {
+  const firebaseApp = initializeApp(firebaseConfig);
+  db = getFirestore(firebaseApp);
+  auth = getAuth(firebaseApp);
+  functions = getFunctions(firebaseApp);
+  const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
+  if (RECAPTCHA_SITE_KEY && !isEmulatorMode && window.location.protocol !== 'file:'){
+    initializeAppCheck(firebaseApp, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+  }
+  if (isEmulatorMode){
+    connectFirestoreEmulator(db, '127.0.0.1', 8080);
+    connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+    window.__testSignIn = async (email, password) => {
+      try { await createUserWithEmailAndPassword(auth, email, password); }
+      catch (err) { /* user already exists from a previous test run — fine */ }
+      await signInWithEmailAndPassword(auth, email, password);
+    };
+    window.__testSignIn('esgtradeflex@gmail.com', 'test-password-123')
+      .catch(err => console.error('Local auto sign-in failed', err));
+    // Cross-page links (the settings sidebar) are plain hrefs with no query string — without
+    // this, clicking one drops out of ?emulator=1 entirely on the next page (real Firebase, no
+    // auto sign-in) instead of staying in the local test session.
+    document.querySelectorAll('.settings-sidebar-nav a[href], .settings-sidebar-exit a[href]').forEach(a => {
+      const sep = a.getAttribute('href').includes('?') ? '&' : '?';
+      a.setAttribute('href', a.getAttribute('href') + sep + 'emulator=1');
+    });
+  }
+} catch (err) {
+  console.error('Firebase is not configured yet — sign-in and building management will stay unavailable until firebaseConfig is filled in.', err);
+}
+
+const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
+function esc(str){
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ESC_MAP[c]);
+}
+
+// ---------------- Levels editor (mirrors the tenant's level(s) picker exactly) ----------------
+function parseLevelString(level){
+  const trimmed = String(level || '').trim();
+  const m = /^level\s+(.+)$/i.exec(trimmed);
+  if (m) return { type: 'Level', value: m[1] };
+  if (trimmed.toLowerCase() === 'ground') return { type: 'Ground', value: '' };
+  return { type: 'Other', value: trimmed };
+}
+
+function levelRowHtml(type, value){
+  const t = type || 'Level';
+  return `
+    <div class="level-row">
+      <select class="level-type-select">
+        <option value="Level"${t === 'Level' ? ' selected' : ''}>Level</option>
+        <option value="Ground"${t === 'Ground' ? ' selected' : ''}>Ground</option>
+        <option value="Other"${t === 'Other' ? ' selected' : ''}>Other</option>
+      </select>
+      <input type="text" class="level-number-input" value="${t === 'Level' ? esc(value) : ''}" style="${t === 'Level' ? '' : 'display:none;'}">
+      <input type="text" class="level-other-input" placeholder="e.g. Basement" value="${t === 'Other' ? esc(value) : ''}" style="${t === 'Other' ? '' : 'display:none;'}">
+      <button type="button" class="remove-level-row-btn" title="Remove this level">×</button>
+    </div>`;
+}
+
+// `extraClass` distinguishes the "add tenant" editor from an "edit tenant" editor when both
+// exist in the same building row at once (e.g. adding a tenant while another is mid-edit).
+function renderLevelsEditorHtml(existingLevels, extraClass){
+  const rows = (existingLevels && existingLevels.length) ? existingLevels.map(parseLevelString) : [{ type: 'Level', value: '' }];
+  return `
+    <div class="levels-editor ${extraClass}">
+      ${rows.map(r => levelRowHtml(r.type, r.value)).join('')}
+      <button type="button" class="btn secondary add-level-row-btn">+ Add another level</button>
+    </div>`;
+}
+
+function readLevelsFromEditor(editorEl){
+  return [...editorEl.querySelectorAll('.level-row')].map(row => {
+    const type = row.querySelector('.level-type-select').value;
+    if (type === 'Level'){
+      const num = row.querySelector('.level-number-input').value.trim();
+      return num ? `Level ${num}` : null;
+    }
+    if (type === 'Ground') return 'Ground';
+    return row.querySelector('.level-other-input').value.trim() || null;
+  }).filter(Boolean);
+}
+
+function isValidEmail(str){
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(str || '').trim());
+}
+
+// A tenant with many "Level N" rows reads as a long, repetitive "Level 1, Level 2, Level 3…"
+// list — group those into one "Levels 1, 2, 3" and leave anything else (Ground, a custom
+// "Other" name) as its own literal entry. A single level (of any kind) stays exactly as-is.
+function formatLevelsDisplay(levels){
+  if (!levels || levels.length === 0) return '';
+  if (levels.length === 1) return levels[0];
+  const numbers = [];
+  const others = [];
+  for (const lvl of levels){
+    const m = /^level\s+(.+)$/i.exec(String(lvl).trim());
+    if (m) numbers.push(m[1]);
+    else others.push(lvl);
+  }
+  const parts = [];
+  if (numbers.length === 1) parts.push(`Level ${numbers[0]}`);
+  else if (numbers.length > 1) parts.push(`Levels ${numbers.join(', ')}`);
+  parts.push(...others);
+  return parts.join(', ');
+}
+
+function emailRowHtml(value){
+  return `
+    <div class="email-row">
+      <input type="email" class="email-input" placeholder="name@company.com" value="${esc(value)}">
+      <button type="button" class="remove-email-row-btn" title="Remove this email">×</button>
+    </div>`;
+}
+function renderEmailsEditorHtml(existingEmails, extraClass){
+  const rows = (existingEmails && existingEmails.length) ? existingEmails : [''];
+  return `
+    <div class="emails-editor ${extraClass}">
+      ${rows.map(emailRowHtml).join('')}
+      <button type="button" class="btn secondary add-email-row-btn">+ Add another email</button>
+    </div>`;
+}
+function readEmailsFromEditor(editorEl){
+  return [...editorEl.querySelectorAll('.email-row')].map(row => row.querySelector('.email-input').value.trim()).filter(Boolean);
+}
+
+// Turns a building name into a short, readable link ID (was crypto.randomUUID() — a link like
+// "?b=123-example-tower" reads as trustworthy where "?b=a3f8b2c1-1234-..." looked suspicious to
+// trainees). Doc IDs are immutable once created, so this only ever affects NEW buildings.
+function slugify(name){
+  return String(name || '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+async function generateUniqueSlug(collectionName, name){
+  const base = slugify(name);
+  if (!base) return crypto.randomUUID();
+  const existing = await getDoc(doc(db, collectionName, base));
+  if (!existing.exists()) return base;
+  return `${base}-${crypto.randomUUID().slice(0, 6)}`;
+}
+const generateBuildingSlug = (name) => generateUniqueSlug('buildings', name);
+
+// "Deleted" buildings/tenants are soft-deleted (active:false), not actually removed.
+async function loadAllActiveBuildings(){
+  const buildingsSnap = await getDocs(collection(db, 'buildings'));
+  return buildingsSnap.docs.filter(d => d.data().active !== false);
+}
+
+// ---------------- Buildings tab (admin: create buildings/tenants) ----------------
+let buildingsCache = [];
+let editingBuildingId = null;
+let editingTenant = null; // {buildingId, tenantId}
+let buildingSearchTerm = '';
+const expandedBuildingIds = new Set();
+
+function refreshBuildingsView(){
+  const term = buildingSearchTerm.trim().toLowerCase();
+  const filtered = term ? buildingsCache.filter(b => b.name.toLowerCase().includes(term)) : buildingsCache;
+  renderBuildingsList(filtered);
+}
+
+async function loadMasterBuildings(){
+  try {
+    const buildingDocs = await loadAllActiveBuildings();
+    const buildings = await Promise.all(buildingDocs.map(async (d) => {
+      const tenantsSnap = await getDocs(collection(db, 'buildings', d.id, 'tenants'));
+      return {
+        id: d.id,
+        name: d.data().name || '(untitled)',
+        tenants: tenantsSnap.docs
+          .filter(t => t.data().active !== false)
+          .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [], emails: t.data().emails || [] })),
+      };
+    }));
+    buildingsCache = buildings;
+    refreshBuildingsView();
+  } catch (err){
+    console.error('Failed to load buildings:', err);
+    document.getElementById('buildingsStatus').textContent = "Couldn't load buildings — check your connection and reload the page.";
+  }
+}
+
+function isBuildingExpanded(b){
+  return expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id);
+}
+
+// Master (⚙ Edificios): pure building/tenant CRUD, no program awareness at all — no Configure
+// streams, no links, no enrollment concept. This is the ONLY place tenants get added/edited/
+// deleted, and the ONLY place a building's name changes or it gets deleted.
+function renderBuildingsList(buildings){
+  const container = document.getElementById('buildingsList');
+  if (buildings.length === 0){
+    container.innerHTML = buildingSearchTerm.trim()
+      ? '<p class="block-sub">No buildings match your search.</p>'
+      : '<p class="block-sub">No buildings yet — add one above.</p>';
+    return;
+  }
+  container.innerHTML = buildings.map(b => {
+    const isExpanded = isBuildingExpanded(b);
+    const headerHtml = editingBuildingId === b.id
+      ? `<div class="building-edit-row">
+          <input type="text" class="edit-building-name-input" value="${esc(b.name)}">
+          <button class="btn save-building-name-btn">Save</button>
+          <button class="btn secondary cancel-building-name-btn">Cancel</button>
+        </div>`
+      : `<div class="building-header-row">
+          <button type="button" class="building-toggle-btn" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
+          <h3>${esc(b.name)}</h3>
+          <span class="building-tenant-count">${b.tenants.length} tenant${b.tenants.length === 1 ? '' : 's'}</span>
+          <div class="building-header-actions">
+            <button class="btn secondary edit-building-btn">Edit name</button>
+            <button class="btn secondary delete-building-btn danger-btn">Delete building</button>
+          </div>
+        </div>`;
+    if (!isExpanded){
+      return `<div class="report-block building-row" data-building-id="${b.id}">${headerHtml}</div>`;
+    }
+    const tenantsHtml = b.tenants.length
+      ? b.tenants.map(t => {
+          const isEditing = editingTenant && editingTenant.buildingId === b.id && editingTenant.tenantId === t.id;
+          if (isEditing){
+            return `<li class="tenant-edit-row" data-tenant-id="${t.id}">
+              <input type="text" class="edit-tenant-name-input" value="${esc(t.name)}">
+              ${renderLevelsEditorHtml(t.levels, 'edit-tenant-levels-editor')}
+              ${renderEmailsEditorHtml(t.emails, 'edit-tenant-emails-editor')}
+              <button class="btn save-tenant-btn">Save</button>
+              <button class="btn secondary cancel-tenant-btn">Cancel</button>
+            </li>`;
+          }
+          return `<li data-tenant-id="${t.id}">
+            <span class="tenant-name">${esc(t.name)}</span>
+            <span class="tenant-levels">${esc(formatLevelsDisplay(t.levels))}</span>
+            ${t.emails && t.emails.length ? `<span class="tenant-emails">${esc(t.emails.join(', '))}</span>` : ''}
+            <span class="tenant-row-actions">
+              <button class="btn secondary edit-tenant-btn">Edit</button>
+              <button class="btn secondary delete-tenant-btn danger-btn">Delete</button>
+            </span>
+          </li>`;
+        }).join('')
+      : '<li class="block-sub">No tenants yet.</li>';
+    const withEmail = b.tenants.filter(t => (t.emails || []).length).length;
+    return `
+    <div class="report-block building-row" data-building-id="${b.id}">
+      ${headerHtml}
+      <ul class="tenant-list">${tenantsHtml}</ul>
+      <p class="block-sub contacts-coverage-note">${withEmail} of ${b.tenants.length} tenants have a contact email saved.</p>
+      <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+        <button class="btn secondary export-contacts-btn">Export contacts template →</button>
+        <label class="btn secondary import-contacts-label">
+          Import contact emails →
+          <input type="file" class="import-contacts-input" accept=".xlsx" style="display:none;">
+        </label>
+      </div>
+      <div class="import-contacts-review" style="display:none;"></div>
+      <p class="generate-link-title"><strong>Add tenant</strong></p>
+      <p class="block-sub">Add a new tenant to this building — its name, the level(s) it occupies, and an optional contact email for sending induction links later.</p>
+      <div class="filter-row">
+        <label class="filter-field"><span>Tenant name</span><input type="text" class="new-tenant-name" placeholder="e.g. Acme Legal"></label>
+        <label class="filter-field"><span>Levels</span>${renderLevelsEditorHtml([], 'new-tenant-levels-editor')}</label>
+        <label class="filter-field"><span>Contact email(s)</span>${renderEmailsEditorHtml([], 'new-tenant-emails-editor')}</label>
+      </div>
+      <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+        <button class="btn secondary add-tenant-btn">+ Add tenant</button>
+        <label class="btn secondary import-xlsx-label">
+          Import from Excel →
+          <input type="file" class="import-xlsx-input" accept=".xlsx" style="display:none;">
+        </label>
+      </div>
+      <div class="import-review" style="display:none;"></div>
+    </div>
+  `;
+  }).join('');
+}
+
+// Building-name column value from a "collection point" style export (e.g. "KPMG - Level 36 -
+// Office") combined with its own "Primary Location" column (e.g. "Level 36") — groups by the
+// part of Name before that level, deduping levels, so multiple rows/sub-areas for one tenant
+// collapse into one.
+function groupTenantsFromRows(rows){
+  const header = (rows[0] || []).map(h => String(h || '').trim().toLowerCase());
+  let nameIdx = header.indexOf('name');
+  let locationIdx = header.findIndex(h => h.includes('location'));
+  if (nameIdx === -1) nameIdx = 0;
+  if (locationIdx === -1) locationIdx = 1;
+
+  const groups = new Map();
+  rows.slice(1).forEach(row => {
+    const rawName = String(row[nameIdx] ?? '').trim();
+    const level = String(row[locationIdx] ?? '').trim();
+    if (!rawName) return;
+    let tenantName = rawName;
+    if (level && rawName.includes(level)){
+      tenantName = rawName.slice(0, rawName.indexOf(level)).replace(/[-–]\s*$/, '').trim() || rawName;
+    }
+    if (!groups.has(tenantName)) groups.set(tenantName, new Set());
+    if (level) groups.get(tenantName).add(level);
+  });
+  return [...groups.entries()].map(([name, levelSet]) => ({ name, levels: [...levelSet] }));
+}
+
+function renderImportReview(row, candidates){
+  const reviewEl = row.querySelector('.import-review');
+  reviewEl.style.display = 'block';
+  reviewEl.innerHTML = `
+    <p class="block-sub" style="margin-top:14px;">Review before importing — untick anything that isn't a real tenant (e.g. "Vacant", "Go Zero", "Base Building"), and fix names/levels if needed.</p>
+    <div class="import-candidates">
+      ${candidates.map((c, i) => `
+        <div class="import-row">
+          <input type="checkbox" class="import-check" data-i="${i}" checked>
+          <input type="text" class="import-name" data-i="${i}" value="${esc(c.name)}">
+          <input type="text" class="import-levels" data-i="${i}" value="${esc(c.levels.join(', '))}">
+        </div>
+      `).join('')}
+    </div>
+    <div class="print-row" style="justify-content:flex-start; margin-top:12px;">
+      <button class="btn import-confirm-btn">Import selected →</button>
+      <button class="btn secondary import-cancel-btn">Cancel</button>
+    </div>
+  `;
+}
+
+// Bulk contacts round-trip (Edificios): reads "Tenant ID" / "Tenant" / "Email" columns by
+// header name (order-tolerant, same leniency as groupTenantsFromRows above). Matches each row
+// to an EXISTING tenant by Tenant ID first, falling back to a trimmed/case-insensitive name
+// match — this import only updates tenants, it never creates one. Groups by resolved tenant
+// (not by row) since a building manager may add a second row for the same tenant instead of
+// comma-separating emails in one cell, and drops-but-counts anything that doesn't look like a
+// real email rather than silently keeping garbage.
+function parseContactsFromRows(rows, tenants){
+  const header = (rows[0] || []).map(h => String(h || '').trim().toLowerCase());
+  const idIdx = header.indexOf('tenant id');
+  const nameIdx = header.indexOf('tenant');
+  const emailIdx = header.indexOf('email');
+  const byId = new Map(tenants.map(t => [t.id, t]));
+  const byName = new Map(tenants.map(t => [t.name.trim().toLowerCase(), t]));
+
+  const matchedById = new Map(); // tenantId -> { tenant, emails: Set, invalidCount }
+  const unmatched = [];
+
+  rows.slice(1).forEach(row => {
+    const rawId = idIdx !== -1 ? String(row[idIdx] ?? '').trim() : '';
+    const rawName = nameIdx !== -1 ? String(row[nameIdx] ?? '').trim() : '';
+    const rawEmail = emailIdx !== -1 ? String(row[emailIdx] ?? '').trim() : '';
+    if (!rawId && !rawName && !rawEmail) return;
+
+    const tenant = (rawId && byId.get(rawId)) || byName.get(rawName.toLowerCase());
+    if (!tenant){
+      unmatched.push({ name: rawName || rawId || '(blank)' });
+      return;
+    }
+    if (!matchedById.has(tenant.id)) matchedById.set(tenant.id, { tenant, emails: new Set(), invalidCount: 0 });
+    const entry = matchedById.get(tenant.id);
+    rawEmail.split(/[,;]/).map(s => s.trim()).filter(Boolean).forEach(email => {
+      if (isValidEmail(email)) entry.emails.add(email);
+      else entry.invalidCount++;
+    });
+  });
+
+  return { matched: [...matchedById.values()], unmatched };
+}
+
+function renderContactsImportReview(row, parsed){
+  const reviewEl = row.querySelector('.import-contacts-review');
+  reviewEl.style.display = 'block';
+  reviewEl.innerHTML = `
+    <p class="block-sub" style="margin-top:14px;">Review before importing.${parsed.unmatched.length ? ' Rows that didn’t match an existing tenant are shown below, skipped — nothing was written for them.' : ''}</p>
+    <div class="import-candidates">
+      ${parsed.matched.map(m => `
+        <div class="import-row" data-tenant-id="${esc(m.tenant.id)}" data-emails="${esc([...m.emails].join(';'))}">
+          <input type="checkbox" class="import-contacts-check" checked>
+          <span class="tenant-name">${esc(m.tenant.name)}</span>
+          <span class="block-sub">${esc([...m.emails].join(', ')) || '(no valid emails found)'}${m.invalidCount ? ` — ${m.invalidCount} invalid, skipped` : ''}</span>
+        </div>
+      `).join('')}
+      ${parsed.unmatched.map(u => `
+        <div class="import-row import-row-unmatched">
+          <span class="contacts-unmatched-tag">Not matched</span>
+          <span class="tenant-name">${esc(u.name)}</span>
+        </div>
+      `).join('')}
+    </div>
+    <div class="print-row" style="justify-content:flex-start; margin-top:12px;">
+      <button class="btn import-contacts-confirm-btn">Import selected →</button>
+      <button class="btn secondary import-contacts-cancel-btn">Cancel</button>
+    </div>
+  `;
+}
+
+document.getElementById('addBuildingBtn').addEventListener('click', async () => {
+  const nameInput = document.getElementById('newBuildingName');
+  const status = document.getElementById('buildingsStatus');
+  const name = nameInput.value.trim();
+  if (!name){ status.textContent = 'Enter a building name first.'; return; }
+  status.textContent = 'Adding…';
+  try {
+    const newBuildingId = await generateBuildingSlug(name);
+    await setDoc(doc(db, 'buildings', newBuildingId), { name });
+    // Every building does Recycling by default, same as before programs existed — so a new
+    // building is auto-enrolled here rather than requiring a manual step every single time.
+    await setDoc(doc(db, 'enrollments', `recycling-sorting__${newBuildingId}`), {
+      programId: 'recycling-sorting', buildingId: newBuildingId, itemOverrides: {}, enabledTenantIds: null,
+      createdAt: serverTimestamp(),
+    });
+    nameInput.value = '';
+    status.textContent = `Added "${name}".`;
+    expandedBuildingIds.add(newBuildingId); // open it up right away — you almost always want to add tenants next
+    await loadMasterBuildings();
+  } catch (err){
+    console.error('Failed to add building:', err);
+    status.textContent = 'Failed to add building — check the console for details.';
+  }
+});
+
+document.getElementById('buildingSearchInput').addEventListener('input', (e) => {
+  buildingSearchTerm = e.target.value;
+  refreshBuildingsView();
+});
+
+document.getElementById('buildingsList').addEventListener('click', async (e) => {
+  const addLevelRowBtn = e.target.closest('.add-level-row-btn');
+  if (addLevelRowBtn){
+    addLevelRowBtn.insertAdjacentHTML('beforebegin', levelRowHtml('Level', ''));
+    return;
+  }
+
+  const removeLevelRowBtn = e.target.closest('.remove-level-row-btn');
+  if (removeLevelRowBtn){
+    const editor = removeLevelRowBtn.closest('.levels-editor');
+    if (editor.querySelectorAll('.level-row').length > 1) removeLevelRowBtn.closest('.level-row').remove();
+    return;
+  }
+
+  const addEmailRowBtn = e.target.closest('.add-email-row-btn');
+  if (addEmailRowBtn){
+    addEmailRowBtn.insertAdjacentHTML('beforebegin', emailRowHtml(''));
+    return;
+  }
+
+  const removeEmailRowBtn = e.target.closest('.remove-email-row-btn');
+  if (removeEmailRowBtn){
+    removeEmailRowBtn.closest('.email-row').remove(); // no "keep at least 1" guard — email is optional
+    return;
+  }
+
+  const toggleBtn = e.target.closest('.building-toggle-btn');
+  if (toggleBtn){
+    const buildingId = toggleBtn.closest('.building-row').dataset.buildingId;
+    if (expandedBuildingIds.has(buildingId)) expandedBuildingIds.delete(buildingId);
+    else expandedBuildingIds.add(buildingId);
+    refreshBuildingsView();
+    return;
+  }
+
+  const editBuildingBtn = e.target.closest('.edit-building-btn');
+  if (editBuildingBtn){
+    editingBuildingId = editBuildingBtn.closest('.building-row').dataset.buildingId;
+    refreshBuildingsView();
+    return;
+  }
+
+  const cancelBuildingNameBtn = e.target.closest('.cancel-building-name-btn');
+  if (cancelBuildingNameBtn){
+    editingBuildingId = null;
+    refreshBuildingsView();
+    return;
+  }
+
+  const saveBuildingNameBtn = e.target.closest('.save-building-name-btn');
+  if (saveBuildingNameBtn){
+    const row = saveBuildingNameBtn.closest('.building-row');
+    const buildingId = row.dataset.buildingId;
+    const newName = row.querySelector('.edit-building-name-input').value.trim();
+    if (!newName){ alert('The name can\'t be empty.'); return; }
+    try {
+      await setDoc(doc(db, 'buildings', buildingId), { name: newName }, { merge: true });
+      editingBuildingId = null;
+      await loadMasterBuildings();
+    } catch (err){
+      console.error('Failed to rename building:', err);
+      alert('Failed to save — check the console for details.');
+    }
+    return;
+  }
+
+  const deleteBuildingBtn = e.target.closest('.delete-building-btn');
+  if (deleteBuildingBtn){
+    const buildingId = deleteBuildingBtn.closest('.building-row').dataset.buildingId;
+    const building = buildingsCache.find(b => b.id === buildingId);
+    const tenantCount = building ? building.tenants.length : 0;
+    const confirmed = confirm(
+      `Delete "${building ? building.name : 'this building'}" and its ${tenantCount} tenant(s)?\n\n` +
+      `Every link/QR code you've shared for this building, in every induction it's enrolled in, ` +
+      `stops working immediately. Its data and history (submissions, attempts, configuration) ` +
+      `are NOT deleted — only hidden — but there's no button yet to bring it back if you change ` +
+      `your mind.`
+    );
+    if (!confirmed) return;
+    try {
+      // Soft-delete, not a real delete — the building doc (and its tenants/enrollments/links)
+      // stay intact so nothing referencing it — historical submissions/attempts included —
+      // ever points at a missing document; initIdGate() treats active:false the same as "not found".
+      await updateDoc(doc(db, 'buildings', buildingId), { active: false });
+      await loadMasterBuildings();
+    } catch (err){
+      console.error('Failed to delete building:', err);
+      alert('Failed to delete — check the console for details.');
+    }
+    return;
+  }
+
+  const editTenantBtn = e.target.closest('.edit-tenant-btn');
+  if (editTenantBtn){
+    const buildingId = editTenantBtn.closest('.building-row').dataset.buildingId;
+    const tenantId = editTenantBtn.closest('li').dataset.tenantId;
+    editingTenant = { buildingId, tenantId };
+    refreshBuildingsView();
+    return;
+  }
+
+  const cancelTenantBtn = e.target.closest('.cancel-tenant-btn');
+  if (cancelTenantBtn){
+    editingTenant = null;
+    refreshBuildingsView();
+    return;
+  }
+
+  const saveTenantBtn = e.target.closest('.save-tenant-btn');
+  if (saveTenantBtn){
+    const buildingId = saveTenantBtn.closest('.building-row').dataset.buildingId;
+    const li = saveTenantBtn.closest('li');
+    const tenantId = li.dataset.tenantId;
+    const newName = li.querySelector('.edit-tenant-name-input').value.trim();
+    const newLevels = readLevelsFromEditor(li.querySelector('.edit-tenant-levels-editor'));
+    const newEmails = readEmailsFromEditor(li.querySelector('.edit-tenant-emails-editor'));
+    if (!newName || newLevels.length === 0){ alert('Enter a tenant name and at least one level.'); return; }
+    const badEmail = newEmails.find(addr => !isValidEmail(addr));
+    if (badEmail){ alert(`"${badEmail}" doesn't look like a valid email address.`); return; }
+    try {
+      // No {merge:true} here — this fully replaces the tenant doc, so every field that should
+      // survive an edit (emails included) must be listed explicitly.
+      await setDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: newName, levels: newLevels, emails: newEmails });
+      editingTenant = null;
+      await loadMasterBuildings();
+    } catch (err){
+      console.error('Failed to update tenant:', err);
+      alert('Failed to save — check the console for details.');
+    }
+    return;
+  }
+
+  const deleteTenantBtn = e.target.closest('.delete-tenant-btn');
+  if (deleteTenantBtn){
+    const buildingId = deleteTenantBtn.closest('.building-row').dataset.buildingId;
+    const tenantId = deleteTenantBtn.closest('li').dataset.tenantId;
+    const confirmed = confirm(
+      `Delete this tenant? It disappears from every programme immediately and any link scoped ` +
+      `to it stops working. Its data and history are NOT deleted — only hidden — but there's ` +
+      `no button yet to bring it back if you change your mind.`
+    );
+    if (!confirmed) return;
+    try {
+      // Soft-delete, not a real delete — same reasoning as "Delete building" above.
+      await updateDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { active: false });
+      await loadMasterBuildings();
+    } catch (err){
+      console.error('Failed to delete tenant:', err);
+      alert('Failed to delete — check the console for details.');
+    }
+    return;
+  }
+
+  const addBtn = e.target.closest('.add-tenant-btn');
+  if (addBtn){
+    const row = addBtn.closest('.building-row');
+    const buildingId = row.dataset.buildingId;
+    const tenantName = row.querySelector('.new-tenant-name').value.trim();
+    const levels = readLevelsFromEditor(row.querySelector('.new-tenant-levels-editor'));
+    const emails = readEmailsFromEditor(row.querySelector('.new-tenant-emails-editor'));
+    if (!tenantName || levels.length === 0){ alert('Enter a tenant name and at least one level.'); return; }
+    const badEmail = emails.find(addr => !isValidEmail(addr));
+    if (badEmail){ alert(`"${badEmail}" doesn't look like a valid email address.`); return; }
+    try {
+      await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: tenantName, levels, emails });
+      await loadMasterBuildings(); // re-renders the whole tab, including a fresh blank "add tenant" form
+    } catch (err){
+      console.error('Failed to add tenant:', err);
+      alert('Failed to add tenant — check the console for details.');
+    }
+    return;
+  }
+
+  const cancelBtn = e.target.closest('.import-cancel-btn');
+  if (cancelBtn){
+    cancelBtn.closest('.import-review').style.display = 'none';
+    return;
+  }
+
+  const confirmBtn = e.target.closest('.import-confirm-btn');
+  if (confirmBtn){
+    const row = confirmBtn.closest('.building-row');
+    const buildingId = row.dataset.buildingId;
+    const toImport = [...row.querySelectorAll('.import-check')]
+      .filter(c => c.checked)
+      .map(c => {
+        const i = c.dataset.i;
+        const name = row.querySelector(`.import-name[data-i="${i}"]`).value.trim();
+        const levels = row.querySelector(`.import-levels[data-i="${i}"]`).value.split(',').map(l => l.trim()).filter(Boolean);
+        return { name, levels };
+      })
+      .filter(t => t.name && t.levels.length);
+    if (toImport.length === 0){ alert('Nothing selected to import.'); return; }
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Importing…';
+    try {
+      for (const t of toImport){
+        await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: t.name, levels: t.levels });
+      }
+      await loadMasterBuildings();
+    } catch (err){
+      console.error('Bulk import failed:', err);
+      alert('Import failed partway through — check the console for which tenants already got added before retrying.');
+    }
+    return;
+  }
+
+  const exportContactsBtn = e.target.closest('.export-contacts-btn');
+  if (exportContactsBtn){
+    const row = exportContactsBtn.closest('.building-row');
+    const buildingId = row.dataset.buildingId;
+    const b = buildingsCache.find(x => x.id === buildingId);
+    // Every tenant of the building, regardless of which induction(s) it's enrolled in or
+    // enabled for — a contact email is a property of the tenant itself, not of any one
+    // program, so it belongs here in program-agnostic Edificios, not scoped by induction.
+    const rows = b.tenants.map(t => ({
+      'Tenant ID': t.id, Tenant: t.name, Levels: t.levels.join(', '), Email: (t.emails || []).join('; '),
+    }));
+    const wb = xlsxUtils.book_new();
+    xlsxUtils.book_append_sheet(wb, xlsxUtils.json_to_sheet(rows), 'Contacts');
+    xlsxWriteFile(wb, `${b.name} — contacts.xlsx`);
+    return;
+  }
+
+  const cancelContactsBtn = e.target.closest('.import-contacts-cancel-btn');
+  if (cancelContactsBtn){
+    cancelContactsBtn.closest('.import-contacts-review').style.display = 'none';
+    return;
+  }
+
+  const confirmContactsBtn = e.target.closest('.import-contacts-confirm-btn');
+  if (confirmContactsBtn){
+    const row = confirmContactsBtn.closest('.building-row');
+    const buildingId = row.dataset.buildingId;
+    const b = buildingsCache.find(x => x.id === buildingId);
+    const toWrite = [...row.querySelectorAll('.import-row:not(.import-row-unmatched)')]
+      .filter(r => r.querySelector('.import-contacts-check').checked)
+      .map(r => {
+        const tenantId = r.dataset.tenantId;
+        const tenant = b.tenants.find(t => t.id === tenantId);
+        const emails = r.dataset.emails ? r.dataset.emails.split(';').filter(Boolean) : [];
+        return { tenantId, tenant, emails };
+      });
+    if (toWrite.length === 0){ alert('Nothing selected to import.'); return; }
+    confirmContactsBtn.disabled = true;
+    confirmContactsBtn.textContent = 'Importing…';
+    try {
+      // One atomic batch, not one setDoc per tenant — a network hiccup mid-import can't leave
+      // some tenants updated and others not.
+      const batch = writeBatch(db);
+      for (const { tenantId, tenant, emails } of toWrite){
+        batch.set(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: tenant.name, levels: tenant.levels, emails });
+      }
+      await batch.commit();
+      row.querySelector('.import-contacts-review').style.display = 'none';
+      await loadMasterBuildings();
+    } catch (err){
+      console.error('Failed to import contact emails:', err);
+      alert('Import failed — check the console for details.');
+      confirmContactsBtn.disabled = false;
+      confirmContactsBtn.textContent = 'Import selected →';
+    }
+    return;
+  }
+});
+
+document.getElementById('buildingsList').addEventListener('change', async (e) => {
+  const levelTypeSelect = e.target.closest('.level-type-select');
+  if (levelTypeSelect){
+    const row = levelTypeSelect.closest('.level-row');
+    row.querySelector('.level-number-input').style.display = levelTypeSelect.value === 'Level' ? '' : 'none';
+    row.querySelector('.level-other-input').style.display = levelTypeSelect.value === 'Other' ? '' : 'none';
+    return;
+  }
+
+  const input = e.target.closest('.import-xlsx-input');
+  if (input && input.files[0]){
+    const row = input.closest('.building-row');
+    const file = input.files[0];
+    try {
+      const buf = await file.arrayBuffer();
+      const workbook = readWorkbook(buf);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = xlsxUtils.sheet_to_json(sheet, { header: 1 });
+      const candidates = groupTenantsFromRows(rows);
+      renderImportReview(row, candidates);
+    } catch (err){
+      console.error('Failed to read Excel file:', err);
+      alert("Could not read that file — make sure it's a valid .xlsx export.");
+    }
+    input.value = '';
+    return;
+  }
+
+  const contactsInput = e.target.closest('.import-contacts-input');
+  if (contactsInput && contactsInput.files[0]){
+    const row = contactsInput.closest('.building-row');
+    const buildingId = row.dataset.buildingId;
+    const b = buildingsCache.find(x => x.id === buildingId);
+    const file = contactsInput.files[0];
+    try {
+      const buf = await file.arrayBuffer();
+      const workbook = readWorkbook(buf);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = xlsxUtils.sheet_to_json(sheet, { header: 1 });
+      const parsed = parseContactsFromRows(rows, b.tenants);
+      renderContactsImportReview(row, parsed);
+    } catch (err){
+      console.error('Failed to read Excel file:', err);
+      alert("Could not read that file — make sure it's a valid .xlsx export.");
+    }
+    contactsInput.value = '';
+    return;
+  }
+});
+
+// ---------------- Sign-in ----------------
+document.getElementById('signInBtn').addEventListener('click', async () => {
+  if (!auth){ document.getElementById('authStatus').textContent = 'Firebase is not configured yet.'; return; }
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  catch (err){
+    console.error('Sign-in failed:', err);
+    document.getElementById('authStatus').textContent = 'Sign-in failed or was cancelled.';
+  }
+});
+
+document.getElementById('showEmailSignInBtn').addEventListener('click', () => {
+  document.getElementById('emailSignInForm').style.display = 'block';
+  document.getElementById('showEmailSignInBtn').style.display = 'none';
+  document.getElementById('emailSignInEmail').focus();
+});
+
+document.getElementById('emailSignInForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!auth){ document.getElementById('authStatus').textContent = 'Firebase is not configured yet.'; return; }
+  const email = document.getElementById('emailSignInEmail').value.trim();
+  const password = document.getElementById('emailSignInPassword').value;
+  try {
+    await signInWithEmailAndPassword(auth, email, password);
+  } catch (err){
+    console.error('Email sign-in failed:', err);
+    document.getElementById('authStatus').textContent = 'Sign-in failed — check the email and password and try again.';
+  }
+});
+
+document.getElementById('signOutBtn').addEventListener('click', () => { if (auth) signOut(auth); });
+
+if (auth){
+  onAuthStateChanged(auth, (user) => {
+    document.getElementById('signInBtn').style.display = user ? 'none' : 'inline-flex';
+    document.getElementById('signOutBtn').style.display = user ? 'inline-flex' : 'none';
+    if (user){
+      document.getElementById('authZone').style.display = 'none';
+      document.getElementById('showEmailSignInBtn').style.display = 'none';
+      document.getElementById('emailSignInForm').style.display = 'none';
+      document.getElementById('buildingsSection').style.display = 'block';
+      loadMasterBuildings();
+    } else {
+      document.getElementById('authZone').style.display = '';
+      document.getElementById('authStatus').textContent = 'Sign in with an authorized account to manage buildings.';
+      document.getElementById('emailSignInForm').style.display = 'none';
+      document.getElementById('emailSignInForm').reset();
+      document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';
+      document.getElementById('buildingsSection').style.display = 'none';
+      document.getElementById('buildingsList').innerHTML = '';
+      document.getElementById('buildingsStatus').textContent = '';
+      editingBuildingId = null;
+      editingTenant = null;
+      buildingsCache = [];
+    }
+  });
+}
+</script>
+</body>
+</html>

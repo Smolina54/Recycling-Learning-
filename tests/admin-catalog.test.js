@@ -1,18 +1,52 @@
-// Verifies the admin panel's Catalog tab (part of the multi-program plan, see
-// C:\Users\smolina\.claude\plans\serene-dreaming-puppy.md): registering an induction only
-// creates a `programs` catalog entry (never designs/creates the induction itself), archiving
-// is a soft-delete (can be unarchived), and — since the nav rework, see that plan's "Rework
-// needed after Sergio's review" — that enrollment (Enrolled Buildings tab) and distribution
-// links (Distribution tab) are correctly scoped per selected induction. Run: npm run test:catalog-admin
+// Verifies per-program scoping in outputs/sorting-station-report.html — Enrolled Buildings and
+// Distribution both filter strictly by whichever induction is selected in the top program
+// selector (part of the multi-program plan, see
+// C:\Users\smolina\.claude\plans\serene-dreaming-puppy.md). Registering/archiving inductions
+// itself moved to its own page (outputs/admin-catalog.html, Workstream 2 Phase 3 of the
+// architecture roadmap, see C:\Users\smolina\.claude\plans\graceful-roaming-shell.md) and is
+// covered end-to-end in tests/admin-catalog-page.test.js — this file seeds a program directly
+// via Firestore instead of driving that now-separate page's UI. Run: npm run test:catalog-admin
 const path = require('path');
 const url = require('url');
+const fs = require('fs');
 const puppeteer = require('puppeteer-core');
+const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
+const { doc, setDoc } = require('firebase/firestore');
 
 // Override via TEST_BROWSER_PATH if this machine's security software blocks Edge automation
 // (e.g. a corporate EDR flagging --remote-debugging-port on msedge.exe specifically).
 const EDGE_PATH = process.env.TEST_BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const REPORT_URL = `${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'sorting-station-report.html')).href}?emulator=1`;
+const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
 const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
+
+// Building creation (add/edit/delete) is Buildings/Edificios' own page now
+// (outputs/admin-buildings.html, Workstream 2 Phase 2 of the architecture roadmap) — this file
+// only needs a real building to test per-program enrollment scoping against, seeded directly.
+// Registering an induction is admin-catalog.html's own page now (Workstream 2 Phase 3) — seed
+// that directly too, rather than driving a UI that no longer lives on this page.
+async function seedTestBuildingAndProgram(){
+  const testEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  const buildingName = 'Test Tower Enroll ' + Date.now();
+  const buildingId = 'test-tower-enroll-' + Date.now();
+  const programName = 'Organics Focus ' + Date.now();
+  const programId = 'organics-focus-' + Date.now();
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'buildings', buildingId), { name: buildingName });
+    await setDoc(doc(db, 'enrollments', `recycling-sorting__${buildingId}`), {
+      programId: 'recycling-sorting', buildingId, itemOverrides: {}, enabledTenantIds: null,
+    });
+    await setDoc(doc(db, 'programs', programId), {
+      name: programName, description: 'A focused induction on organics sorting.',
+      file: 'organics-training.html', kind: 'game', status: 'active',
+    });
+  });
+  return { testEnv, buildingId, buildingName, programId, programName };
+}
 
 const results = [];
 function check(label, cond, extra){ results.push({label, ok: Boolean(cond), extra: extra || ''}); }
@@ -66,6 +100,11 @@ async function main(){
 }
 
 async function runFlow(page){
+  // --- A building and a second program, seeded directly (their own pages' UIs are covered by
+  // tests/admin-buildings-page.test.js and tests/admin-catalog-page.test.js respectively). ---
+  const { buildingId, buildingName, programId, programName } = await seedTestBuildingAndProgram();
+  check('the seeded building and program exist', Boolean(buildingId) && Boolean(programId), `${buildingId} / ${programId}`);
+
   await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded' });
   await new Promise(r => setTimeout(r, 300));
 
@@ -75,111 +114,22 @@ async function runFlow(page){
   }, ALLOWED_EMAIL);
   check('test sign-in hook resolved without throwing', signInResult === 'ok', signInResult);
 
-  // The ⚙ settings button (and with it, Buildings/Admins/Catalog) appears as soon as sign-in
-  // succeeds — independent of any induction being selected. #programTabs (Reports/Enrolled
-  // Buildings/Distribution) deliberately stays hidden until a real induction is picked, so it
-  // is NOT the right thing to wait on here.
+  // #programTabs (Reports/Enrolled Buildings/Distribution) deliberately stays hidden until a
+  // real induction is picked.
   await page.waitForFunction(
     () => getComputedStyle(document.getElementById('settingsBtn')).display !== 'none',
     { timeout: 10000 }
   );
-  check('the ⚙ settings button (and therefore Catalog) is reachable right after sign-in, with no induction selected yet',
+  check('the ⚙ settings button is reachable right after sign-in, with no induction selected yet',
     await page.$eval('#programTabs', el => getComputedStyle(el).display === 'none'));
 
-  await page.click('#settingsBtn');
-  await new Promise(r => setTimeout(r, 100));
-  await page.click('#tabCatalogBtn');
-  await new Promise(r => setTimeout(r, 300));
-  check('Catalog tab becomes visible on click, without needing an induction selected first',
-    await page.$eval('#catalogSection', el => getComputedStyle(el).display !== 'none'));
-  check('Buildings section hides when Catalog tab is active',
-    await page.$eval('#buildingsSection', el => getComputedStyle(el).display === 'none'));
-
-  // tabCatalogBtn's click handler calls refreshProgramSelector() (which populates #programsList
-  // via loadPrograms()) without awaiting it — wait for that fire-and-forget fetch to actually
-  // resolve (i.e. for the list to render SOMETHING) before reading it, rather than racing it.
-  await page.waitForFunction(
-    () => (document.getElementById('programsList').textContent || '').trim() !== '',
-    { timeout: 10000 }
-  );
-  check('no inductions registered yet', (await page.$eval('#programsList', el => el.textContent)).includes('No inductions registered yet'));
-
-  // Stub confirm() to accept the "register" and "archive" dialogs this flow triggers.
+  // window.confirm's native dialog would otherwise fight the generic "unexpected dialog"
+  // handler at the top of this file — stubbed once, up front, since several actions below
+  // (revoking a link, removing an enrollment) trigger it.
   await page.evaluate(() => { window.confirm = () => true; });
 
-  const programName = 'Organics Focus ' + Date.now();
-  await page.type('#newProgramName', programName);
-  await page.type('#newProgramDescription', 'A focused induction on organics sorting.');
-  await page.type('#newProgramFile', 'organics-training.html');
-  await page.select('#newProgramKind', 'game');
-  await page.click('#addProgramBtn');
-  // This is the very first Firestore write of the whole flow, against a freshly-booted
-  // emulator — it can take noticeably longer than the usual ~600ms settle time used elsewhere
-  // in this file. Wait for the status text to actually leave "Adding…" rather than racing it.
-  await page.waitForFunction(
-    () => !['', 'Adding…'].includes(document.getElementById('catalogStatus').textContent),
-    { timeout: 10000 }
-  );
-
-  const status = await page.$eval('#catalogStatus', el => el.textContent);
-  check('program status message confirms the add', status.includes(programName), status);
-
-  // catalogStatus is set synchronously, BEFORE the addProgramBtn handler's own
-  // `await refreshProgramSelector()` (a second, separate Firestore round-trip) actually
-  // repopulates #programsList — reading/clicking into the list right after the status wait
-  // races that repaint. page.click() (unlike page.waitForSelector) does one querySelector
-  // with no retry, so it throws immediately if the button isn't in the DOM yet.
-  await page.waitForFunction(
-    (name) => (document.getElementById('programsList').textContent || '').includes(name),
-    { timeout: 10000 },
-    programName
-  );
-
-  let listText = await page.$eval('#programsList', el => el.textContent);
-  check('new program appears in the list with its description and file',
-    listText.includes(programName) && listText.includes('organics-training.html'), listText);
-  check('newly added program is not shown as archived', !listText.includes(`${programName} (archived)`));
-
-  await page.click('.archive-program-btn');
-  await page.waitForFunction(
-    () => (document.getElementById('programsList').textContent || '').includes('(archived)'),
-    { timeout: 10000 }
-  );
-  listText = await page.$eval('#programsList', el => el.textContent);
-  check('archiving marks the program as archived, does not remove it from the list',
-    listText.includes(programName) && listText.includes('(archived)'), listText);
-  check('an archived program shows an Unarchive button, not Archive',
-    Boolean(await page.$('.unarchive-program-btn')) && !(await page.$('.archive-program-btn')));
-
-  await page.click('.unarchive-program-btn');
-  await page.waitForFunction(
-    () => !(document.getElementById('programsList').textContent || '').includes('(archived)'),
-    { timeout: 10000 }
-  );
-  listText = await page.$eval('#programsList', el => el.textContent);
-  check('unarchiving brings it back to active, Archive button reappears',
-    listText.includes(programName) && !listText.includes('(archived)') && Boolean(await page.$('.archive-program-btn')), listText);
-
-  // --- Create a building (master Edificios, program-agnostic) before selecting any induction,
-  // so the very first load of program-scoped data below already reflects it. ---
-  await page.click('#settingsBtn');
-  await new Promise(r => setTimeout(r, 100));
-  await page.click('#tabBuildingsBtn');
-  await new Promise(r => setTimeout(r, 300));
-
-  const buildingName = 'Test Tower Enroll ' + Date.now();
-  await page.type('#newBuildingName', buildingName);
-  await page.click('#addBuildingBtn');
-  await new Promise(r => setTimeout(r, 600));
-  let buildingNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
-  check('the newly created building appears in master Edificios', buildingNames.includes(buildingName), buildingNames.join('|'));
-  const buildingId = await page.$$eval('.building-row', (rows, name) => {
-    const row = rows.find(r => r.querySelector('h3') && r.querySelector('h3').textContent === name);
-    return row ? row.dataset.buildingId : null;
-  }, buildingName);
-
   // --- Building enrollment is scoped per selected program (multi-program plan). Select
-  // Recycling Sorting first — the building was auto-enrolled there at creation time. ---
+  // Recycling Sorting first — the building was auto-enrolled there at seed time. ---
   await selectProgram(page, 'recycling-sorting');
   await page.waitForFunction(
     () => getComputedStyle(document.getElementById('programTabs')).display !== 'none',
@@ -187,7 +137,7 @@ async function runFlow(page){
   );
   // #programTabs is shown synchronously by the change handler, BEFORE it awaits loadLiveData()
   // (which is what actually fetches/renders Enrolled Buildings) — wait for the building we just
-  // created (auto-enrolled in Recycling Sorting) to actually show up before reading the list.
+  // seeded (auto-enrolled in Recycling Sorting) to actually show up before reading the list.
   await page.waitForFunction(
     (name) => [...document.querySelectorAll('.enrolled-building-row h3')].some(el => el.textContent === name),
     { timeout: 10000 },
@@ -199,10 +149,8 @@ async function runFlow(page){
   check('the new building appears under Enrolled Buildings while Recycling Sorting is selected (auto-enrolled there)',
     enrolledNames.includes(buildingName), enrolledNames.join('|'));
 
-  // Switch the top selector to the Organics program just registered.
-  const programValue = await page.$$eval('#programSelector option', (opts, name) =>
-    (opts.find(o => o.textContent.includes(name)) || {}).value, programName);
-  await selectProgram(page, programValue);
+  // Switch the top selector to the Organics program seeded directly above.
+  await selectProgram(page, programId);
   // Same race as above: #programTabs/viewingBadge update synchronously, before loadEnrolledData()
   // (async) actually refetches. Organics Focus starts with zero enrolled buildings, so wait for
   // its real empty-state message rather than reading a still-stale (Recycling Sorting) render.
@@ -271,7 +219,6 @@ async function runFlow(page){
   // --- Remove the Organics Focus enrollment; the building's OTHER enrollment must be untouched ---
   await page.click('#tabEnrolledBuildingsBtn');
   await new Promise(r => setTimeout(r, 200));
-  await page.evaluate(() => { window.confirm = () => true; });
   await page.click(`.enrolled-building-row[data-building-id="${buildingId}"] .remove-enrollment-btn`);
   await new Promise(r => setTimeout(r, 600));
   enrolledNames = await page.$$eval('.enrolled-building-row h3', els => els.map(el => el.textContent));

@@ -1,16 +1,17 @@
-// Signs in as the allowlisted reviewer (via the emulator-only test sign-in hook,
-// not a real Google popup) and exercises the admin panel's three program-scoped/
-// program-agnostic areas introduced by the nav rework (see
-// C:\Users\smolina\.claude\plans\serene-dreaming-puppy.md, "Rework needed after
-// Sergio's review"): master Edificios (⚙, program-agnostic building/tenant CRUD),
-// Enrolled Buildings (per-program: Configure streams + the new tenant-enable
-// checklist), and Distribution (per-program: whole-building link/QR + tenant-scoped
-// links). Run: npm run test:admin
+// Signs in as the allowlisted reviewer (via the emulator-only test sign-in hook, not a real
+// Google popup) and exercises sorting-station-report.html's remaining program-scoped areas:
+// Reports, Enrolled Buildings (Configure streams + the tenant-enable checklist), and
+// Distribution (whole-building link/QR + tenant-scoped links) — plus sign-in/out and
+// email/password auth. Master Edificios (building/tenant CRUD) moved to its own page
+// (outputs/admin-buildings.html, Workstream 2 Phase 2 of the architecture roadmap,
+// C:\Users\smolina\.claude\plans\graceful-roaming-shell.md) and has its own test,
+// tests/admin-buildings-page.test.js — the building/tenants this file needs are seeded
+// directly (seedTestBuilding below) instead of created through that now-separate UI.
+// Run: npm run test:admin
 const path = require('path');
 const url = require('url');
 const fs = require('fs');
 const puppeteer = require('puppeteer-core');
-const xlsxLib = require('xlsx');
 const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const { doc, setDoc, getDoc } = require('firebase/firestore');
 
@@ -26,15 +27,6 @@ const XSS_PAYLOAD = '<img src=x onerror="window.__xssFired = true">';
 const results = [];
 function check(label, cond, extra){ results.push({label, ok: Boolean(cond), extra: extra || ''}); }
 
-async function findTenantLi(row, textFragment){
-  const lis = await row.$$('li');
-  for (const li of lis){
-    const text = await li.evaluate(el => el.textContent);
-    if (text.includes(textFragment)) return li;
-  }
-  return null;
-}
-
 // refreshProgramSelector() (called from onAuthStateChanged, fire-and-forget) is what actually
 // populates #programSelector's <option>s — it hasn't necessarily finished by the time #settingsBtn
 // itself becomes visible (that happens synchronously, earlier in the same handler). Selecting
@@ -47,45 +39,6 @@ async function selectProgram(page, programId){
     programId
   );
   await page.select('#programSelector', programId);
-}
-
-// Generalized over all three row flavors (.building-row / .enrolled-building-row /
-// .distribution-building-row) — they all key off a <h3> name the same way.
-async function findRowByName(page, rowSelector, name){
-  return page.evaluateHandle((sel, n) => {
-    return [...document.querySelectorAll(sel)].find(r => r.querySelector('h3') && r.querySelector('h3').textContent === n);
-  }, rowSelector, name).then(h => h.asElement());
-}
-
-// Fills a `.levels-editor` (which starts with exactly one blank "Level" row) with the given
-// level strings — clicking "+ Add another level" for every level past the first, then setting
-// each row to the right type ("Level 4" -> Level/4, "Ground" -> Ground, anything else -> Other).
-async function fillLevelsEditor(editorHandle, levels){
-  for (let i = 0; i < levels.length; i++){
-    if (i > 0) await editorHandle.$eval('.add-level-row-btn', el => el.click());
-    const rows = await editorHandle.$$('.level-row');
-    const row = rows[i];
-    const level = levels[i];
-    const levelMatch = /^level\s+(.+)$/i.exec(level);
-    if (levelMatch){
-      await row.$eval('.level-number-input', (el, v) => { el.value = v; }, levelMatch[1]);
-    } else if (level.toLowerCase() === 'ground'){
-      await row.$eval('.level-type-select', el => { el.value = 'Ground'; el.dispatchEvent(new Event('change', { bubbles: true })); });
-    } else {
-      await row.$eval('.level-type-select', el => { el.value = 'Other'; el.dispatchEvent(new Event('change', { bubbles: true })); });
-      await row.$eval('.level-other-input', (el, v) => { el.value = v; }, level);
-    }
-  }
-}
-
-// Fills an `.emails-editor` (which starts with zero rows, unlike the levels editor — a
-// contact email is optional) by clicking "+ Add another email" once per address.
-async function fillEmailsEditor(editorHandle, emails){
-  for (let i = 0; i < emails.length; i++){
-    await editorHandle.$eval('.add-email-row-btn', el => el.click());
-    const rows = await editorHandle.$$('.email-row');
-    await rows[i].$eval('.email-input', (el, v) => { el.value = v; }, emails[i]);
-  }
 }
 
 // Seeds one attempt (no matching submission -> shows in "Pending completion") and one
@@ -131,24 +84,45 @@ async function seedMaliciousAttempt(){
   return testEnv; // not cleaned up here — same reasoning as game-regression.test.js
 }
 
+// Building + tenant creation via the UI (add building, add/edit/import tenants, bulk contacts
+// round-trip) is Buildings/Edificios' own concern now — covered end-to-end in its own test,
+// tests/admin-buildings-page.test.js (Workstream 2, Phase 2 of the architecture roadmap). This
+// file only needs the END STATE that used to result from that UI flow, so Enrolled Buildings/
+// Distribution/Reports below have real data to work with — seeded directly, matching exactly
+// what the old UI-driven flow used to leave behind (6 tenants; Widgetco and Acme Legal already
+// have contact emails, Northwind Consulting stays email-less as the "no email" case).
+async function seedTestBuilding(testEnv){
+  const buildingName = 'Test Tower ' + Date.now();
+  const buildingId = 'test-tower-' + Date.now();
+  const tenantIds = {
+    widgetco: 'widgetco', northwindConsulting: 'northwind-consulting', acmeLegal: 'acme-legal',
+    goZeroRetail: 'go-zero-retail', retailTenants: 'retail-tenants', externalBin: 'external-bin-commercial',
+  };
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'buildings', buildingId), { name: buildingName });
+    await setDoc(doc(db, 'enrollments', `recycling-sorting__${buildingId}`), {
+      programId: 'recycling-sorting', buildingId, itemOverrides: {}, enabledTenantIds: null,
+    });
+    const tenants = [
+      { id: tenantIds.widgetco, name: 'Widgetco', levels: ['Level 3', 'Level 4'], emails: ['widgetco-contact@example.com'] },
+      { id: tenantIds.northwindConsulting, name: 'Northwind Consulting', levels: ['Level 14'], emails: [] },
+      { id: tenantIds.acmeLegal, name: 'Acme Legal', levels: ['Level 8', 'Level 9'], emails: ['acme-one@example.com', 'acme-two@example.com'] },
+      { id: tenantIds.goZeroRetail, name: 'Go Zero (Retail)', levels: ['Ground'], emails: [] },
+      { id: tenantIds.retailTenants, name: 'Retail Tenants', levels: ['Ground'], emails: [] },
+      { id: tenantIds.externalBin, name: 'External Bin/ Commercial', levels: ['External Bin/ Commercial'], emails: [] },
+    ];
+    for (const t of tenants){
+      await setDoc(doc(db, 'buildings', buildingId, 'tenants', t.id), { name: t.name, levels: t.levels, emails: t.emails });
+    }
+  });
+  return { buildingId, buildingName, tenantIds };
+}
+
 // Direct Firestore read of one enrollment doc, bypassing the UI entirely — needed for the
 // tenant-enable checklist's 3-state model (absent/null vs [] vs a real array), which the UI
 // alone can't distinguish: both "null" and "everyone individually checked" render every
 // checkbox checked identically.
-// Direct Firestore read of one tenant doc — needed after writes made from the Distribution tab
-// (the bulk contacts import), since that only refreshes Distribution's own cache
-// (enrolledBuildingsCache), not master Edificios' separate one (buildingsCache) — checking via
-// the Edificios UI right after would see stale, pre-import data even though the write itself
-// succeeded, so read the real, authoritative Firestore state instead of fighting cache timing.
-async function readTenantDoc(testEnv, buildingId, tenantId){
-  let result;
-  await testEnv.withSecurityRulesDisabled(async (context) => {
-    const snap = await getDoc(doc(context.firestore(), 'buildings', buildingId, 'tenants', tenantId));
-    result = snap.data();
-  });
-  return result;
-}
-
 async function readEnrollment(testEnv, enrollmentId){
   // withSecurityRulesDisabled (this SDK version) awaits the callback but discards its return
   // value — capture the result via an outer variable instead of `return`ing it from the callback.
@@ -208,9 +182,8 @@ async function runFlow(page, seedEnv, consoleErrors){
   const authStatusText = await page.$eval('#authStatus', el => el.textContent);
   check('the ⚙ settings button appears after signing in, before any induction is selected', true, authStatusText);
 
-  // onAuthStateChanged fires refreshProgramSelector()/loadMasterBuildings()/loadAdmins() as
-  // fire-and-forget async work — wait for it to actually populate #programSelector's options
-  // before inspecting them.
+  // onAuthStateChanged fires refreshProgramSelector() as fire-and-forget async work — wait for
+  // it to actually populate #programSelector's options before inspecting them.
   await page.waitForFunction(
     () => document.querySelector('#programSelector option[value="recycling-sorting"]') !== null,
     { timeout: 10000 }
@@ -231,253 +204,10 @@ async function runFlow(page, seedEnv, consoleErrors){
     window.alert = (msg) => { window.__alertCalls.push(msg); };
   });
 
-  // --- Master Edificios (⚙): program-agnostic building/tenant CRUD. Per the rework, this is
-  // reachable straight after sign-in — no induction needs to be selected first. ---
-  await page.click('#settingsBtn');
-  await new Promise(r => setTimeout(r, 100));
-  await page.click('#tabBuildingsBtn');
-  await new Promise(r => setTimeout(r, 200));
-  check('Buildings tab (master Edificios) becomes visible on click, reachable before any induction is selected',
-    await page.$eval('#buildingsSection', el => getComputedStyle(el).display !== 'none'));
-  check('Reports section hides when Buildings tab is active',
-    await page.$eval('#reportSection', el => getComputedStyle(el).display === 'none'));
-
-  const buildingName = 'Test Tower ' + Date.now();
-  await page.type('#newBuildingName', buildingName);
-  await page.click('#addBuildingBtn');
-  await new Promise(r => setTimeout(r, 600));
-
-  const status = await page.$eval('#buildingsStatus', el => el.textContent);
-  check('building status message confirms the add', status.includes(buildingName), status);
-
-  const buildingRowNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
-  check('new building appears in the master list', buildingRowNames.includes(buildingName), buildingRowNames.join('|'));
-
-  let newRowHandle = await findRowByName(page, '.building-row', buildingName);
-  const buildingId = await newRowHandle.evaluate(el => el.dataset.buildingId);
-  check('the buildingId is a readable slug of the name, not a UUID (looked suspicious to trainees before)',
-    buildingId === 'test-tower-' + buildingName.replace('Test Tower ', '') && !/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(buildingId),
-    buildingId);
-
-  // --- Name-collision handling: a second building with the same name gets a distinct id ---
-  await page.evaluate(() => { document.getElementById('newBuildingName').value = ''; });
-  await page.type('#newBuildingName', buildingName);
-  await page.click('#addBuildingBtn');
-  await new Promise(r => setTimeout(r, 600));
-  const allBuildingIds = await page.$$eval('.building-row', els => els.map(el => el.dataset.buildingId));
-  const matchingIds = allBuildingIds.filter(id => id === buildingId || id.startsWith(buildingId + '-'));
-  check('a second building with the same name gets a distinct id, not overwriting the first',
-    matchingIds.length === 2 && new Set(matchingIds).size === 2, matchingIds.join(', '));
-
-  // Clean up the duplicate now, so every step below keeps operating on exactly one
-  // unambiguous "the" building named buildingName, as the rest of this flow assumes.
-  const duplicateId = matchingIds.find(id => id !== buildingId);
-  if (duplicateId){
-    await page.$eval(`.building-row[data-building-id="${duplicateId}"] .delete-building-btn`, el => el.click());
-    await new Promise(r => setTimeout(r, 600));
-  }
-
-  // --- Collapse/expand: master rows no longer carry a link/QR (moved to Distribution) — a
-  // just-created building still auto-expands, showing its tenant list/add-tenant form; confirm
-  // the toggle actually hides/shows that. ---
-  newRowHandle = await findRowByName(page, '.building-row', buildingName);
-  await newRowHandle.$eval('.building-toggle-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 200));
-  let rowAfterCollapse = await findRowByName(page, '.building-row', buildingName);
-  check('collapsing a building hides its tenant list/add-tenant form',
-    !(await rowAfterCollapse.$('.new-tenant-name')));
-
-  await rowAfterCollapse.$eval('.building-toggle-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 200));
-  let rowAfterExpand = await findRowByName(page, '.building-row', buildingName);
-  check('expanding it again shows the tenant list/add-tenant form once more',
-    Boolean(await rowAfterExpand.$('.new-tenant-name')));
-
-  // --- Search box: narrows the list by name, restores it when cleared ---
-  await page.type('#buildingSearchInput', 'zzz-does-not-match-anything');
-  await new Promise(r => setTimeout(r, 200));
-  const namesWhenSearchMisses = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
-  const noMatchMessageShown = await page.$eval('#buildingsList', el => el.textContent.includes('No buildings match your search'));
-  check('a non-matching search hides the building and shows a "no match" message',
-    !namesWhenSearchMisses.includes(buildingName) && noMatchMessageShown);
-
-  await page.$eval('#buildingSearchInput', el => { el.value = ''; });
-  await page.$eval('#buildingSearchInput', el => el.dispatchEvent(new Event('input', { bubbles: true })));
-  await new Promise(r => setTimeout(r, 200));
-  const namesAfterClearingSearch = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
-  check('clearing the search restores the building to the list', namesAfterClearingSearch.includes(buildingName));
-
-  // --- Add a tenant to whichever row is the one we just created. ---
-  let rowHandle = await findRowByName(page, '.building-row', buildingName);
-  const tenantName = 'Test Tenant';
-  await rowHandle.$eval('.new-tenant-name', (el, v) => { el.value = v; }, tenantName);
-  const newTenantLevelsEditor = await rowHandle.$('.new-tenant-levels-editor');
-  await fillLevelsEditor(newTenantLevelsEditor, ['Level 1', 'Level 2']);
-  const newTenantEmailsEditor = await rowHandle.$('.new-tenant-emails-editor');
-  await fillEmailsEditor(newTenantEmailsEditor, ['jane@example.com', 'bob@example.com']);
-  await rowHandle.$eval('.add-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
-
-  const tenantEntries = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
-  const matchingTenant = tenantEntries.find(t => t.includes(tenantName));
-  check('new tenant appears under its building with both levels, compacted into one "Levels 1, 2"',
-    Boolean(matchingTenant) && matchingTenant.includes('Levels 1, 2'),
-    tenantEntries.join(' || '));
-  check('the new tenant persisted both saved contact emails',
-    Boolean(matchingTenant) && matchingTenant.includes('jane@example.com') && matchingTenant.includes('bob@example.com'),
-    tenantEntries.join(' || '));
-
-  // A tenant with many "Level N" rows should compact into one "Levels 1, 2, 3, 4, 5" line
-  // instead of the old repetitive "Level 1, Level 2, Level 3, Level 4, Level 5".
-  const fiveLevelRowHandle = await findRowByName(page, '.building-row', buildingName);
-  await fiveLevelRowHandle.$eval('.new-tenant-name', (el, v) => { el.value = v; }, 'Five Level Co');
-  const fiveLevelEditor = await fiveLevelRowHandle.$('.new-tenant-levels-editor');
-  await fillLevelsEditor(fiveLevelEditor, ['Level 1', 'Level 2', 'Level 3', 'Level 4', 'Level 5']);
-  await fiveLevelRowHandle.$eval('.add-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
-  const tenantEntriesAfterFiveLevel = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
-  check('a tenant with 5 levels shows one compact "Levels 1, 2, 3, 4, 5" line, not 5 repeated "Level N"s',
-    tenantEntriesAfterFiveLevel.some(t => t.includes('Five Level Co') && t.includes('Levels 1, 2, 3, 4, 5')),
-    tenantEntriesAfterFiveLevel.join(' || '));
-  // Delete it right away — later checks in this file hardcode a tenant count (6) that this
-  // one-off addition would otherwise throw off.
-  const fiveLevelRowForDelete = await findRowByName(page, '.building-row', buildingName);
-  const fiveLevelLi = await findTenantLi(fiveLevelRowForDelete, 'Five Level Co');
-  await fiveLevelLi.$eval('.delete-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 400));
-
-  // Attempting to add a tenant with an invalid email should block the save with an alert,
-  // not silently drop the bad address.
-  const badEmailRowHandle = await findRowByName(page, '.building-row', buildingName);
-  await badEmailRowHandle.$eval('.new-tenant-name', (el, v) => { el.value = v; }, 'Bad Email Tenant');
-  const badEmailLevelsEditor = await badEmailRowHandle.$('.new-tenant-levels-editor');
-  await fillLevelsEditor(badEmailLevelsEditor, ['Level 1']);
-  const badEmailEmailsEditor = await badEmailRowHandle.$('.new-tenant-emails-editor');
-  await fillEmailsEditor(badEmailEmailsEditor, ['not-an-email']);
-  const alertCountBeforeBadEmail = await page.evaluate(() => window.__alertCalls.length);
-  await badEmailRowHandle.$eval('.add-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 300));
-  const alertsAfterBadEmail = await page.evaluate((n) => window.__alertCalls.slice(n), alertCountBeforeBadEmail);
-  check('an invalid contact email blocks the add-tenant save with a clear alert',
-    alertsAfterBadEmail.some(a => a.includes('not-an-email')), JSON.stringify(alertsAfterBadEmail));
-  const tenantEntriesAfterBadEmail = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
-  check('the tenant with the invalid email was never created',
-    !tenantEntriesAfterBadEmail.some(t => t.includes('Bad Email Tenant')), tenantEntriesAfterBadEmail.join(' || '));
-
-  // --- Bulk import from a synthetic "collection point" style Excel export ---
-  const freshRowHandle = await findRowByName(page, '.building-row', buildingName);
-  const fixturePath = path.join(__dirname, 'fixtures', 'sample-collection-points.xlsx');
-  const fileInput = await freshRowHandle.$('.import-xlsx-input');
-  await fileInput.uploadFile(fixturePath);
-  await new Promise(r => setTimeout(r, 500));
-
-  const candidates = await freshRowHandle.$$eval('.import-row', rows => rows.map(r => ({
-    name: r.querySelector('.import-name').value,
-    levels: r.querySelector('.import-levels').value,
-    checked: r.querySelector('.import-check').checked,
-  })));
-  check('import review shows one merged row for a tenant split across 2 levels',
-    candidates.some(c => c.name === 'Widgetco' && c.levels.includes('Level 3') && c.levels.includes('Level 4')),
-    JSON.stringify(candidates));
-  check('import review shows one merged row for a tenant split across sub-areas on the same level',
-    candidates.some(c => c.name === 'Northwind Consulting' && c.levels === 'Level 14'),
-    JSON.stringify(candidates));
-  check('all candidate rows are checked by default', candidates.every(c => c.checked));
-
-  // Untick the two junk rows before confirming — this is the whole point of the review step.
-  const junkNames = ['Base Building', 'Vacant'];
-  const importRows = await freshRowHandle.$$('.import-row');
-  for (const r of importRows){
-    const name = await r.$eval('.import-name', el => el.value);
-    if (junkNames.includes(name)) await r.$eval('.import-check', el => { el.checked = false; });
-  }
-  await freshRowHandle.$eval('.import-confirm-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 800));
-
-  const tenantEntriesAfterImport = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
-  check('Widgetco was imported with both its levels merged, compacted into one "Levels 3, 4"',
-    tenantEntriesAfterImport.some(t => t.includes('Widgetco') && t.includes('Levels 3, 4')),
-    tenantEntriesAfterImport.join(' || '));
-  check('unticked junk rows (Vacant, Base Building) were NOT imported',
-    !tenantEntriesAfterImport.some(t => t.includes('Vacant')) && !tenantEntriesAfterImport.some(t => t.includes('Base Building')),
-    tenantEntriesAfterImport.join(' || '));
-
-  // --- Edit and delete the manually-added tenant (Widgetco/Northwind from the import survive) ---
-  let row = await findRowByName(page, '.building-row', buildingName);
-  let testTenantLi = await findTenantLi(row, 'Test Tenant');
-  await testTenantLi.$eval('.edit-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 200));
-
-  const editRowVisible = await page.$('.tenant-edit-row');
-  check('editing a tenant shows inline name/levels inputs', Boolean(editRowVisible));
-  // The edit-mode emails editor should already show this tenant's two saved emails, pre-filled
-  // — this is the no-merge setDoc regression: renaming/re-levelling without touching this
-  // editor must still carry these two forward, not silently drop them.
-  const editEmailsEditorPrefill = await editRowVisible.$('.edit-tenant-emails-editor');
-  const prefilledEmails = await editEmailsEditorPrefill.$$eval('.email-input', els => els.map(el => el.value));
-  check('the edit-mode emails editor is pre-filled with both saved emails',
-    prefilledEmails.includes('jane@example.com') && prefilledEmails.includes('bob@example.com'),
-    prefilledEmails.join(', '));
-  await editRowVisible.$eval('.edit-tenant-name-input', el => { el.value = 'Test Tenant Renamed'; });
-  const editLevelsEditor = await editRowVisible.$('.edit-tenant-levels-editor');
-  const editLevelNumberInputs = await editLevelsEditor.$$('.level-number-input');
-  await editLevelNumberInputs[0].evaluate(el => { el.value = '5'; });
-  await editLevelNumberInputs[1].evaluate(el => { el.value = '6'; });
-  await editRowVisible.$eval('.save-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
-
-  let tenantEntriesLive = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
-  check('tenant rename + level change saved correctly, compacted into one "Levels 5, 6"',
-    tenantEntriesLive.some(t => t.includes('Test Tenant Renamed') && t.includes('Levels 5, 6')),
-    tenantEntriesLive.join(' || '));
-  check('editing name/levels did NOT drop the previously-saved contact emails',
-    tenantEntriesLive.some(t => t.includes('Test Tenant Renamed') && t.includes('jane@example.com') && t.includes('bob@example.com')),
-    tenantEntriesLive.join(' || '));
-
-  // Now remove one of the two emails during a real edit and confirm only that one disappears.
-  row = await findRowByName(page, '.building-row', buildingName);
-  const renamedTenantLiForEmailEdit = await findTenantLi(row, 'Test Tenant Renamed');
-  await renamedTenantLiForEmailEdit.$eval('.edit-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 200));
-  const editRowForEmailRemoval = await page.$('.tenant-edit-row');
-  const editEmailsEditorForRemoval = await editRowForEmailRemoval.$('.edit-tenant-emails-editor');
-  const emailRowsToRemove = await editEmailsEditorForRemoval.$$('.email-row');
-  const bobRow = (await Promise.all(emailRowsToRemove.map(async (r2) => ({
-    handle: r2, value: await r2.$eval('.email-input', el => el.value),
-  })))).find(r2 => r2.value === 'bob@example.com');
-  await bobRow.handle.$eval('.remove-email-row-btn', el => el.click());
-  await editRowForEmailRemoval.$eval('.save-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
-
-  tenantEntriesLive = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
-  const renamedEntry = tenantEntriesLive.find(t => t.includes('Test Tenant Renamed'));
-  check('removing one email row keeps the other and drops only the removed one',
-    Boolean(renamedEntry) && renamedEntry.includes('jane@example.com') && !renamedEntry.includes('bob@example.com'),
-    renamedEntry);
-
-  row = await findRowByName(page, '.building-row', buildingName);
-  const renamedTenantLi = await findTenantLi(row, 'Test Tenant Renamed');
-  await renamedTenantLi.$eval('.delete-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
-
-  tenantEntriesLive = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
-  check('deleted tenant no longer appears', !tenantEntriesLive.some(t => t.includes('Test Tenant Renamed')), tenantEntriesLive.join(' || '));
-  check('other tenants in the same building survive an unrelated tenant delete',
-    tenantEntriesLive.some(t => t.includes('Widgetco')), tenantEntriesLive.join(' || '));
-
-  // "Delete" on a tenant is also a soft-delete (active:false) — confirm the real id-gate's
-  // company dropdown no longer offers it, even though the building's own link still works.
-  const tenantCheckPage = await page.browser().newPage();
-  await tenantCheckPage.goto(`${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'recycling-training.html')).href}?b=${buildingId}&emulator=1`, { waitUntil: 'domcontentloaded' });
-  await tenantCheckPage.waitForFunction(
-    () => document.querySelector('#idTenant option[value]:not([value=""])') !== null,
-    { timeout: 10000 }
-  ).catch(() => {});
-  const tenantOptionsAfterDelete = await tenantCheckPage.$$eval('#idTenant option', opts => opts.map(o => o.textContent));
-  check('a soft-deleted tenant no longer appears in the real id-gate\'s company dropdown',
-    !tenantOptionsAfterDelete.some(t => t.includes('Test Tenant Renamed')), tenantOptionsAfterDelete.join('|'));
-  await tenantCheckPage.close();
-
+  // Buildings/tenant creation (formerly done here via the UI) now lives entirely in
+  // admin-buildings.html's own test, tests/admin-buildings-page.test.js (Workstream 2, Phase 2
+  // of the architecture roadmap) — seed the same end state directly instead.
+  const { buildingId, buildingName, tenantIds } = await seedTestBuilding(seedEnv);
   // --- Now select an induction. All master-side tenant CRUD above is finished, so the very
   // first load of program-scoped data (Enrolled Buildings/Distribution) below already reflects
   // the final tenant list — no manual cache refresh needed. ---
@@ -850,94 +580,16 @@ async function runFlow(page, seedEnv, consoleErrors){
       copyBtnText.includes('Copied') || copyBtnText.includes('Copy link'), copyBtnText);
   }
 
-  // --- Contact-email features. "Coverage counter" and the bulk Excel contacts round-trip live
-  // in Edificios (a tenant's email isn't scoped to any one induction); "Send via email"/"Copy
-  // addresses" on generated links stay in Distribution (that's about the link itself). Give
-  // "Widgetco" (one of the 6 surviving tenants) a contact email first — the others stay
-  // email-less so the "no email -> no buttons" and coverage-count paths have something real to
-  // check against.
-  await page.click('#settingsBtn');
-  await new Promise(r => setTimeout(r, 100));
-  await page.click('#tabBuildingsBtn');
-  await new Promise(r => setTimeout(r, 200));
-  const buildingsRowForEmail = await findRowByName(page, '.building-row', buildingName);
-  const widgetcoLi = await findTenantLi(buildingsRowForEmail, 'Widgetco');
-  await widgetcoLi.$eval('.edit-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 200));
-  const widgetcoEditRow = await page.$('.tenant-edit-row');
-  const widgetcoEmailsEditor = await widgetcoEditRow.$('.edit-tenant-emails-editor');
-  await fillEmailsEditor(widgetcoEmailsEditor, ['widgetco-contact@example.com']);
-  await widgetcoEditRow.$eval('.save-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
-
-  const buildingsRowForCoverage = await findRowByName(page, '.building-row', buildingName);
-  const coverageText = await buildingsRowForCoverage.$eval('.contacts-coverage-note', el => el.textContent);
-  check('the coverage counter (Edificios) reports exactly 1 of 6 tenants has a contact email',
-    coverageText.includes('1 of 6'), coverageText);
-
-  const buildingsTenantIds = await buildingsRowForCoverage.$$eval('.tenant-list li[data-tenant-id]', els =>
-    els.map(el => ({ id: el.dataset.tenantId, name: el.querySelector('.tenant-name').textContent })));
-  const widgetcoId = buildingsTenantIds.find(t => t.name === 'Widgetco').id;
-  const acmeLegalId = buildingsTenantIds.find(t => t.name === 'Acme Legal').id;
-
-  // --- Bulk contacts round-trip (Edificios): export doesn't throw, import matches by Tenant
-  // ID, unions emails split across two rows for the same tenant, and flags an unmatched row. ---
-  const errorsBeforeExport = consoleErrors.length;
-  await buildingsRowForCoverage.$eval('.export-contacts-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 300));
-  check('"Export contacts template" click does not throw (Edificios)', consoleErrors.length === errorsBeforeExport);
-
-  const contactsFixturePath = path.join(require('os').tmpdir(), `contacts-import-${Date.now()}.xlsx`);
-  const contactsWb = xlsxLib.utils.book_new();
-  xlsxLib.utils.book_append_sheet(contactsWb, xlsxLib.utils.json_to_sheet([
-    // Two rows for the same tenant (Acme Legal) — the import should union these into one
-    // tenant with both emails, not just keep the last row.
-    { 'Tenant ID': acmeLegalId, Tenant: 'Acme Legal', Email: 'acme-one@example.com' },
-    { 'Tenant ID': acmeLegalId, Tenant: 'Acme Legal', Email: 'acme-two@example.com' },
-    // A row whose Tenant ID doesn't exist and whose name doesn't match anything real either.
-    { 'Tenant ID': 'not-a-real-id', Tenant: 'Nonexistent Co', Email: 'ghost@example.com' },
-  ]), 'Contacts');
-  xlsxLib.writeFile(contactsWb, contactsFixturePath);
-
-  const contactsFileInput = await buildingsRowForCoverage.$('.import-contacts-input');
-  await contactsFileInput.uploadFile(contactsFixturePath);
-  await new Promise(r => setTimeout(r, 500));
-  fs.unlinkSync(contactsFixturePath);
-
-  const contactsReview = await buildingsRowForCoverage.$$eval('.import-contacts-review .import-row', rows =>
-    rows.map(r => ({
-      unmatched: r.classList.contains('import-row-unmatched'),
-      text: r.textContent,
-    })));
-  check('the import review unions both rows for Acme Legal into a single matched entry with both emails',
-    contactsReview.some(r => !r.unmatched && r.text.includes('Acme Legal') && r.text.includes('acme-one@example.com') && r.text.includes('acme-two@example.com')),
-    JSON.stringify(contactsReview));
-  check('the row with no matching tenant ID or name is flagged as unmatched, not silently dropped',
-    contactsReview.some(r => r.unmatched && r.text.includes('Nonexistent Co')),
-    JSON.stringify(contactsReview));
-
-  await buildingsRowForCoverage.$eval('.import-contacts-confirm-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
-
-  const acmeDocAfterImport = await readTenantDoc(seedEnv, buildingId, acmeLegalId);
-  check('after confirming the import, Acme Legal now shows both emails from the two merged rows',
-    Array.isArray(acmeDocAfterImport?.emails) && acmeDocAfterImport.emails.includes('acme-one@example.com') && acmeDocAfterImport.emails.includes('acme-two@example.com'),
-    JSON.stringify(acmeDocAfterImport));
-  const widgetcoDocAfterImport = await readTenantDoc(seedEnv, buildingId, widgetcoId);
-  check('the import left Widgetco\'s own, separately-saved email untouched',
-    Array.isArray(widgetcoDocAfterImport?.emails) && widgetcoDocAfterImport.emails.includes('widgetco-contact@example.com'),
-    JSON.stringify(widgetcoDocAfterImport));
+  // Editing Widgetco's email, and the bulk contacts export/import round-trip, are Buildings/
+  // Edificios' own UI now (already seeded above with their final emails) — covered end-to-end
+  // in tests/admin-buildings-page.test.js. Still on the Distribution tab from the whole-building
+  // link checks above — go straight to the tenant-scoped links below.
+  const widgetcoId = tenantIds.widgetco;
+  const acmeLegalId = tenantIds.acmeLegal;
 
   // --- Send via email / Copy addresses on tenant-scoped Distribution links (Northwind
   // Consulting stays untouched/email-less throughout this whole flow, so it's the reliable
-  // "no email -> no buttons" case here — Acme Legal now has emails from the import above). ---
-  await page.click('#backToReportsLink');
-  await new Promise(r => setTimeout(r, 200));
-  await selectProgram(page, 'recycling-sorting');
-  await new Promise(r => setTimeout(r, 500));
-  await page.click('#tabDistributionBtn');
-  await new Promise(r => setTimeout(r, 200));
-
+  // "no email -> no buttons" case here — Acme Legal already has emails from the seed above). ---
   async function generateTenantLink(tenantId){
     await page.select(`${distributionSelector} .new-link-tenant`, tenantId);
     await page.click(`${distributionSelector} .generate-link-btn`);
@@ -957,7 +609,7 @@ async function runFlow(page, seedEnv, consoleErrors){
   check('the "Copy addresses" button carries the tenant\'s actual saved email in its data-link',
     copyAddressesDataLink === 'widgetco-contact@example.com', copyAddressesDataLink);
 
-  const northwindId = buildingsTenantIds.find(t => t.name === 'Northwind Consulting').id;
+  const northwindId = tenantIds.northwindConsulting;
   await generateTenantLink(northwindId);
   const northwindLinkLi = await page.evaluateHandle((sel) => {
     return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Northwind Consulting'));
@@ -991,44 +643,9 @@ async function runFlow(page, seedEnv, consoleErrors){
   check('the "Send via email" button resets to its original label and stays usable after a failed send',
     sendBtnTextAfterFailure.includes('Send via email') && !sendBtnDisabledAfterFailure, sendBtnTextAfterFailure);
 
-  // --- Edit and delete the building itself (back in master Edificios) ---
-  await page.click('#settingsBtn');
-  await new Promise(r => setTimeout(r, 100));
-  await page.click('#tabBuildingsBtn');
-  await new Promise(r => setTimeout(r, 200));
-
-  row = await findRowByName(page, '.building-row', buildingName);
-  await row.$eval('.edit-building-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 200));
-
-  // The <h3> is gone while editing (replaced by the inline form), so look up by the stable
-  // data-building-id instead of the name.
-  const buildingSelector = `.building-row[data-building-id="${buildingId}"]`;
-  const renamedBuildingName = buildingName + ' Renamed';
-  await page.$eval(`${buildingSelector} .edit-building-name-input`, (el, v) => { el.value = v; }, renamedBuildingName);
-  await page.$eval(`${buildingSelector} .save-building-name-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 600));
-
-  let buildingNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
-  check('building rename saved correctly', buildingNames.includes(renamedBuildingName), buildingNames.join('|'));
-
-  row = await findRowByName(page, '.building-row', renamedBuildingName);
-  await row.$eval('.delete-building-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
-
-  buildingNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
-  check('deleted building no longer appears in the list', !buildingNames.includes(renamedBuildingName), buildingNames.join('|') || '(none left)');
-
-  // "Delete building" is a soft-delete (active:false), not a real delete — confirm it actually
-  // has the effect a real delete would have from a trainee's point of view: the real link stops
-  // working, same fallback screen as a nonexistent buildingId.
-  const deletedBuildingPage = await page.browser().newPage();
-  await deletedBuildingPage.goto(`${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'recycling-training.html')).href}?b=${buildingId}&emulator=1`, { waitUntil: 'domcontentloaded' });
-  await new Promise(r => setTimeout(r, 1200));
-  const invalidShownForDeleted = await deletedBuildingPage.$eval('#idCardInvalid', el => getComputedStyle(el).display !== 'none').catch(() => false);
-  check('a soft-deleted building\'s real link now shows the invalid-link fallback, same as a real delete would', invalidShownForDeleted);
-  await deletedBuildingPage.close();
-
+  // Building rename/soft-delete (and confirming a deleted building's real link shows the
+  // invalid-link fallback) are Buildings/Edificios' own concerns now — covered end-to-end in
+  // tests/admin-buildings-page.test.js.
   // Admins management (grant/revoke a reviewer) now has its own page and its own test —
   // see tests/admin-admins.test.js. Nothing left to check for it on this page.
 
