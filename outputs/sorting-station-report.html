@@ -2746,7 +2746,7 @@ var qrcode = function() {
   <div class="admin-tabs" id="programTabs" style="display:none;">
     <button class="tab-btn active" id="tabReportsBtn">Reports</button>
     <button class="tab-btn" id="tabEnrolledBuildingsBtn">Enrolled Buildings</button>
-    <button class="tab-btn" id="tabDistributionBtn">Distribution</button>
+    <button class="tab-btn" id="tabDistributionBtn">Distribution →</button>
   </div>
 
   <section id="enrolledBuildingsSection" style="display:none;">
@@ -2769,15 +2769,6 @@ var qrcode = function() {
     </div>
 
     <div id="enrolledBuildingsList"></div>
-  </section>
-
-  <section id="distributionSection" style="display:none;">
-    <div class="report-header-row">
-      <h2>Distribution</h2>
-    </div>
-    <p class="block-sub">Links for whichever induction is selected above. A building must be enrolled (see Enrolled Buildings) before it shows up here.</p>
-
-    <div id="distributionList"></div>
   </section>
 
   <section id="reportSection" style="display:none;">
@@ -2914,7 +2905,7 @@ import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
-import { getFunctions, httpsCallable, connectFunctionsEmulator } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
+import { getFunctions, connectFunctionsEmulator } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAoWSx9FYa6UJa-6EZezgBYiDMuVVs9BBo",
@@ -5223,10 +5214,6 @@ try {
     refreshEnrollBuildingSelect();
   }
 
-  function refreshDistributionView(){
-    renderDistributionList(enrolledBuildingsCache);
-  }
-
   function refreshEnrollBuildingSelect(){
     const enrolledIds = new Set(enrolledBuildingsCache.map(b => b.id));
     const notEnrolled = allBuildingsCache.filter(b => !enrolledIds.has(b.id));
@@ -5272,28 +5259,16 @@ try {
   // up here once it's enrolled in that program (enrollments.active !== false). Every existing
   // building was auto-enrolled in Recycling (either at creation time or by the one-time
   // migration script), so this is a no-op change in behavior for that program's default case.
-  // Feeds BOTH Edificios inscritos and Distribution — they're two views of the same enrolled
-  // set, not two separate queries.
+  // Distribution (link generation) now has its own copy of this fetch (Workstream 2, Phase 4 of
+  // the architecture roadmap) — the `links` collection is no longer read here at all, since
+  // nothing left in this file needs it.
   async function loadEnrolledData(){
-    const [enrollmentsSnap, allBuildingDocs, linksSnap] = await Promise.all([
+    const [enrollmentsSnap, allBuildingDocs] = await Promise.all([
       getDocs(query(collection(db, 'enrollments'), where('programId', '==', currentProgramId))),
       loadAllActiveBuildings(),
-      getDocs(query(collection(db, 'links'), where('programId', '==', currentProgramId))),
     ]);
     const buildingDocsById = new Map(allBuildingDocs.map(d => [d.id, d]));
     allBuildingsCache = allBuildingDocs.map(d => ({ id: d.id, name: d.data().name || '(untitled)' }));
-
-    // Only links that still work — revoked/expired ones are left in Firestore (never deleted,
-    // see the multi-program plan's data-integrity section) but have nothing useful to show in
-    // this "currently distributable" list.
-    const now = Date.now();
-    const linksByBuilding = {};
-    linksSnap.docs.forEach(d => {
-      const data = d.data();
-      const expiresAtMs = data.expiresAt && typeof data.expiresAt.toMillis === 'function' ? data.expiresAt.toMillis() : null;
-      if (expiresAtMs !== null && expiresAtMs <= now) return;
-      (linksByBuilding[data.buildingId] = linksByBuilding[data.buildingId] || []).push({ id: d.id, ...data, expiresAtMs });
-    });
 
     const enrollments = enrollmentsSnap.docs
       .map(d => ({ id: d.id, ...d.data() }))
@@ -5313,69 +5288,20 @@ try {
         tenants: tenantsSnap.docs
           .filter(t => t.data().active !== false)
           .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [], emails: t.data().emails || [] })),
-        links: linksByBuilding[d.id] || [],
       };
     }));
     enrolledBuildingsCache = buildings;
     refreshEnrolledBuildingsView();
-    refreshDistributionView();
   }
 
   function isEnrolledBuildingExpanded(b){
     return expandedEnrolledBuildingIds.has(b.id) || editingItemsBuildingId === b.id;
   }
 
-  // Tenant-scoped and/or time-limited alternative to the plain whole-building link above —
-  // two independent, optional choices (lock to one tenant, and/or set an expiry), not a
-  // package deal, per the multi-program plan. Generating always creates a new links doc;
-  // "Revoke" is a soft edit (expiresAt set to now), never a delete, so a revoked link's record
-  // stays fully inspectable.
-  function renderDistributionLinksHtml(b){
-    const activeLinksHtml = b.links.length
-      ? b.links.map(l => {
-          const linkUrl = `${pageBaseUrl()}${currentProgram().file}?l=${l.id}`;
-          const tenant = l.tenantId ? b.tenants.find(t => t.id === l.tenantId) : null;
-          const scopeText = tenant ? esc(tenant.name) : 'Whole building';
-          const expiryText = l.expiresAtMs ? `expires ${new Date(l.expiresAtMs).toLocaleDateString('en-GB')}` : 'no expiry';
-          const emailsCsv = tenant?.emails?.length ? tenant.emails.join(';') : '';
-          return `
-            <li data-link-id="${esc(l.id)}">
-              <span class="tenant-name">${scopeText} — <span class="block-sub">${expiryText}</span></span>
-              <button class="btn secondary copy-link-btn" data-link="${linkUrl}">Copy link →</button>
-              ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-subject="${esc(`${currentProgram().name} — ${b.name}`)}" data-body="${esc(`Hi,\n\nHere's the induction link for ${b.name}:\n${linkUrl}\n\nThanks.`)}">Send via email →</button>
-              <button class="btn secondary copy-link-btn" data-link="${esc(tenant.emails.join('; '))}">Copy addresses →</button>` : ''}
-              <button class="btn secondary revoke-link-btn danger-btn">Revoke</button>
-            </li>`;
-        }).join('')
-      : '<li class="block-sub">No tenant-scoped or expiring links generated yet.</li>';
-    return `
-      <div class="report-block generate-link-block">
-        <p class="generate-link-title"><strong>Generate a distribution link</strong></p>
-        <p class="block-sub">Lock it to one tenant and/or give it an expiry — leave either at its default to skip that restriction.</p>
-        <div class="filter-row">
-          <label class="filter-field"><span>Tenant</span>
-            <select class="new-link-tenant">
-              <option value="">Whole building (no tenant lock)</option>
-              ${b.tenants.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="filter-field"><span>Expires</span>
-            <select class="new-link-expiry">
-              <option value="">Never</option>
-              <option value="1">In 1 day</option>
-              <option value="7">In 7 days</option>
-              <option value="30">In 30 days</option>
-            </select>
-          </label>
-        </div>
-        <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
-          <button class="btn secondary generate-link-btn">+ Generate link</button>
-        </div>
-        <p class="block-sub generate-link-status" style="margin-top:8px;"></p>
-        <ul class="tenant-list">${activeLinksHtml}</ul>
-      </div>
-    `;
-  }
+  // renderDistributionLinksHtml/renderDistributionList/renderQrCode (tenant-scoped/expiring
+  // link generation) now live entirely in admin-distribution.html (Workstream 2, Phase 4 of the
+  // architecture roadmap). renderQrInto (below, near the old renderQrCode) stayed here — the
+  // Reports tab's own "Demo" panel needs it too, so it's shared, not Distribution-only.
 
   // renderBuildingsList (⚙ Edificios building/tenant CRUD) now lives entirely in
   // admin-buildings.html (Workstream 2, Phase 2 of the architecture roadmap).
@@ -5448,45 +5374,16 @@ try {
       </div>`;
   }
 
-  // Distribution: real links only (whole-building + tenant-scoped/expiring) for buildings
-  // already enrolled in the selected program. No tenant CRUD, no content configuration — just
-  // getting a link out the door.
-  function renderDistributionList(buildings){
-    const container = document.getElementById('distributionList');
-    if (buildings.length === 0){
-      container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet — enrol one in Enrolled Buildings first.</p>';
-      return;
-    }
-    container.innerHTML = buildings.map(b => {
-      const link = `${pageBaseUrl()}${currentProgram().file}?b=${b.id}`;
-      return `
-      <div class="report-block distribution-building-row" data-building-id="${b.id}">
-        <h3>${esc(b.name)}</h3>
-        <div class="building-link-row">
-          <code class="building-link-text">${link}</code>
-          <button class="btn secondary copy-link-btn" data-link="${link}">Copy link →</button>
-          <button class="btn secondary preview-link-btn" data-link="${link}">Preview →</button>
-        </div>
-        <div class="building-qr" data-link="${link}"></div>
-        ${renderDistributionLinksHtml(b)}
-      </div>
-    `;
-    }).join('');
-
-    buildings.forEach(b => {
-      renderQrCode(b.id, `${pageBaseUrl()}${currentProgram().file}?b=${b.id}`);
-    });
-  }
-
+  // Shared with admin-distribution.html's own copy — renders a QR code SVG for any link into
+  // any container. Distribution's own renderQrCode(buildingId, link) wrapper moved there with
+  // the rest of Distribution (Workstream 2, Phase 4); this generic helper stayed because the
+  // Reports tab's "Demo" panel (refreshDemoLink(), below) still needs it.
   function renderQrInto(container, link){
     if (!container || typeof qrcode !== 'function') return;
     const qr = qrcode(0, 'M');
     qr.addData(link);
     qr.make();
     container.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2 });
-  }
-  function renderQrCode(buildingId, link){
-    renderQrInto(document.querySelector(`#distributionList [data-building-id="${buildingId}"] .building-qr`), link);
   }
 
   // groupTenantsFromRows / renderImportReview / parseContactsFromRows / renderContactsImportReview
@@ -5594,29 +5491,9 @@ try {
       return;
     }
 
-    // Calls the sendInductionEmail Cloud Function (Microsoft Graph, application permissions —
-    // see the plan) — not deployable until Blaze + the Entra ID app + its secrets are in place.
-    // "Copy addresses →" right next to this button is the manual fallback for meanwhile, or for
-    // whenever the automated send fails.
-    const sendEmailBtn = e.target.closest('.send-email-btn');
-    if (sendEmailBtn){
-      const original = sendEmailBtn.textContent;
-      sendEmailBtn.disabled = true;
-      sendEmailBtn.textContent = 'Sending…';
-      try {
-        const to = sendEmailBtn.dataset.emails.split(';').filter(Boolean);
-        const sendInductionEmail = httpsCallable(functions, 'sendInductionEmail');
-        await sendInductionEmail({ to, subject: sendEmailBtn.dataset.subject, text: sendEmailBtn.dataset.body });
-        sendEmailBtn.textContent = 'Sent ✓';
-        setTimeout(() => { sendEmailBtn.textContent = original; sendEmailBtn.disabled = false; }, 2500);
-      } catch (err){
-        console.error('sendInductionEmail failed:', err);
-        alert('Could not send automatically — use "Copy addresses" and send it yourself instead.');
-        sendEmailBtn.textContent = original;
-        sendEmailBtn.disabled = false;
-      }
-      return;
-    }
+    // .send-email-btn (sendInductionEmail Cloud Function) now lives entirely in
+    // admin-distribution.html (Workstream 2, Phase 4 of the architecture roadmap) — nothing
+    // left in this file renders that button.
   });
 
   // ⚙ Edificios (master) building/tenant CRUD now lives entirely in admin-buildings.html
@@ -5779,51 +5656,9 @@ try {
     }
   });
 
-  // ---------------- Distribution: real links only ----------------
-  document.getElementById('distributionList').addEventListener('click', async (e) => {
-    const generateLinkBtn = e.target.closest('.generate-link-btn');
-    if (generateLinkBtn){
-      const block = generateLinkBtn.closest('.generate-link-block');
-      const row = generateLinkBtn.closest('.distribution-building-row');
-      const buildingId = row.dataset.buildingId;
-      const tenantId = block.querySelector('.new-link-tenant').value || null;
-      const expiryDays = block.querySelector('.new-link-expiry').value;
-      const status = block.querySelector('.generate-link-status');
-      status.textContent = 'Generating…';
-      try {
-        const linkId = crypto.randomUUID();
-        const linkDoc = { programId: currentProgramId, buildingId, tenantId, createdAt: serverTimestamp() };
-        if (expiryDays) linkDoc.expiresAt = new Date(Date.now() + Number(expiryDays) * 24 * 60 * 60 * 1000);
-        await setDoc(doc(db, 'links', linkId), linkDoc);
-        status.textContent = 'Link generated.';
-        await loadEnrolledData();
-      } catch (err){
-        console.error('Failed to generate link:', err);
-        status.textContent = 'Failed to generate — check the console for details.';
-      }
-      return;
-    }
-
-    const revokeLinkBtn = e.target.closest('.revoke-link-btn');
-    if (revokeLinkBtn){
-      const linkId = revokeLinkBtn.closest('li').dataset.linkId;
-      const confirmed = confirm(
-        `Revoke this link?\n\n` +
-        `Anyone holding this exact link loses access right away. This can't be undone on this ` +
-        `same link, though you can generate a new one immediately.`
-      );
-      if (!confirmed) return;
-      try {
-        await updateDoc(doc(db, 'links', linkId), { expiresAt: new Date() });
-        await loadEnrolledData();
-      } catch (err){
-        console.error('Failed to revoke link:', err);
-        alert('Failed to revoke — check the console for details.');
-      }
-      return;
-    }
-
-  });
+  // Distribution's #distributionList click handler (generate-link-btn/revoke-link-btn) now
+  // lives entirely in admin-distribution.html (Workstream 2, Phase 4 of the architecture
+  // roadmap).
 
   // Buildings' own tenant-levels editor + bulk Excel import now live entirely in
   // admin-buildings.html (Workstream 2, Phase 2 of the architecture roadmap).
@@ -5861,15 +5696,14 @@ try {
     }
   });
 
-  // Three possible sections, one visible at a time — showTab() is the single place that knows
-  // how to switch between any of them. All three (Reports/Enrolled Buildings/Distribution) are
-  // scoped to whichever induction is selected above (only reachable once one is). Buildings/
-  // Admins/Catalog now live on their own pages (Workstream 2 of the architecture roadmap) — this
-  // file never shows them, so ALL_TABS/showTab no longer need an unscoped mode at all.
+  // Two possible sections, one visible at a time — showTab() is the single place that knows how
+  // to switch between them. Both are scoped to whichever induction is selected above (only
+  // reachable once one is). Buildings/Admins/Catalog live on their own pages (Workstream 2 of the
+  // architecture roadmap); Distribution does too now (Workstream 2 Phase 4) — this file never
+  // shows any of them, so ALL_TABS/showTab no longer need an unscoped mode at all.
   const ALL_TABS = {
     reports: { btn: 'tabReportsBtn', section: 'reportSection' },
     enrolledBuildings: { btn: 'tabEnrolledBuildingsBtn', section: 'enrolledBuildingsSection' },
-    distribution: { btn: 'tabDistributionBtn', section: 'distributionSection' },
   };
   const REPORTS_HEADER = {
     eyebrow: 'Recycling Training · Client Report',
@@ -5896,7 +5730,14 @@ try {
   }
   document.getElementById('tabReportsBtn').addEventListener('click', () => showTab('reports'));
   document.getElementById('tabEnrolledBuildingsBtn').addEventListener('click', () => showTab('enrolledBuildings'));
-  document.getElementById('tabDistributionBtn').addEventListener('click', () => showTab('distribution'));
+
+  // Distribution now lives on its own page (admin-distribution.html, Workstream 2 Phase 4 of the
+  // architecture roadmap) — unlike Buildings/Admins/Catalog it's program-scoped, so the link
+  // carries whichever induction is currently selected as ?program=.
+  document.getElementById('tabDistributionBtn').addEventListener('click', () => {
+    const emulatorSuffix = new URLSearchParams(window.location.search).get('emulator') === '1' ? '&emulator=1' : '';
+    window.location.href = `admin-distribution.html?program=${encodeURIComponent(currentProgramId)}${emulatorSuffix}`;
+  });
 
   // Buildings now lives on its own page (admin-buildings.html, Workstream 2 Phase 2 of the
   // architecture roadmap) — the ⚙ shortcut jumps straight there, the same first destination it
@@ -5996,7 +5837,7 @@ try {
   document.getElementById('signOutBtn').addEventListener('click', () => { if (auth) signOut(auth); });
 
   if (auth){
-    onAuthStateChanged(auth, (user) => {
+    onAuthStateChanged(auth, async (user) => {
       document.getElementById('signInBtn').style.display = user ? 'none' : 'inline-flex';
       document.getElementById('signOutBtn').style.display = user ? 'inline-flex' : 'none';
       document.getElementById('settingsBtn').style.display = user ? 'inline-flex' : 'none';
@@ -6012,7 +5853,16 @@ try {
         // what?"). programSelector starts on its own disabled placeholder; nothing below it
         // renders until the change handler fires with a real selection.
         document.getElementById('programSelectorRow').style.display = 'flex';
-        refreshProgramSelector();
+        await refreshProgramSelector();
+        // Lets admin-distribution.html's "← Back to reports" link (Workstream 2 Phase 4 of the
+        // architecture roadmap) land back on the same induction instead of the neutral "nothing
+        // shown yet" state — an explicit, URL-carried choice, not a silent guessed default.
+        const requestedProgramId = new URLSearchParams(window.location.search).get('program');
+        const select = document.getElementById('programSelector');
+        if (requestedProgramId && [...select.options].some(o => o.value === requestedProgramId)){
+          select.value = requestedProgramId;
+          select.dispatchEvent(new Event('change'));
+        }
       }
       else {
         // Real names/emails/scores were on screen the moment before this — signing out has to
@@ -6048,8 +5898,6 @@ try {
         document.getElementById('enrollBuildingSelect').innerHTML = '<option value="">Select a building…</option>';
         enrolledBuildingsCache = [];
         allBuildingsCache = [];
-        document.getElementById('distributionSection').style.display = 'none';
-        document.getElementById('distributionList').innerHTML = '';
         document.getElementById('reportSection').style.display = 'none';
         document.getElementById('kpiRow').innerHTML = '';
         document.getElementById('completedTable').innerHTML = '';
@@ -6063,7 +5911,6 @@ try {
         // reintroducing the exact post-sign-out data-visibility bug fixed earlier this project.
         document.getElementById('tabReportsBtn').classList.add('active');
         document.getElementById('tabEnrolledBuildingsBtn').classList.remove('active');
-        document.getElementById('tabDistributionBtn').classList.remove('active');
       }
     });
   }

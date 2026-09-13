@@ -1,11 +1,13 @@
-// Verifies per-program scoping in outputs/sorting-station-report.html — Enrolled Buildings and
-// Distribution both filter strictly by whichever induction is selected in the top program
-// selector (part of the multi-program plan, see
-// C:\Users\smolina\.claude\plans\serene-dreaming-puppy.md). Registering/archiving inductions
-// itself moved to its own page (outputs/admin-catalog.html, Workstream 2 Phase 3 of the
-// architecture roadmap, see C:\Users\smolina\.claude\plans\graceful-roaming-shell.md) and is
-// covered end-to-end in tests/admin-catalog-page.test.js — this file seeds a program directly
-// via Firestore instead of driving that now-separate page's UI. Run: npm run test:catalog-admin
+// Verifies per-program scoping in outputs/sorting-station-report.html — Enrolled Buildings
+// filters strictly by whichever induction is selected in the top program selector (part of the
+// multi-program plan, see C:\Users\smolina\.claude\plans\serene-dreaming-puppy.md), and the
+// Distribution tab's cross-page handoff (Workstream 2 Phase 4) carries a non-default induction
+// correctly too. Registering/archiving inductions moved to its own page
+// (outputs/admin-catalog.html, Workstream 2 Phase 3 of the architecture roadmap, see
+// C:\Users\smolina\.claude\plans\graceful-roaming-shell.md) and is covered end-to-end in
+// tests/admin-catalog-page.test.js; Distribution's own UI moved to admin-distribution.html and
+// is covered end-to-end in tests/admin-distribution-page.test.js — this file seeds a program
+// directly via Firestore instead of driving either separate page's UI. Run: npm run test:catalog-admin
 const path = require('path');
 const url = require('url');
 const fs = require('fs');
@@ -187,34 +189,33 @@ async function runFlow(page){
   enrolledNames = await page.$$eval('.enrolled-building-row h3', els => els.map(el => el.textContent));
   check('after enrolling, the building now appears under Organics Focus too', enrolledNames.includes(buildingName), enrolledNames.join('|'));
 
-  // --- Distribution: same enrolled set, but the whole-building link/QR/generate-link UI ---
-  await page.click('#tabDistributionBtn');
-  await new Promise(r => setTimeout(r, 300));
-  const distributionSelector = `.distribution-building-row[data-building-id="${buildingId}"]`;
-  check('the enrolled building appears under Distribution for Organics Focus', Boolean(await page.$(distributionSelector)));
+  // --- Distribution now lives on its own page (admin-distribution.html, Workstream 2 Phase 4)
+  // — prove the tab's handoff carries the CORRECT non-default induction (Organics, not
+  // Recycling Sorting); tests/admin-buildings.test.js already proves the same handoff for the
+  // default program, and tests/admin-distribution-page.test.js covers the page's own UI
+  // (whole-building link/QR/generate/revoke) end-to-end. ---
+  await Promise.all([page.waitForNavigation(), page.click('#tabDistributionBtn')]);
+  check('the Distribution tab navigates to its own page, carrying the non-default induction too',
+    page.url().includes('admin-distribution.html') && page.url().includes(`program=${programId}`),
+    page.url());
 
-  const orgLinkText = await page.$eval(`${distributionSelector} .building-link-text`, el => el.textContent);
-  check('the link generated under Organics Focus points at organics-training.html, not the recycling page',
-    orgLinkText.includes('organics-training.html?b='), orgLinkText);
-
-  // --- Generate/revoke a tenant-scoped, time-limited distribution link (multi-program plan) ---
-  await page.select(`${distributionSelector} .new-link-expiry`, '7');
-  await page.click(`${distributionSelector} .generate-link-btn`);
-  await new Promise(r => setTimeout(r, 600));
-
-  let linksListText = await page.$eval(`${distributionSelector} .generate-link-block .tenant-list`, el => el.textContent);
-  check('a generated link appears in the active-links list, scoped "Whole building"',
-    linksListText.includes('Whole building') && linksListText.includes('expires'), linksListText);
-
-  const genLinkUrl = await page.$eval(`${distributionSelector} .generate-link-block .copy-link-btn`, el => el.dataset.link);
-  check('the generated link URL uses the ?l= token form, points at the right program file',
-    genLinkUrl.includes('organics-training.html?l='), genLinkUrl);
-
-  await page.click(`${distributionSelector} .revoke-link-btn`);
-  await new Promise(r => setTimeout(r, 600));
-  linksListText = await page.$eval(`${distributionSelector} .generate-link-block .tenant-list`, el => el.textContent);
-  check('after revoking, the link no longer appears in the active-links list',
-    !linksListText.includes('Whole building'), linksListText);
+  // Back to Reports to continue the enrollment-removal check below — session persists
+  // (Firebase Auth), but re-select Organics to get its Enrolled Buildings list back on screen.
+  await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => getComputedStyle(document.getElementById('settingsBtn')).display !== 'none',
+    { timeout: 10000 }
+  );
+  // The confirm() stub set earlier doesn't survive a fresh page.goto() — this is a genuinely
+  // new JS context, not the same page — so it needs reapplying before removeEnrollmentBtn
+  // (below) triggers its own confirm() dialog.
+  await page.evaluate(() => { window.confirm = () => true; });
+  await selectProgram(page, programId);
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('.enrolled-building-row h3')].some(el => el.textContent === name),
+    { timeout: 10000 },
+    buildingName
+  );
 
   // --- Remove the Organics Focus enrollment; the building's OTHER enrollment must be untouched ---
   await page.click('#tabEnrolledBuildingsBtn');

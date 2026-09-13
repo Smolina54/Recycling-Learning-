@@ -62,8 +62,15 @@ function computeUpdatedReport(){
   // freshly-written block's LF into CRLF — which then looks "out of sync" again the next time
   // this runs, even though not a single byte of catalog data actually changed. Match whatever
   // convention already surrounds the markers instead of assuming LF.
+  // Real bug fixed here: recycling-training.html (the source of each item's `icon` SVG text) is
+  // itself CRLF on disk, so the icon strings captured by ITEM_PATTERN already carry embedded
+  // \r\n internally — a blind `.replace(/\n/g, '\r\n')` then doubled every one of those into
+  // \r\r\n (only the icon-internal newlines; a plain \n between items converted correctly).
+  // Collapsing to \n first, unconditionally, makes the CRLF conversion below idempotent
+  // regardless of which line-ending convention recycling-training.html happens to use.
+  const rawBlock = buildCatalogBlock(catalog).replace(/\r\n/g, '\n');
   const usesCRLF = before.includes('\r\n');
-  const catalogBlock = usesCRLF ? buildCatalogBlock(catalog).replace(/\n/g, '\r\n') : buildCatalogBlock(catalog);
+  const catalogBlock = usesCRLF ? rawBlock.replace(/\n/g, '\r\n') : rawBlock;
   return { reportHtml, updated: before + catalogBlock + after, catalogCount: catalog.length };
 }
 

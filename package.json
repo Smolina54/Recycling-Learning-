@@ -13,6 +13,7 @@
     "test:admin-buildings-page": "firebase emulators:exec --only firestore,auth \"node tests/admin-buildings-page.test.js\"",
     "test:catalog-admin": "firebase emulators:exec --only firestore,auth \"node tests/admin-catalog.test.js\"",
     "test:admin-catalog-page": "firebase emulators:exec --only firestore,auth \"node tests/admin-catalog-page.test.js\"",
+    "test:admin-distribution-page": "firebase emulators:exec --only firestore,auth \"node tests/admin-distribution-page.test.js\"",
     "test:organics": "firebase emulators:exec --only firestore \"node tests/organics-training.test.js\"",
     "test:battery": "firebase emulators:exec --only firestore \"node tests/battery-training.test.js\"",
     "test:links": "firebase emulators:exec --only firestore \"node tests/distribution-links.test.js\"",

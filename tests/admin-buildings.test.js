@@ -1,12 +1,14 @@
 // Signs in as the allowlisted reviewer (via the emulator-only test sign-in hook, not a real
 // Google popup) and exercises sorting-station-report.html's remaining program-scoped areas:
-// Reports, Enrolled Buildings (Configure streams + the tenant-enable checklist), and
-// Distribution (whole-building link/QR + tenant-scoped links) — plus sign-in/out and
-// email/password auth. Master Edificios (building/tenant CRUD) moved to its own page
-// (outputs/admin-buildings.html, Workstream 2 Phase 2 of the architecture roadmap,
-// C:\Users\smolina\.claude\plans\graceful-roaming-shell.md) and has its own test,
-// tests/admin-buildings-page.test.js — the building/tenants this file needs are seeded
-// directly (seedTestBuilding below) instead of created through that now-separate UI.
+// Reports and Enrolled Buildings (Configure streams + the tenant-enable checklist) — plus
+// sign-in/out and email/password auth. Master Edificios (building/tenant CRUD) and Distribution
+// (whole-building link/QR + tenant-scoped links) each moved to their own page
+// (outputs/admin-buildings.html and outputs/admin-distribution.html, Workstream 2 Phases 2 and 4
+// of the architecture roadmap, C:\Users\smolina\.claude\plans\graceful-roaming-shell.md) and
+// have their own tests (tests/admin-buildings-page.test.js, tests/admin-distribution-page.test.js)
+// — the building/tenants this file needs are seeded directly (seedTestBuilding below) instead of
+// created through that now-separate UI; this file only proves the Distribution tab's handoff
+// (that clicking it navigates to admin-distribution.html carrying the right induction).
 // Run: npm run test:admin
 const path = require('path');
 const url = require('url');
@@ -531,117 +533,39 @@ async function runFlow(page, seedEnv, consoleErrors){
   check('re-checking every tenant saves enabledTenantIds back to null (the clean "no restriction" default), not a redundant full array',
     enrollmentAfterReenable.enabledTenantIds === null, JSON.stringify(enrollmentAfterReenable.enabledTenantIds));
 
-  // --- Distribution (per-program): whole-building link/QR/copy + tenant-scoped/expiring links ---
-  await page.click('#tabDistributionBtn');
-  await new Promise(r => setTimeout(r, 200));
-  check('Distribution tab becomes visible on click',
-    await page.$eval('#distributionSection', el => getComputedStyle(el).display !== 'none'));
-  check('Enrolled Buildings section hides when Distribution tab is active',
-    await page.$eval('#enrolledBuildingsSection', el => getComputedStyle(el).display === 'none'));
+  // --- Distribution now lives on its own page (admin-distribution.html, Workstream 2 Phase 4
+  // of the architecture roadmap) — reached via a real cross-page navigation that carries
+  // whichever induction is currently selected as ?program=. Its own UI (whole-building
+  // link/QR/copy/preview, tenant-scoped/expiring links, send-email) is covered end-to-end in
+  // tests/admin-distribution-page.test.js; this file only proves the handoff itself. ---
+  await Promise.all([page.waitForNavigation(), page.click('#tabDistributionBtn')]);
+  check('the Distribution tab navigates to its own page, carrying the selected induction',
+    page.url().includes('admin-distribution.html') && page.url().includes('program=recycling-sorting'),
+    page.url());
 
-  const distributionSelector = `.distribution-building-row[data-building-id="${buildingId}"]`;
-  check('the building appears in Distribution too (same enrolled set as Enrolled Buildings)',
-    Boolean(await page.$(distributionSelector)));
-
-  const linkText = await page.$eval(`${distributionSelector} .building-link-text`, el => el.textContent);
-  check('the whole-building link contains the real buildingId and points at the training page',
-    linkText.includes('recycling-training.html?b=' + buildingId), linkText);
-
-  const qrSvg = await page.$eval(`${distributionSelector} .building-qr svg`, el => el.outerHTML).catch(() => null);
-  check('QR code renders as a real SVG with content', Boolean(qrSvg) && qrSvg.length > 100, qrSvg ? qrSvg.length : 'none');
-
-  // Preview button (shared document-level listener, same one Enrolled Buildings uses).
-  await page.evaluate(() => { window.__openedUrls = []; });
-  await page.click(`${distributionSelector} .preview-link-btn`);
-  previewUrls = await page.evaluate(() => window.__openedUrls);
-  check('Distribution\'s Preview button (the same shared click listener) also opens the link with &preview=1 appended',
-    previewUrls.length === 1 && previewUrls[0] === `${linkText}&preview=1`, previewUrls.join(', '));
-
-  let clipboardGrantable = true;
-  try { await page.browserContext().overridePermissions(REPORT_URL, ['clipboard-write', 'clipboard-read']); }
-  catch (err) { clipboardGrantable = false; }
-
-  const copyBtn = await page.$(`${distributionSelector} .copy-link-btn`);
-  await copyBtn.click();
-  await new Promise(r => setTimeout(r, 300));
-
-  // Headless/file:// Chrome frequently denies clipboard access even after overridePermissions()
-  // succeeds — that's an environment quirk, not something the app controls. So: try to verify
-  // the real copy worked, but treat the app's own graceful-fallback (a friendly alert instead of
-  // a crash) as an equally valid pass, rather than failing the whole suite over a sandbox limit.
-  const clipboardText = clipboardGrantable
-    ? await page.evaluate(() => navigator.clipboard.readText()).catch(() => null)
-    : null;
-  if (clipboardText === linkText){
-    check('copy-link button actually copied the exact link to the clipboard', true, clipboardText);
-  } else {
-    const copyBtnText = await copyBtn.evaluate(el => el.textContent);
-    check('clipboard unavailable in this sandbox, but the app degraded gracefully (friendly alert, no crash) instead of copying',
-      copyBtnText.includes('Copied') || copyBtnText.includes('Copy link'), copyBtnText);
-  }
-
-  // Editing Widgetco's email, and the bulk contacts export/import round-trip, are Buildings/
-  // Edificios' own UI now (already seeded above with their final emails) — covered end-to-end
-  // in tests/admin-buildings-page.test.js. Still on the Distribution tab from the whole-building
-  // link checks above — go straight to the tenant-scoped links below.
-  const widgetcoId = tenantIds.widgetco;
-  const acmeLegalId = tenantIds.acmeLegal;
-
-  // --- Send via email / Copy addresses on tenant-scoped Distribution links (Northwind
-  // Consulting stays untouched/email-less throughout this whole flow, so it's the reliable
-  // "no email -> no buttons" case here — Acme Legal already has emails from the seed above). ---
-  async function generateTenantLink(tenantId){
-    await page.select(`${distributionSelector} .new-link-tenant`, tenantId);
-    await page.click(`${distributionSelector} .generate-link-btn`);
-    await new Promise(r => setTimeout(r, 500));
-  }
-
-  await generateTenantLink(widgetcoId);
-  const widgetcoLinkLi = await page.evaluateHandle((sel) => {
-    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Widgetco'));
-  }, distributionSelector).then(h => h.asElement());
-  const widgetcoCopyBtns = await widgetcoLinkLi.$$('.copy-link-btn'); // [0] is "Copy link", [1] is "Copy addresses"
-  check('a tenant-scoped link for a tenant WITH a saved email shows "Send via email" and "Copy addresses"',
-    Boolean(await widgetcoLinkLi.$('.send-email-btn')) && widgetcoCopyBtns.length === 2,
-    await widgetcoLinkLi.evaluate(el => el.textContent));
-  const copyAddressesBtn = widgetcoCopyBtns[1];
-  const copyAddressesDataLink = await copyAddressesBtn.evaluate(el => el.dataset.link);
-  check('the "Copy addresses" button carries the tenant\'s actual saved email in its data-link',
-    copyAddressesDataLink === 'widgetco-contact@example.com', copyAddressesDataLink);
-
-  const northwindId = tenantIds.northwindConsulting;
-  await generateTenantLink(northwindId);
-  const northwindLinkLi = await page.evaluateHandle((sel) => {
-    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Northwind Consulting'));
-  }, distributionSelector).then(h => h.asElement());
-  check('a tenant-scoped link for a tenant with NO saved email shows neither button',
-    !(await northwindLinkLi.$('.send-email-btn')) && (await northwindLinkLi.$$('.copy-link-btn')).length === 1,
-    await northwindLinkLi.evaluate(el => el.textContent));
-
-  const wholeBuildingRowText = await page.$eval(`${distributionSelector} .building-link-row`, el => el.textContent);
-  check('the whole-building link row (no single tenant to address) never shows "Send via email"',
-    !wholeBuildingRowText.includes('Send via email'), wholeBuildingRowText);
-
-  // The Cloud Function isn't deployed yet (needs Blaze + the Entra ID app — see the plan), so
-  // clicking "Send via email" right now MUST fail gracefully: try, fail, tell the admin to use
-  // "Copy addresses" instead, and leave the button clickable again — never a crash or a stuck
-  // "Sending…" state.
-  // Re-query fresh — generating the Northwind link just above re-rendered #distributionList's
-  // innerHTML, detaching the earlier widgetcoLinkLi/its children from the live document.
-  const alertCountBeforeSend = await page.evaluate(() => window.__alertCalls.length);
-  const widgetcoLinkLiFresh = await page.evaluateHandle((sel) => {
-    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Widgetco'));
-  }, distributionSelector).then(h => h.asElement());
-  const sendBtn = await widgetcoLinkLiFresh.$('.send-email-btn');
-  await sendBtn.click();
-  await new Promise(r => setTimeout(r, 1500));
-  const alertsAfterSend = await page.evaluate((n) => window.__alertCalls.slice(n), alertCountBeforeSend);
-  check('clicking "Send via email" before the Cloud Function is deployed fails gracefully with a clear alert',
-    alertsAfterSend.some(a => a.includes('Copy addresses')), JSON.stringify(alertsAfterSend));
-  const sendBtnTextAfterFailure = await sendBtn.evaluate(el => el.textContent);
-  const sendBtnDisabledAfterFailure = await sendBtn.evaluate(el => el.disabled);
-  check('the "Send via email" button resets to its original label and stays usable after a failed send',
-    sendBtnTextAfterFailure.includes('Send via email') && !sendBtnDisabledAfterFailure, sendBtnTextAfterFailure);
+  // Back to Reports to continue the sign-out/email-auth checks below — session persists
+  // (Firebase Auth), but re-select the induction to get real data back on screen before
+  // proving sign-out actually clears it.
+  await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => getComputedStyle(document.getElementById('settingsBtn')).display !== 'none',
+    { timeout: 10000 }
+  );
+  await selectProgram(page, 'recycling-sorting');
+  await page.waitForFunction(
+    () => document.querySelector('#pendingTable tr') !== null,
+    { timeout: 10000 }
+  );
+  // loadLiveData() awaits loadEnrolledData() AFTER rendering Reports — #pendingTable having a
+  // row doesn't mean Enrolled Buildings has finished its own (separate) fetch yet. Without this
+  // wait, signing out below can race that still-in-flight fetch: it resolves and repopulates
+  // #enrolledBuildingsList right after sign-out's own reset already cleared it, making the
+  // "signing out clears..." check below flaky.
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('.enrolled-building-row h3')].some(el => el.textContent === name),
+    { timeout: 10000 },
+    buildingName
+  );
 
   // Building rename/soft-delete (and confirming a deleted building's real link shows the
   // invalid-link fallback) are Buildings/Edificios' own concerns now — covered end-to-end in
@@ -666,9 +590,8 @@ async function runFlow(page, seedEnv, consoleErrors){
   check('signing out clears and hides the "Viewing: …" badge',
     await page.$eval('#viewingBadge', el => getComputedStyle(el).display === 'none' && el.textContent === ''));
   const enrolledListEmptyAfterSignOut = await page.$eval('#enrolledBuildingsList', el => el.innerHTML.trim() === '');
-  const distributionListEmptyAfterSignOut = await page.$eval('#distributionList', el => el.innerHTML.trim() === '');
-  check('signing out clears Enrolled Buildings\' and Distribution\'s cached lists, not just hides their tabs',
-    enrolledListEmptyAfterSignOut && distributionListEmptyAfterSignOut);
+  check('signing out clears Enrolled Buildings\' cached list, not just hides its tab',
+    enrolledListEmptyAfterSignOut);
 
   // --- Email/Password sign-in: Firebase's own auth, no external Google/Microsoft account needed ---
   const emailAdmin = 'email-login-admin@example.com';
