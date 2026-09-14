@@ -2378,14 +2378,26 @@ var qrcode = function() {
   .upload-zone p{color:var(--ink-soft); font-size:14.5px; margin:0 0 18px;}
   .upload-actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap;}
 
-  .admin-tabs{display:flex; gap:4px; align-items:flex-start; border-bottom:1.5px solid var(--line); margin-bottom:28px;}
+  .admin-tabs{display:flex; gap:6px; align-items:flex-end; border-bottom:1.5px solid var(--line); margin-bottom:28px; padding-left:2px;}
+  /* Folder-tab look: each tab is its own shaded "card" sitting behind the row, and the ACTIVE
+     one lifts forward to the page's own background color with its bottom border erased — reads
+     as physically connected to the content underneath instead of a separate flat button. */
   .tab-btn{
     font-family:var(--body); font-weight:600; font-size:14.5px; color:var(--ink-soft);
-    background:none; border:none; border-bottom:2.5px solid transparent; padding:10px 4px; margin-bottom:-1.5px;
-    cursor:pointer;
+    background:color-mix(in srgb, var(--paper), var(--ink) 9%);
+    border:1.5px solid var(--line); border-bottom:none; border-radius:8px 8px 0 0;
+    padding:10px 20px 9px; margin-bottom:-1.5px;
+    cursor:pointer; position:relative;
+    box-shadow:inset 0 -3px 6px -3px rgba(30,42,34,0.14);
+    transition:background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
   }
-  .tab-btn.active{color:var(--ink); border-bottom-color:var(--forest);}
-  .tab-btn:hover{color:var(--ink);}
+  .tab-btn:hover:not(.active){background:color-mix(in srgb, var(--paper), var(--ink) 4%); color:var(--ink);}
+  .tab-btn.active{
+    background:var(--paper); color:var(--ink);
+    border-top-color:var(--forest); border-top-width:2.5px;
+    border-bottom:1.5px solid var(--paper);
+    box-shadow:none; z-index:2;
+  }
   .tab-btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
 
   .corner-settings{
@@ -2756,10 +2768,14 @@ var qrcode = function() {
        outputs/admin-enrolled-buildings.html — kept separate on purpose, see the plan), each
        still fully openable standalone (every existing test does exactly that) — this iframe
        just navigates to them with &embedded=1, which tells that page to suppress its own
-       header/sign-in-zone/back-link so nothing looks doubled. No postMessage/auto-resize:
-       a plain fixed min-height with the iframe's own internal scroll, same as the rest of this
-       app's deliberate no-shared-JS-module, duplicate-per-page approach. -->
-  <iframe id="adminIframe" title="Induction admin content" style="display:none; width:100%; min-height:900px; border:0;"></iframe>
+       header/sign-in-zone/back-link so nothing looks doubled. Fixed height (not dynamic —
+       tried matching the real content height per tab/state, but real testing showed that made
+       the WHOLE page visibly jump size on every tab switch, which read as worse than a fixed
+       box with its own scroll). Sized from real measured content: Distribution's list ≈1160px,
+       Enrolled Buildings with one row expanded ≈1310px, both comfortable within this; only the
+       full "Configure streams" editor (53 items, ≈3630px) needs its own internal scroll here —
+       same as it already did as a full standalone page. -->
+  <iframe id="adminIframe" title="Induction admin content" style="display:none; width:100%; height:1300px; border:0;"></iframe>
 
   <section id="reportSection" style="display:none;">
     <!-- On-screen this is invisible (see .print-header) — it only exists so the printed/PDF
