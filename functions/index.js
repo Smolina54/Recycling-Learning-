@@ -26,6 +26,16 @@ const MAX_RECIPIENTS = 20;
 const MAX_SUBJECT_LENGTH = 300;
 const MAX_TEXT_LENGTH = 20000;
 
+// Per-admin rate limit: the auth check above stops an anonymous caller, but not a compromised/
+// careless admin account or a runaway client-side retry loop from blasting real emails through
+// the real mailbox. Counts CALLS (not recipients) in a fixed window per admin email. Sized
+// generously — confirmed with the admin panel's own code that "Send via email" has no bulk
+// option, only one call per tenant, so a building with 100+ tenants means 100+ real calls in
+// one working session; 200/15min comfortably covers that without interrupting a legitimate
+// bulk send, while still tripping well before a genuine abuse/loop scenario got anywhere close.
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const RATE_LIMIT_MAX_SENDS = 200;
+
 function isValidEmail(str) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(str || '').trim());
 }
@@ -56,6 +66,30 @@ function validatePayload(data) {
     throw new HttpsError('invalid-argument', `Message body must be ${MAX_TEXT_LENGTH} characters or fewer.`);
   }
   return { to, subject, text };
+}
+
+// Fixed-window counter, one doc per admin email — a Firestore transaction so two
+// near-simultaneous calls from the same admin can't both read a stale count and both slip
+// through. A missing doc or an expired window both take the same "start a fresh window" path.
+async function checkRateLimit(email) {
+  const ref = admin.firestore().doc(`emailRateLimits/${email}`);
+  await admin.firestore().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() : null;
+    const now = Date.now();
+    if (!data || now - data.windowStart > RATE_LIMIT_WINDOW_MS) {
+      tx.set(ref, { windowStart: now, count: 1 });
+      return;
+    }
+    if (data.count >= RATE_LIMIT_MAX_SENDS) {
+      throw new HttpsError(
+        'resource-exhausted',
+        `Too many induction emails sent recently — wait a few minutes and try again ` +
+          `(limit: ${RATE_LIMIT_MAX_SENDS} per ${RATE_LIMIT_WINDOW_MS / 60000} minutes).`
+      );
+    }
+    tx.update(ref, { count: data.count + 1 });
+  });
 }
 
 async function getGraphAccessToken() {
@@ -108,6 +142,7 @@ exports.sendInductionEmail = onCall(
   async (request) => {
     await assertIsAdmin(request.auth);
     const payload = validatePayload(request.data);
+    await checkRateLimit(request.auth.token.email);
     const accessToken = await getGraphAccessToken();
     await sendViaGraph(accessToken, payload);
     return { ok: true };

@@ -275,6 +275,15 @@ async function main(){
   await record('after revocation, the scoped client CANNOT read that submission anymore', () =>
     assertFails(getDoc(doc(scopedClient, 'submissions', scopedSubmissionId))));
 
+  // ---- sendInductionEmail's rate-limit counters (functions/index.js) — Admin-SDK-only ----
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'emailRateLimits', ALLOWED_EMAIL), { count: 1, windowStart: Date.now() });
+  });
+  await record('even the global admin CANNOT read their own /emailRateLimits counter via the client SDK (Admin-SDK-only, by design)', () =>
+    assertFails(getDoc(doc(allowedUser, 'emailRateLimits', ALLOWED_EMAIL))));
+  await record('a non-admin CANNOT write an /emailRateLimits counter to fake up their own quota', () =>
+    assertFails(setDoc(doc(otherUser, 'emailRateLimits', OTHER_EMAIL), { count: 0, windowStart: Date.now() })));
+
   await testEnv.cleanup();
 
   console.log('\n--- RESULTS ---');

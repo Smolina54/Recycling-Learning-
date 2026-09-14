@@ -85,6 +85,14 @@ service cloud.firestore {
       allow write: if isAllowedReviewer();
     }
 
+    // Per-admin rate-limit counters for sendInductionEmail (functions/index.js). Written only
+    // by that Cloud Function via the Admin SDK, which bypasses these rules entirely — denied
+    // outright here (not just left unmatched) so no client, admin included, can read or
+    // tamper with its own send count.
+    match /emailRateLimits/{email} {
+      allow read, write: if false;
+    }
+
     // Building + tenant catalog: readable by anyone with a link (needed to
     // populate the id-gate dropdowns), writable only by the admin panel's
     // signed-in reviewer (creating buildings/tenants, generating links).
