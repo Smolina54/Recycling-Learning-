@@ -2571,7 +2571,6 @@ var qrcode = function() {
   .missed-row{display:grid; grid-template-columns:22px 1fr 90px 50px; align-items:center; gap:12px; padding:10px 14px; background:var(--paper); border:1px solid var(--line);}
   .missed-rank{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
   .missed-name{font-size:14px; font-weight:600;}
-  .missed-name .stream-tag{font-family:var(--mono); font-size:10.5px; font-weight:400; color:var(--ink-soft); text-transform:uppercase; margin-left:6px;}
   .missed-bar-track{height:10px; background:var(--line); overflow:hidden;}
   .missed-bar-fill{height:100%; background:var(--gw);}
   .missed-pct{font-family:var(--mono); font-size:12.5px; text-align:right; color:var(--gw); font-weight:700;}
@@ -2703,7 +2702,7 @@ var qrcode = function() {
   <header class="top">
     <p class="eyebrow" id="pageEyebrow">Recycling Training · Client Report</p>
     <h1 id="pageHeadline">Recycling knowledge, by the numbers.</h1>
-    <p class="sub" id="pageSub">Sign in with an authorized account to see live results straight from Firestore — pass rates, weak streams, and the specific items people get wrong most often.</p>
+    <p class="sub" id="pageSub">Recycling Training is a short, interactive induction that teaches tenants how to sort waste correctly — this is the live report on how each building is doing. Sign in with an authorized account to get started.</p>
   </header>
 
   <!-- Fixed to the page (not the header block, not the tab row) — a page-level settings
@@ -2749,6 +2748,18 @@ var qrcode = function() {
     <button class="tab-btn" id="tabEnrolledBuildingsBtn">Enrolled Buildings →</button>
     <button class="tab-btn" id="tabDistributionBtn">Distribution →</button>
   </div>
+
+  <!-- Enrolled Buildings/Distribution render here, in place, instead of a full page navigation
+       away from this tab row — keeps the induction context (selector + badge, above) always
+       visible so it's never ambiguous which induction the admin is working in. Still two
+       physically separate files/pages under the hood (outputs/admin-distribution.html,
+       outputs/admin-enrolled-buildings.html — kept separate on purpose, see the plan), each
+       still fully openable standalone (every existing test does exactly that) — this iframe
+       just navigates to them with &embedded=1, which tells that page to suppress its own
+       header/sign-in-zone/back-link so nothing looks doubled. No postMessage/auto-resize:
+       a plain fixed min-height with the iframe's own internal scroll, same as the rest of this
+       app's deliberate no-shared-JS-module, duplicate-per-page approach. -->
+  <iframe id="adminIframe" title="Induction admin content" style="display:none; width:100%; min-height:900px; border:0;"></iframe>
 
   <section id="reportSection" style="display:none;">
     <!-- On-screen this is invisible (see .print-header) — it only exists so the printed/PDF
@@ -4215,15 +4226,12 @@ try {
   function submissionToRow(id, data){
     const breakdown = data.breakdown || {};
     const items = data.items || {};
-    let itemOverridesSnapshot = {};
-    try { itemOverridesSnapshot = JSON.parse(data.itemOverridesSnapshot || '{}'); } catch { itemOverridesSnapshot = {}; }
     const row = {
       _id: id,
       building: data.buildingName || '', tenant: data.tenantName || '', level: data.level || '',
       name: data.name || '', email: data.email || '', programId: data.programId || '',
       score: data.score, avoided: data.avoided, total: data.total,
       duration_seconds: data.duration_seconds, device_type: data.device_type,
-      _itemOverrides: itemOverridesSnapshot,
       timestamp: (data.timestamp && typeof data.timestamp.toDate === 'function') ? data.timestamp.toDate().toISOString() : (data.timestamp || null)
     };
     streams.forEach(s => {
@@ -4247,7 +4255,7 @@ try {
   function rowsToCSV(rows){
     if (!rows.length) return '';
     const cols = new Set();
-    rows.forEach(r => Object.keys(r).forEach(k => { if (k !== '_id' && k !== '_itemOverrides') cols.add(k); }));
+    rows.forEach(r => Object.keys(r).forEach(k => { if (k !== '_id') cols.add(k); }));
     const headers = [...cols];
     const escape = (v) => {
       if (v === undefined || v === null) return '';
@@ -4812,26 +4820,22 @@ try {
       </div>
     `).join('');
 
-    // Most commonly missed items. Labels each item by the stream it actually tested as in
-    // the most recent contributing submission (its itemOverridesSnapshot), not always the
-    // global catalog default — a building with a custom config would otherwise show the
-    // wrong bin here (e.g. still "Paper & Cardboard" for a building that redirected it to
-    // Mixed Recycling). Falls back to the catalog default when a row has no override for it.
+    // Most commonly missed items. Just the name and miss rate — used to show which stream the
+    // item currently resolves to (global default or a building's override), but that read as
+    // ambiguous (unclear whether it meant where the item was missed FROM or where it SHOULD go)
+    // and was dropped per Sergio's feedback.
     const itemAgg = Object.keys(catalog).map(id => {
       const col = 'item_' + id;
       const rowsWithItem = rows.filter(r => typeof r[col] === 'number' && !isNaN(r[col]));
       if (!rowsWithItem.length) return null;
       const missRate = Math.round((1 - rowsWithItem.reduce((a,r)=>a+r[col],0)/rowsWithItem.length) * 100);
-      const mostRecent = rowsWithItem.reduce((a,b) => (a.timestamp || '') > (b.timestamp || '') ? a : b);
-      const ov = mostRecent._itemOverrides && mostRecent._itemOverrides[id];
-      const stream = (ov && ov.stream) || catalog[id].stream;
-      return {id, missRate, name: catalog[id].name, stream};
+      return {id, missRate, name: catalog[id].name};
     }).filter(Boolean).sort((a,b) => b.missRate - a.missRate).slice(0, 8);
 
     document.getElementById('missedList').innerHTML = itemAgg.map((it, i) => `
       <div class="missed-row">
         <span class="missed-rank">${i+1}</span>
-        <span class="missed-name">${it.name}<span class="stream-tag">→ ${streamNames[it.stream]}</span></span>
+        <span class="missed-name">${it.name}</span>
         <div class="missed-bar-track"><div class="missed-bar-fill" style="width:${it.missRate}%;"></div></div>
         <span class="missed-pct">${it.missRate}%</span>
       </div>
@@ -5112,20 +5116,32 @@ try {
   // Buildings' own tenant-levels editor + bulk Excel import now live entirely in
   // admin-buildings.html (Workstream 2, Phase 2 of the architecture roadmap).
 
-  // Reports is the only section left in this file — Buildings/Admins/Catalog/Distribution/
-  // Enrolled Buildings all live on their own pages now (Workstream 2 of the architecture
-  // roadmap, all 6 phases complete). The old ALL_TABS/showTab(tabName) machinery existed to
-  // switch between multiple sections in-page; with exactly one section left, it collapsed down
-  // to this — #tabDistributionBtn/#tabEnrolledBuildingsBtn (below) are real cross-page
-  // navigations now, not in-page tab switches, so they never call this at all.
+  // Reports/Enrolled Buildings/Distribution behave as real in-page tabs — Enrolled
+  // Buildings/Distribution render in #adminIframe (see the HTML comment above it) instead of a
+  // full page navigation, so the tab row + induction selector/badge above never disappear and
+  // the admin never loses track of which induction they're working in. Buildings/Admins/Catalog
+  // (behind ⚙) are unaffected — those stay real navigations, out of scope for this.
   const REPORTS_HEADER = {
     eyebrow: 'Recycling Training · Client Report',
     headline: 'Recycling knowledge, by the numbers.',
-    sub: 'Sign in with an authorized account to see live results straight from Firestore — pass rates, weak streams, and the specific items people get wrong most often.',
+    sub: 'Recycling Training is a short, interactive induction that teaches tenants how to sort waste correctly — this is the live report on how each building is doing. Sign in with an authorized account to get started.',
   };
 
+  let activeTab = 'reports'; // 'reports' | 'distribution' | 'enrolled'
+  let adminIframeSrc = null; // the last src we set on #adminIframe, so re-clicking the same
+                              // tab (or an unrelated induction-selector re-render) doesn't force
+                              // an unnecessary reload/flash of already-current content.
+
+  function setActiveTabButton(activeBtnId){
+    ['tabReportsBtn', 'tabEnrolledBuildingsBtn', 'tabDistributionBtn'].forEach(id => {
+      document.getElementById(id).classList.toggle('active', id === activeBtnId);
+    });
+  }
+
   function showReports(){
-    document.getElementById('tabReportsBtn').classList.add('active');
+    activeTab = 'reports';
+    setActiveTabButton('tabReportsBtn');
+    document.getElementById('adminIframe').style.display = 'none';
     document.getElementById('reportSection').style.display = 'block';
     // #programTabs stays hidden (no default selection — Sergio's explicit correction) until the
     // first real induction is picked; this is the one place that reveals it.
@@ -5137,17 +5153,36 @@ try {
   }
   document.getElementById('tabReportsBtn').addEventListener('click', showReports);
 
-  // Distribution and Enrolled Buildings now live on their own pages (admin-distribution.html,
-  // admin-enrolled-buildings.html — Workstream 2 Phases 4 and 5 of the architecture roadmap) —
-  // unlike Buildings/Admins/Catalog they're program-scoped, so each link carries whichever
-  // induction is currently selected as ?program=.
-  document.getElementById('tabDistributionBtn').addEventListener('click', () => {
+  // Distribution and Enrolled Buildings still live in their own files (admin-distribution.html,
+  // admin-enrolled-buildings.html — Workstream 2 Phases 4/5), kept physically separate (every
+  // existing test still opens either directly, full-page, via a raw file:// URL) — but rendered
+  // here via #adminIframe with &embedded=1, which tells that page to suppress its own
+  // header/sign-in-zone/back-link so nothing looks doubled under this tab row.
+  function embeddedIframeSrc(page){
     const emulatorSuffix = new URLSearchParams(window.location.search).get('emulator') === '1' ? '&emulator=1' : '';
-    window.location.href = `admin-distribution.html?program=${encodeURIComponent(currentProgramId)}${emulatorSuffix}`;
+    return `${page}?program=${encodeURIComponent(currentProgramId)}${emulatorSuffix}&embedded=1`;
+  }
+
+  function showEmbeddedTab(tabName, page, activeBtnId){
+    activeTab = tabName;
+    setActiveTabButton(activeBtnId);
+    document.getElementById('reportSection').style.display = 'none';
+    document.getElementById('programTabs').style.display = 'flex';
+    updateViewingBadge();
+    const iframe = document.getElementById('adminIframe');
+    const wanted = embeddedIframeSrc(page);
+    if (adminIframeSrc !== wanted){
+      iframe.src = wanted;
+      adminIframeSrc = wanted;
+    }
+    iframe.style.display = 'block';
+  }
+
+  document.getElementById('tabDistributionBtn').addEventListener('click', () => {
+    showEmbeddedTab('distribution', 'admin-distribution.html', 'tabDistributionBtn');
   });
   document.getElementById('tabEnrolledBuildingsBtn').addEventListener('click', () => {
-    const emulatorSuffix = new URLSearchParams(window.location.search).get('emulator') === '1' ? '&emulator=1' : '';
-    window.location.href = `admin-enrolled-buildings.html?program=${encodeURIComponent(currentProgramId)}${emulatorSuffix}`;
+    showEmbeddedTab('enrolled', 'admin-enrolled-buildings.html', 'tabEnrolledBuildingsBtn');
   });
 
   // Buildings now lives on its own page (admin-buildings.html, Workstream 2 Phase 2 of the
@@ -5176,10 +5211,19 @@ try {
     // for the page's whole lifetime, same as Distribution).
     currentProgramId = e.target.value;
     if (!currentProgramId) return;
-    // showReports() itself shows #programTabs and calls updateViewingBadge().
-    showReports();
-    refreshDemoLink(); // no-op if the demo panel isn't open — see its own definition below
-    await loadLiveData();
+    // Stay on whichever tab is currently active — switching induction while looking at
+    // Distribution/Enrolled Buildings should refresh THAT tab for the new induction, not bounce
+    // back to Reports (the iframe has no live induction switcher of its own, same as before).
+    if (activeTab === 'distribution'){
+      showEmbeddedTab('distribution', 'admin-distribution.html', 'tabDistributionBtn');
+    } else if (activeTab === 'enrolled'){
+      showEmbeddedTab('enrolled', 'admin-enrolled-buildings.html', 'tabEnrolledBuildingsBtn');
+    } else {
+      // showReports() itself shows #programTabs and calls updateViewingBadge().
+      showReports();
+      refreshDemoLink(); // no-op if the demo panel isn't open — see its own definition below
+      await loadLiveData();
+    }
   });
 
   document.getElementById('signInBtn').addEventListener('click', async () => {
@@ -5298,7 +5342,19 @@ try {
         // Reset which tab LOOKS active for next sign-in, without using showReports() here —
         // that would set reportSection back to display:block, undoing the hide two lines above
         // and reintroducing the exact post-sign-out data-visibility bug fixed earlier this project.
-        document.getElementById('tabReportsBtn').classList.add('active');
+        setActiveTabButton('tabReportsBtn');
+        activeTab = 'reports';
+        // Just hide it — don't force-navigate it to about:blank, which aborts whatever that
+        // frame's own document was still doing mid-flight (its auto-sign-in call in ?emulator=1
+        // mode, its own Firestore connection) and logs a spurious error from the torn-down
+        // context. Forgetting adminIframeSrc is enough: it guarantees the NEXT tab click always
+        // re-navigates the iframe for real (even to the exact same induction as before), rather
+        // than trusting a stale src comparison — so a signed-out admin who signs back in as
+        // someone else never sees the PREVIOUS session's content, without needing to interrupt
+        // that content mid-request to achieve it. The iframe stays display:none the whole time
+        // in between, so the stale document is never actually visible to anyone regardless.
+        document.getElementById('adminIframe').style.display = 'none';
+        adminIframeSrc = null;
       }
     });
   }

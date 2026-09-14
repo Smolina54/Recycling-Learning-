@@ -145,6 +145,21 @@ async function runFlow(page){
   check('with multiple levels, none is silently pre-selected — the trainee must actually choose one',
     levelPreSelected === '', `pre-selected value: "${levelPreSelected}"`);
   await page.select('#idLevel', 'Level 5');
+
+  // --- Malformed email: rejected inline, before ever touching mainApp/Firestore (Workstream 3,
+  // Item D) — the id-gate form used to have no format check at all beyond a neutered `novalidate`
+  // type="email" attribute. Everything else on the form (name/tenant/level) is already
+  // correctly filled in at this point — only the email is temporarily broken, then fixed. ---
+  await page.$eval('#idEmail', el => { el.value = ''; });
+  await page.type('#idEmail', 'not-an-email');
+  await page.click('#idForm button[type=submit]');
+  check('a malformed email is rejected inline, with a visible error message',
+    await page.$eval('#idEmailError', el => getComputedStyle(el).display !== 'none'));
+  check('mainApp is NOT shown after a malformed-email submit',
+    await page.$eval('#mainApp', el => getComputedStyle(el).display === 'none'));
+
+  await page.$eval('#idEmail', el => { el.value = ''; });
+  await page.type('#idEmail', 'jane@example.com');
   await page.click('#idForm button[type=submit]');
   await new Promise(r => setTimeout(r, 300));
   check('mainApp is shown after a valid gate submit',

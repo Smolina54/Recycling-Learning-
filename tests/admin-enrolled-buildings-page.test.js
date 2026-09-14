@@ -155,6 +155,31 @@ async function runFlow(page){
   check('the building is auto-enrolled in Recycling Sorting and shows up here without a manual enroll step',
     Boolean(await page.$(`.enrolled-building-row[data-building-id="${buildingId}"]`)));
 
+  // --- Embedded mode (Workstream 3, Item A): opened with &embedded=1, as sorting-station-report.html's
+  // #adminIframe does, this page must suppress its own header/back-link/sign-out (the shell
+  // already shows those) — locks in that contract independent of the iframe wiring itself,
+  // which tests/admin-buildings.test.js/admin-catalog.test.js cover from the shell's side. ---
+  await page.goto(`${enrolledUrl('recycling-sorting')}&embedded=1`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('.enrolled-building-row h3')].some(el => el.textContent === name),
+    { timeout: 10000 },
+    buildingName
+  );
+  check('embedded mode (&embedded=1) hides this page\'s own header',
+    await page.$eval('header.top', el => getComputedStyle(el).display === 'none'));
+  check('embedded mode (&embedded=1) hides this page\'s own back-link/sign-out corner',
+    await page.$eval('#cornerSettings', el => getComputedStyle(el).display === 'none'));
+  check('embedded mode still shows the real content, not hidden outright',
+    await page.$eval('#enrolledBuildingsSection', el => getComputedStyle(el).display !== 'none'));
+  // Back to the plain (non-embedded) URL for the rest of this test — standalone behavior is
+  // the default and every check below this point assumes it.
+  await page.goto(enrolledUrl('recycling-sorting'), { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('.enrolled-building-row h3')].some(el => el.textContent === name),
+    { timeout: 10000 },
+    buildingName
+  );
+
   // window.confirm/alert's native dialogs would otherwise fight the generic "unexpected dialog"
   // handler above — overridden in-page, recording every call (several checks below need to
   // verify not just that a confirmation happened, but what it said and exactly when).

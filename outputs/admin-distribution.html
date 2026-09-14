@@ -2409,6 +2409,14 @@ var qrcode = function() {
   .settings-btn{font-size:16px; padding:6px 12px; line-height:1;}
 
   .page-shell{display:flex;}
+  /* Embedded mode (?embedded=1 — this page rendered inside sorting-station-report.html's
+     #adminIframe instead of opened standalone): the shell page already shows its own header,
+     tab row, and sign-out button, so this page's own copies of those would look doubled.
+     #authZone (sign-in) stays visible on purpose — it's this page's own async auth check,
+     independent of the shell's, and hiding it outright could show a blank iframe while it
+     resolves. Standalone (no ?embedded=1, e.g. every existing test) is completely unaffected —
+     this rule only ever applies once .embedded is added by JS below. */
+  .page-shell.embedded header.top, .page-shell.embedded #cornerSettings{display:none;}
 
   .import-xlsx-label{cursor:pointer;}
   .import-candidates{max-height:280px; overflow-y:auto; border:1px solid var(--line); padding:10px; margin-top:10px; background:var(--paper);}
@@ -2770,6 +2778,12 @@ let db = null, auth = null, functions = null;
 // to read this too, and a `const` scoped to the try block is unreachable from there, throwing
 // "isEmulatorMode is not defined" the moment anything outside the block references it.
 const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
+// Rendered inside sorting-station-report.html's #adminIframe rather than opened standalone —
+// see the .page-shell.embedded CSS rule above. Defaults to false (standalone, unchanged
+// behavior) unless the shell explicitly adds &embedded=1, so every existing direct/bookmarked
+// open and every existing test (none of which pass this param) is unaffected.
+const isEmbedded = new URLSearchParams(window.location.search).get('embedded') === '1';
+if (isEmbedded) document.getElementById('pageShell').classList.add('embedded');
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);

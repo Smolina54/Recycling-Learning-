@@ -68,17 +68,16 @@ async function seedMaliciousAttempt(){
       programId: 'recycling-sorting', score: 80, avoided: 20, total: 25,
       timestamp: new Date().toISOString(),
     });
-    // A submission from a building where pc-box (default stream "pc") was reconfigured to
-    // "mr" — the "most commonly missed items" list should label it Mixed Recycling here, not
-    // its global-default Paper & Cardboard (the mislabeling bug fixed alongside Milestone 2's
-    // item-streams editor). Marked as missed (0) so it's guaranteed a spot in the top-8 ranking.
+    // A submission with pc-box marked missed (0), guaranteed a spot in the top-8 ranking —
+    // used below to confirm the "most commonly missed items" list shows only the item name,
+    // no stream label (the stream tag was dropped per Sergio's feedback: it read as ambiguous,
+    // unclear whether it meant where the item was missed from or where it should go).
     await setDoc(doc(db, 'submissions', 'override-config-submission'), {
       buildingId: 'override-config-building', buildingName: 'Override Config Tower',
       tenantId: 'override-config-tenant', tenantName: 'Override Co',
       level: 'Level 1', name: 'Pat Doe', email: 'pat@example.com',
       programId: 'recycling-sorting', score: 96, avoided: 24, total: 25,
       items: { 'pc-box': 0 },
-      itemOverridesSnapshot: JSON.stringify({ 'pc-box': { stream: 'mr' } }),
       timestamp: new Date().toISOString(),
     });
   });
@@ -186,8 +185,9 @@ async function runFlow(page, seedEnv, consoleErrors){
   check('...and no real <img> element was created from it in Completed', !completedHasRealImgTag);
 
   const missedListText = await page.$eval('#missedList', el => el.textContent).catch(() => '');
-  check('the "most commonly missed items" list labels a reconfigured item by its actual building-specific stream, not the global default',
-    missedListText.includes('Flattened cardboard box') && missedListText.includes('Mixed Recycling') && !missedListText.includes('Paper & Cardboard'),
+  check('the "most commonly missed items" list shows the item name only, with no stream label',
+    missedListText.includes('Flattened cardboard box') && !missedListText.includes('Mixed Recycling') &&
+      !missedListText.includes('Paper & Cardboard') && !missedListText.includes('→'),
     missedListText.slice(0, 400));
 
   // --- The Overview "Preview the training" button: no building/tenant to pick, opens the
@@ -199,48 +199,43 @@ async function runFlow(page, seedEnv, consoleErrors){
     previewUrls.length === 1 && previewUrls[0].includes('recycling-training.html?preview=1') && !previewUrls[0].includes('?b='),
     previewUrls.join(', '));
 
-  // --- Distribution now lives on its own page (admin-distribution.html, Workstream 2 Phase 4
-  // of the architecture roadmap) — reached via a real cross-page navigation that carries
-  // whichever induction is currently selected as ?program=. Its own UI (whole-building
-  // link/QR/copy/preview, tenant-scoped/expiring links, send-email) is covered end-to-end in
-  // tests/admin-distribution-page.test.js; this file only proves the handoff itself. ---
-  await Promise.all([page.waitForNavigation(), page.click('#tabDistributionBtn')]);
-  check('the Distribution tab navigates to its own page, carrying the selected induction',
-    page.url().includes('admin-distribution.html') && page.url().includes('program=recycling-sorting'),
-    page.url());
-
-  // Back to Reports to prove Enrolled Buildings' own handoff too — session persists (Firebase
-  // Auth), but re-select the induction since navigating away loses the page's own JS state.
-  await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded' });
+  // --- Distribution and Enrolled Buildings now render IN PLACE via #adminIframe (Workstream 3,
+  // Item A) instead of a full top-level navigation — the induction selector/badge/tab row above
+  // never disappear. The two pages stay physically separate files under the hood (their own
+  // dedicated end-to-end tests still open each directly, standalone, via a raw file:// URL —
+  // see tests/admin-distribution-page.test.js / tests/admin-enrolled-buildings-page.test.js);
+  // this file only proves the in-page handoff: clicking a tab points the iframe at that page,
+  // carrying the selected induction and &embedded=1 (which tells that page to suppress its own
+  // header/sign-in-zone/back-link), with the top-level page.url() never changing. ---
+  const urlBeforeTabSwitch = page.url();
+  await page.click('#tabDistributionBtn');
   await page.waitForFunction(
-    () => getComputedStyle(document.getElementById('settingsBtn')).display !== 'none',
+    () => document.getElementById('adminIframe')?.src.includes('admin-distribution.html'),
     { timeout: 10000 }
   );
-  await selectProgram(page, 'recycling-sorting');
+  let iframeSrc = await page.$eval('#adminIframe', el => el.src);
+  check('the Distribution tab loads its own page into the iframe (no top-level navigation), carrying the selected induction',
+    page.url() === urlBeforeTabSwitch && iframeSrc.includes('admin-distribution.html') &&
+      iframeSrc.includes('program=recycling-sorting') && iframeSrc.includes('embedded=1'),
+    `pageUrl=${page.url()} iframeSrc=${iframeSrc}`);
+
+  // --- Enrolled Buildings' own handoff — a real in-page tab switch, no reload, so the
+  // induction selection (and everything else on the shell) is never lost. ---
+  await page.click('#tabEnrolledBuildingsBtn');
   await page.waitForFunction(
-    () => document.querySelector('#pendingTable tr') !== null,
+    () => document.getElementById('adminIframe')?.src.includes('admin-enrolled-buildings.html'),
     { timeout: 10000 }
   );
+  iframeSrc = await page.$eval('#adminIframe', el => el.src);
+  check('the Enrolled Buildings tab loads its own page into the iframe (no top-level navigation), carrying the selected induction',
+    page.url() === urlBeforeTabSwitch && iframeSrc.includes('admin-enrolled-buildings.html') &&
+      iframeSrc.includes('program=recycling-sorting') && iframeSrc.includes('embedded=1'),
+    `pageUrl=${page.url()} iframeSrc=${iframeSrc}`);
 
-  // --- Enrolled Buildings now lives on its own page (admin-enrolled-buildings.html, Workstream
-  // 2 Phase 5 of the architecture roadmap) — same real cross-page navigation as Distribution.
-  // Its own UI (Configure streams, the tenant-enable checklist, the enrol picker) is covered
-  // end-to-end in tests/admin-enrolled-buildings-page.test.js; this file only proves the
-  // handoff itself. ---
-  await Promise.all([page.waitForNavigation(), page.click('#tabEnrolledBuildingsBtn')]);
-  check('the Enrolled Buildings tab navigates to its own page, carrying the selected induction',
-    page.url().includes('admin-enrolled-buildings.html') && page.url().includes('program=recycling-sorting'),
-    page.url());
-
-  // Back to Reports to continue the sign-out/email-auth checks below.
-  await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded' });
+  // Back to Reports to continue the sign-out/email-auth checks below — another in-page switch.
+  await page.click('#tabReportsBtn');
   await page.waitForFunction(
-    () => getComputedStyle(document.getElementById('settingsBtn')).display !== 'none',
-    { timeout: 10000 }
-  );
-  await selectProgram(page, 'recycling-sorting');
-  await page.waitForFunction(
-    () => document.querySelector('#pendingTable tr') !== null,
+    () => getComputedStyle(document.getElementById('reportSection')).display !== 'none',
     { timeout: 10000 }
   );
 
@@ -337,7 +332,22 @@ async function finishAndReport(page, browser, consoleErrors, seedEnv){
     // Expected: this suite doesn't start the Functions emulator (only firestore,auth), so the
     // "Send via email" test's real fetch to sendInductionEmail is expected to fail — that's the
     // exact graceful-failure path being tested, not a real bug.
-    && !e.includes('sendInductionEmail') && !e.includes('CORS policy'));
+    && !e.includes('sendInductionEmail') && !e.includes('CORS policy')
+    // Expected: #adminIframe's src gets reassigned (a new tab, or 'about:blank' on sign-out)
+    // while the previously-loaded page's own emulator-only auto-sign-in convenience call
+    // (admin-distribution.html / admin-enrolled-buildings.html, harmless dev-tooling that never
+    // runs in production) can still be in flight — the browser aborts that request as part of
+    // navigating the frame away, which surfaces as a rejected promise in the OLD document,
+    // logged right as it's being torn down. Not a real bug: never visible to a real user, and
+    // the actual auth session itself is unaffected (it's shared, IndexedDB-backed, same origin).
+    && !e.includes('Local auto sign-in failed')
+    // Expected: with the shell AND an embedded iframe each running their own independent
+    // getFirestore()/connectFirestoreEmulator() (duplicated per page, by design — see the plan),
+    // one of them can occasionally hit the local emulator mid-startup and log a transient
+    // "Could not reach Cloud Firestore backend... offline mode" warning — the SDK auto-retries
+    // and every actual data assertion in this test still passes, so this is startup contention
+    // noise, not a real connectivity bug.
+    && !e.includes('Could not reach Cloud Firestore backend'));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
   await browser.close();

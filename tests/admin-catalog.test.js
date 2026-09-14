@@ -75,7 +75,12 @@ async function main(){
   }
 
   const unexpectedErrors = consoleErrors.filter(e =>
-    !e.includes('auth/email-already-in-use') && !e.includes('Failed to load resource') && !e.includes('400'));
+    !e.includes('auth/email-already-in-use') && !e.includes('Failed to load resource') && !e.includes('400')
+    // Expected: #adminIframe's src gets reassigned when switching tabs while the previously-
+    // loaded page's own emulator-only auto-sign-in convenience call can still be in flight —
+    // the browser aborts that request as part of navigating the frame away, logged right as it's
+    // torn down. Not a real bug — see the matching comment in tests/admin-buildings.test.js.
+    && !e.includes('Local auto sign-in failed'));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
   await browser.close();
@@ -121,32 +126,33 @@ async function runFlow(page){
     { timeout: 10000 }
   );
 
-  // --- Distribution: prove the handoff carries the non-default induction (Organics, not
-  // Recycling Sorting); tests/admin-buildings.test.js already proves the same handoff for the
-  // default program, and tests/admin-distribution-page.test.js covers the page's own UI
-  // end-to-end. ---
-  await Promise.all([page.waitForNavigation(), page.click('#tabDistributionBtn')]);
-  check('the Distribution tab navigates to its own page, carrying the non-default induction too',
-    page.url().includes('admin-distribution.html') && page.url().includes(`program=${programId}`),
-    page.url());
-
-  await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded' });
+  // --- Distribution/Enrolled Buildings now render IN PLACE via #adminIframe (Workstream 3,
+  // Item A) instead of a full navigation — prove the handoff still carries the non-default
+  // induction (Organics, not Recycling Sorting) correctly, and that the top-level page never
+  // navigates away. tests/admin-buildings.test.js already proves the same handoff for the
+  // default program; tests/admin-distribution-page.test.js / admin-enrolled-buildings-page.test.js
+  // cover each page's own UI end-to-end. ---
+  const urlBeforeTabSwitch = page.url();
+  await page.click('#tabDistributionBtn');
   await page.waitForFunction(
-    () => getComputedStyle(document.getElementById('settingsBtn')).display !== 'none',
+    () => document.getElementById('adminIframe')?.src.includes('admin-distribution.html'),
     { timeout: 10000 }
   );
-  await selectProgram(page, programId);
+  let iframeSrc = await page.$eval('#adminIframe', el => el.src);
+  check('the Distribution tab loads its own page into the iframe (no top-level navigation), carrying the non-default induction too',
+    page.url() === urlBeforeTabSwitch && iframeSrc.includes('admin-distribution.html') && iframeSrc.includes(`program=${programId}`),
+    `pageUrl=${page.url()} iframeSrc=${iframeSrc}`);
+
+  // --- Enrolled Buildings: same proof, same reasoning. ---
+  await page.click('#tabEnrolledBuildingsBtn');
   await page.waitForFunction(
-    () => getComputedStyle(document.getElementById('programTabs')).display !== 'none',
+    () => document.getElementById('adminIframe')?.src.includes('admin-enrolled-buildings.html'),
     { timeout: 10000 }
   );
-
-  // --- Enrolled Buildings: same proof, same reasoning — admin-enrolled-buildings-page.test.js
-  // covers the page's own UI end-to-end. ---
-  await Promise.all([page.waitForNavigation(), page.click('#tabEnrolledBuildingsBtn')]);
-  check('the Enrolled Buildings tab navigates to its own page, carrying the non-default induction too',
-    page.url().includes('admin-enrolled-buildings.html') && page.url().includes(`program=${programId}`),
-    page.url());
+  iframeSrc = await page.$eval('#adminIframe', el => el.src);
+  check('the Enrolled Buildings tab loads its own page into the iframe (no top-level navigation), carrying the non-default induction too',
+    page.url() === urlBeforeTabSwitch && iframeSrc.includes('admin-enrolled-buildings.html') && iframeSrc.includes(`program=${programId}`),
+    `pageUrl=${page.url()} iframeSrc=${iframeSrc}`);
 }
 
 main().catch((err) => { console.error('Test harness crashed:', err); process.exit(1); });

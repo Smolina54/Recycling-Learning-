@@ -132,6 +132,31 @@ async function runFlow(page){
   check('#noProgramNote stays hidden for a valid induction',
     await page.$eval('#noProgramNote', el => getComputedStyle(el).display === 'none'));
 
+  // --- Embedded mode (Workstream 3, Item A): opened with &embedded=1, as sorting-station-report.html's
+  // #adminIframe does, this page must suppress its own header/back-link/sign-out (the shell
+  // already shows those) — locks in that contract independent of the iframe wiring itself,
+  // which tests/admin-buildings.test.js/admin-catalog.test.js cover from the shell's side. ---
+  await page.goto(`${distributionUrl('recycling-sorting')}&embedded=1`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    (name) => (document.getElementById('distributionList')?.textContent || '').includes(name),
+    { timeout: 10000 },
+    buildingName
+  );
+  check('embedded mode (&embedded=1) hides this page\'s own header',
+    await page.$eval('header.top', el => getComputedStyle(el).display === 'none'));
+  check('embedded mode (&embedded=1) hides this page\'s own back-link/sign-out corner',
+    await page.$eval('#cornerSettings', el => getComputedStyle(el).display === 'none'));
+  check('embedded mode still shows the sign-in zone if not yet signed in, or the real content once signed in (not hidden outright)',
+    await page.$eval('#distributionSection', el => getComputedStyle(el).display !== 'none'));
+  // Back to the plain (non-embedded) URL for the rest of this test — standalone behavior is
+  // the default and every check below this point assumes it.
+  await page.goto(distributionUrl('recycling-sorting'), { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    (name) => (document.getElementById('distributionList')?.textContent || '').includes(name),
+    { timeout: 10000 },
+    buildingName
+  );
+
   const distributionSelector = `.distribution-building-row[data-building-id="${buildingId}"]`;
   check('the enrolled building appears in Distribution', Boolean(await page.$(distributionSelector)));
 

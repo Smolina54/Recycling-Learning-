@@ -769,14 +769,6 @@ function renderBuildingsList(buildings){
       ${headerHtml}
       <ul class="tenant-list">${tenantsHtml}</ul>
       <p class="block-sub contacts-coverage-note">${withEmail} of ${b.tenants.length} tenants have a contact email saved.</p>
-      <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
-        <button class="btn secondary export-contacts-btn">Export contacts template →</button>
-        <label class="btn secondary import-contacts-label">
-          Import contact emails →
-          <input type="file" class="import-contacts-input" accept=".xlsx" style="display:none;">
-        </label>
-      </div>
-      <div class="import-contacts-review" style="display:none;"></div>
       <p class="generate-link-title"><strong>Add tenant</strong></p>
       <p class="block-sub">Add a new tenant to this building — its name, the level(s) it occupies, and an optional contact email for sending induction links later.</p>
       <div class="filter-row">
@@ -792,6 +784,16 @@ function renderBuildingsList(buildings){
         </label>
       </div>
       <div class="import-review" style="display:none;"></div>
+      <p class="generate-link-title"><strong>Export or import tenant contacts</strong></p>
+      <p class="block-sub">Download a spreadsheet pre-filled with every tenant's name and saved email(s) — edit it and re-upload to update contact emails in bulk, instead of one tenant at a time.</p>
+      <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+        <button class="btn secondary export-contacts-btn">Export contacts template →</button>
+        <label class="btn secondary import-contacts-label">
+          Import contact emails →
+          <input type="file" class="import-contacts-input" accept=".xlsx" style="display:none;">
+        </label>
+      </div>
+      <div class="import-contacts-review" style="display:none;"></div>
     </div>
   `;
   }).join('');

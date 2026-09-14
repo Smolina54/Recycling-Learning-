@@ -113,6 +113,19 @@ async function runFlow(page){
   await page.select('#idTenant', ENROLLED_TENANT_ID);
   await new Promise(r => setTimeout(r, 200));
   await page.select('#idLevel', 'Level 1');
+
+  // --- Malformed email: rejected inline, before ever touching mainApp/Firestore (Workstream 3,
+  // Item D). ---
+  await page.$eval('#idEmail', el => { el.value = ''; });
+  await page.type('#idEmail', 'not-an-email');
+  await page.click('#idForm button[type=submit]');
+  check('a malformed email is rejected inline, with a visible error message',
+    await page.$eval('#idEmailError', el => getComputedStyle(el).display !== 'none'));
+  check('mainApp is NOT shown after a malformed-email submit',
+    await page.$eval('#mainApp', el => getComputedStyle(el).display === 'none'));
+
+  await page.$eval('#idEmail', el => { el.value = ''; });
+  await page.type('#idEmail', 'jane-organics@example.com');
   await page.click('#idForm button[type=submit]');
   await new Promise(r => setTimeout(r, 300));
 

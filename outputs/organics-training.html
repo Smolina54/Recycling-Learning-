@@ -324,6 +324,8 @@
   .save-warning .btn.secondary{border-color:var(--gw); color:var(--gw); padding:8px 16px; font-size:13px; white-space:nowrap;}
   .save-warning .btn.secondary:hover{background:var(--gw); color:var(--paper);}
 
+  .id-field-error{color:var(--gw); font-size:12.5px; margin-top:4px; display:none;}
+
   .stream-breakdown{display:flex; flex-direction:column; gap:10px; margin-bottom:30px;}
   .breakdown-row{display:grid; grid-template-columns:130px 1fr 50px; align-items:center; gap:12px;}
   .breakdown-label{font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft);}
@@ -381,6 +383,7 @@
       <label class="id-field">
         <span>Work email</span>
         <input type="email" id="idEmail" name="email" required autocomplete="email">
+        <p class="id-field-error" id="idEmailError">Enter a valid email address (e.g. name@company.com).</p>
       </label>
       <label class="id-field">
         <span>Tenant / Company</span>
@@ -743,14 +746,27 @@ try {
     }
   }
 
+  // Same shape as the server-side check in firestore.rules' isValidPersonFields — this is a
+  // pre-submit UX improvement, not the real defense (that stays server-side), but a trainee
+  // who mistypes their email deserves a clear inline message here instead of a confusing
+  // generic write failure once firestore.rules rejects it.
+  function isValidEmail(str){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(str || '').trim()); }
+
   document.getElementById('idForm').addEventListener('submit', (e) => {
     e.preventDefault();
+    const email = document.getElementById('idEmail').value.trim();
+    const emailError = document.getElementById('idEmailError');
+    if (!isValidEmail(email)){
+      emailError.style.display = 'block';
+      return;
+    }
+    emailError.style.display = 'none';
     const tenant = tenantsCache.find(t => t.id === idTenantSelect.value);
     siteContext.tenantId = idTenantSelect.value;
     siteContext.tenantName = tenant ? tenant.name : '';
     siteContext.level = idLevelSelect.value;
     siteContext.name = document.getElementById('idName').value.trim();
-    siteContext.email = document.getElementById('idEmail').value.trim();
+    siteContext.email = email;
     document.getElementById('idGate').style.display = 'none';
     document.getElementById('mainApp').style.display = 'block';
     window.scrollTo(0,0);
