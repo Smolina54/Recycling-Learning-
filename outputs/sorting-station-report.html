@@ -2745,31 +2745,9 @@ var qrcode = function() {
 
   <div class="admin-tabs" id="programTabs" style="display:none;">
     <button class="tab-btn active" id="tabReportsBtn">Reports</button>
-    <button class="tab-btn" id="tabEnrolledBuildingsBtn">Enrolled Buildings</button>
+    <button class="tab-btn" id="tabEnrolledBuildingsBtn">Enrolled Buildings →</button>
     <button class="tab-btn" id="tabDistributionBtn">Distribution →</button>
   </div>
-
-  <section id="enrolledBuildingsSection" style="display:none;">
-    <div class="report-header-row">
-      <h2>Enrolled Buildings</h2>
-    </div>
-
-    <div class="report-block">
-      <h3>Enrol an existing building in this induction</h3>
-      <p class="block-sub">Only buildings not already enrolled in the induction selected above are listed here. To add a brand-new building to the system, use Edificios in the ⚙ menu first.</p>
-      <div class="filter-row">
-        <label class="filter-field"><span>Building</span>
-          <select id="enrollBuildingSelect"><option value="">Select a building…</option></select>
-        </label>
-      </div>
-      <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
-        <button class="btn" id="enrollBuildingBtn">+ Enrol building</button>
-      </div>
-      <p class="block-sub" id="enrollBuildingStatus" style="margin-top:10px;"></p>
-    </div>
-
-    <div id="enrolledBuildingsList"></div>
-  </section>
 
   <section id="reportSection" style="display:none;">
     <!-- On-screen this is invisible (see .print-header) — it only exists so the printed/PDF
@@ -4955,7 +4933,6 @@ try {
       const sourceLabel = `Live data from Firestore · ${rows.length} submissions` +
         (truncated ? ` (most recent ${MAX_ROWS} — narrow with the date filter to see an older period)` : '');
       loadRows(rows, attempts, sourceLabel, true);
-      await loadEnrolledData();
     } catch (err){
       // A global reviewer never reaches here (their query above always succeeds). Only a
       // non-global account lands here — try the scoped/building-limited path before giving up.
@@ -4976,251 +4953,10 @@ try {
 
   // Buildings' own cache/edit-state (buildingsCache, editingBuildingId, editingTenant) now lives
   // entirely in admin-buildings.html (Workstream 2, Phase 2 of the architecture roadmap).
-  // Program-scoped list — feeds both Edificios inscritos and Distribution for whichever
-  // program is currently selected.
-  let enrolledBuildingsCache = [];
-  // Every active building regardless of program enrollment — the source list for "Enroll an
-  // existing building" in Edificios inscritos.
-  let allBuildingsCache = [];
-  let editingItemsBuildingId = null;
-  let draftItemOverrides = null; // {itemId: {stream}}, only while editingItemsBuildingId is set
-  let itemsEditorError = '';
-  // Real bug found in testing: renderEnrolledBuildingsList() fully replaces #enrolledBuildingsList's
-  // innerHTML on every load — including right after the tenant-enable checklist's own save handler
-  // sets its status text to "Saved." and then calls loadEnrolledData(), which immediately wipes it
-  // back to blank via a fresh render. The confirmation was never actually visible. Same fix as
-  // itemsEditorError above: keep the message in JS state (survives the re-render) instead of only
-  // writing it to a DOM node that's about to be discarded.
-  let tenantEnableStatusByBuildingId = {};
-  // Must match recycling-training.html's DECOY_CAP — every stream needs at least this many
-  // items with a DIFFERENT effective stream available to draw decoys from (see validateDraftOverrides()).
-  const DECOY_CAP = 5;
-
-  // An item's effective state for this building is three independent, optional overrides —
-  // active, stream, acceptable — each falling back to the catalog default when absent, so the
-  // override map stays sparse (only the fields that actually differ get written).
-  function activeCatalogDefault(itemId){ return catalog[itemId].active !== false; }
-
-  function effectiveActiveInDraft(itemId){
-    const ov = draftItemOverrides && draftItemOverrides[itemId];
-    return (ov && typeof ov.active === 'boolean') ? ov.active : activeCatalogDefault(itemId);
-  }
-
-  function effectiveStreamInDraft(itemId){
-    const ov = draftItemOverrides && draftItemOverrides[itemId];
-    return (ov && ov.stream) || catalog[itemId].stream;
-  }
-
-  function effectiveAcceptableInDraft(itemId){
-    const ov = draftItemOverrides && draftItemOverrides[itemId];
-    return (ov && ov.acceptable) || [];
-  }
-
-  // Deletes the whole override entry once none of its fields differ from the catalog default
-  // anymore — keeps the map sparse regardless of which of the 3 fields was last touched.
-  function pruneDraftOverrideIfDefault(itemId){
-    const ov = draftItemOverrides[itemId];
-    if (!ov) return;
-    const activeMatches = !('active' in ov) || ov.active === activeCatalogDefault(itemId);
-    const streamMatches = !ov.stream || ov.stream === catalog[itemId].stream;
-    const acceptableEmpty = !ov.acceptable || ov.acceptable.length === 0;
-    if (activeMatches && streamMatches && acceptableEmpty) delete draftItemOverrides[itemId];
-  }
-
-  // Single write path for the on/off toggle.
-  function setDraftActive(itemId, active){
-    const ov = draftItemOverrides[itemId] || {};
-    if (active === activeCatalogDefault(itemId)) delete ov.active; else ov.active = active;
-    draftItemOverrides[itemId] = ov;
-    pruneDraftOverrideIfDefault(itemId);
-  }
-
-  // Single write path for the stream select + acceptable checkboxes (quick-merge included) —
-  // preserves any existing `active` override on the same item.
-  function setDraftOverride(itemId, stream, acceptable){
-    const ov = draftItemOverrides[itemId] || {};
-    const cleanAcceptable = acceptable.filter(s => s !== stream);
-    if (stream === catalog[itemId].stream) delete ov.stream; else ov.stream = stream;
-    if (cleanAcceptable.length === 0) delete ov.acceptable; else ov.acceptable = cleanAcceptable;
-    draftItemOverrides[itemId] = ov;
-    pruneDraftOverrideIfDefault(itemId);
-  }
-
-  // Counts, per stream, how many ACTIVE items are effective there — as primary/ideal OR as an
-  // "also acceptable" pick. Both make an item ineligible as that stream's decoy in the game
-  // (see buildDecoyPlan() in recycling-training.html), and both count toward that stream
-  // actually getting a non-zero phase target — so both need to be counted the same way here.
-  // An inactive item (backup left off, or battery/toner at their off-by-default state) never
-  // claims a stream at all.
-  function computeClaimedCounts(){
-    const claimed = {};
-    streams.forEach(s => { claimed[s] = 0; });
-    Object.keys(catalog).forEach(id => {
-      if (!effectiveActiveInDraft(id)) return;
-      const primary = effectiveStreamInDraft(id);
-      const acceptable = effectiveAcceptableInDraft(id);
-      streams.forEach(s => { if (s === primary || acceptable.includes(s)) claimed[s]++; });
-    });
-    return claimed;
-  }
-
-  // Mirrors buildDecoyPlan() in recycling-training.html exactly (same bipartite matching,
-  // same augmenting-path algorithm) but over this building's DRAFT config, so Save can prove
-  // — not just estimate — that the game will be able to fill every phase's decoys. Returns how
-  // many of each stream's DECOY_CAP slots the matching actually managed to fill; anything short
-  // of DECOY_CAP for a stream means that phase can't be built as configured.
-  function tryFillDecoySlots(){
-    const activeIds = Object.keys(catalog).filter(effectiveActiveInDraft);
-    const slots = [];
-    streams.forEach(stream => { for (let i = 0; i < DECOY_CAP; i++) slots.push(stream); });
-    const poolByStream = {};
-    streams.forEach(stream => {
-      poolByStream[stream] = activeIds.filter(id =>
-        effectiveStreamInDraft(id) !== stream && !effectiveAcceptableInDraft(id).includes(stream));
-    });
-    const matchItemToSlot = new Map();
-    function tryAssign(slotIndex, visited){
-      const stream = slots[slotIndex];
-      for (const id of poolByStream[stream]){
-        if (visited.has(id)) continue;
-        visited.add(id);
-        const currentSlot = matchItemToSlot.get(id);
-        if (currentSlot === undefined || tryAssign(currentSlot, visited)){
-          matchItemToSlot.set(id, slotIndex);
-          return true;
-        }
-      }
-      return false;
-    }
-    slots.forEach((_, slotIndex) => tryAssign(slotIndex, new Set()));
-    const filled = {};
-    streams.forEach(s => { filled[s] = 0; });
-    matchItemToSlot.forEach(slotIndex => { filled[slots[slotIndex]]++; });
-    return filled;
-  }
-
-  // Two independent checks: (1) a stream's own correct-item count must be a number that
-  // actually looks right in the game — 0 (deliberately merged away with Quick-merge) or at
-  // least DECOY_CAP, never a partial number like 3; (2) a real trial run of the game's own
-  // decoy-matching algorithm, so "this saves fine" is proven, not just estimated from a
-  // simplified per-stream ceiling (which is exactly the kind of shortcut that hid a real bug
-  // in buildDecoyPlan() earlier this project).
-  function validateDraftOverrides(){
-    const claimed = computeClaimedCounts();
-    for (const s of streams){
-      if (claimed[s] > 0 && claimed[s] < DECOY_CAP){
-        return `${streamNames[s]} only has ${claimed[s]} correct item${claimed[s] === 1 ? '' : 's'} — needs at least ${DECOY_CAP} (or merge it away entirely with Quick-merge).`;
-      }
-    }
-    const filled = tryFillDecoySlots();
-    for (const s of streams){
-      if (filled[s] < DECOY_CAP){
-        return `${streamNames[s]}'s phase wouldn't have enough decoys (${filled[s]} of ${DECOY_CAP}) — too many items are claimed by other streams. Turn a few more items on, or move some out of the streams claiming the most.`;
-      }
-    }
-    return '';
-  }
-
-  function activeStreamsSummary(){
-    const claimed = computeClaimedCounts();
-    const active = streams.filter(s => claimed[s] > 0);
-    const empty = streams.filter(s => claimed[s] === 0);
-    let text = `Active bins for this building: ${active.map(s => streamNames[s]).join(', ')} (${active.length} of ${streams.length}).`;
-    if (empty.length){
-      text += ` ${empty.map(s => streamNames[s]).join(', ')} — no items here, won't get a game phase to sort into, but the walkthrough panel stays visible as general info.`;
-    }
-    return text;
-  }
-
-  function renderItemStreamsEditorHtml(){
-    // Every one of the 50 catalog items (25 in rotation + 25 backups) shows up here, grouped
-    // by its effective stream, with an on/off toggle — an admin can personalize any of them
-    // per building, including turning on a backup or turning off a normally-active item.
-    const grouped = {};
-    streams.forEach(s => { grouped[s] = []; });
-    Object.keys(catalog).forEach(id => { grouped[effectiveStreamInDraft(id)].push(id); });
-
-    const sectionsHtml = streams.map(s => {
-      // Active items first, then inactive ones — each group alphabetical — so the on/off state
-      // reads as two clear clusters instead of being interleaved by name.
-      const ids = grouped[s].slice().sort((a,b) => {
-        const activeDiff = Number(effectiveActiveInDraft(b)) - Number(effectiveActiveInDraft(a));
-        return activeDiff !== 0 ? activeDiff : catalog[a].name.localeCompare(catalog[b].name);
-      });
-      const cardsHtml = ids.map(id => {
-        const active = effectiveActiveInDraft(id);
-        const iconHtml = catalog[id].icon ? `<span class="items-card-icon">${catalog[id].icon}</span>` : '';
-        const toggleHtml = `
-          <label class="item-toggle">
-            <input type="checkbox" class="item-active-toggle" data-item-id="${id}"${active ? ' checked' : ''}>
-            <span class="item-toggle-track"><span class="item-toggle-thumb"></span></span>
-          </label>`;
-        const headHtml = `<div class="items-card-head">${iconHtml}<span class="items-card-name">${esc(catalog[id].name)}</span>${toggleHtml}</div>`;
-        const acceptable = effectiveAcceptableInDraft(id);
-        const checkboxesHtml = streams.filter(opt => opt !== s).map(opt => `
-          <label class="acceptable-checkbox-label">
-            <input type="checkbox" class="item-acceptable-checkbox" data-item-id="${id}" value="${opt}"${acceptable.includes(opt) ? ' checked' : ''}>
-            ${streamNames[opt]}
-          </label>`).join('');
-        return `
-        <div class="items-card${active ? '' : ' items-card-inactive'}">
-          ${headHtml}
-          <select class="item-stream-select" data-item-id="${id}">
-            ${streams.map(opt => `<option value="${opt}"${opt === s ? ' selected' : ''}>${streamNames[opt]}</option>`).join('')}
-          </select>
-          ${active ? `
-          <details class="acceptable-details"${acceptable.length ? ' open' : ''}>
-            <summary class="block-sub">Also acceptable in…${acceptable.length ? ` (${acceptable.length})` : ''}</summary>
-            <div class="acceptable-checkbox-group">${checkboxesHtml}</div>
-          </details>` : ''}
-        </div>`;
-      }).join('');
-      return `
-        <div class="items-stream-section">
-          <div class="items-stream-head">
-            <span class="items-stream-swatch" style="background:var(--${s});"></span>
-            <h4>${streamNames[s]} <span class="block-sub" style="font-weight:400;">(${ids.length})</span></h4>
-          </div>
-          <div class="items-card-grid">${cardsHtml || '<p class="block-sub">Nothing here for this building.</p>'}</div>
-        </div>`;
-    }).join('');
-
-    return `
-      <div class="items-editor">
-        <p class="items-editor-summary">${activeStreamsSummary()}</p>
-        <div class="quick-merge-row">
-          <span class="block-sub">Merge stream</span>
-          <select class="quick-merge-from">${streams.map(s => `<option value="${s}">${streamNames[s]}</option>`).join('')}</select>
-          <span class="block-sub">into</span>
-          <select class="quick-merge-to">${streams.map(s => `<option value="${s}">${streamNames[s]}</option>`).join('')}</select>
-          <button type="button" class="btn secondary quick-merge-btn">Merge</button>
-        </div>
-        ${sectionsHtml}
-        ${itemsEditorError ? `<p class="items-editor-error">${esc(itemsEditorError)}</p>` : ''}
-        <div class="items-editor-actions">
-          <button class="btn save-items-btn">Save</button>
-          <button class="btn secondary reset-items-btn">Reset to default</button>
-          <button class="btn secondary cancel-items-btn">Cancel</button>
-        </div>
-      </div>`;
-  }
-  // Collapsed by default — with dozens of real buildings (some with 20+ tenants each) showing
-  // every enrolled building's content at once made the tab unusably long. Edificios inscritos'
-  // own expand/collapse state (Buildings/Edificios has its own, in admin-buildings.html).
-  const expandedEnrolledBuildingIds = new Set();
-
-  function refreshEnrolledBuildingsView(){
-    renderEnrolledBuildingsList(enrolledBuildingsCache);
-    refreshEnrollBuildingSelect();
-  }
-
-  function refreshEnrollBuildingSelect(){
-    const enrolledIds = new Set(enrolledBuildingsCache.map(b => b.id));
-    const notEnrolled = allBuildingsCache.filter(b => !enrolledIds.has(b.id));
-    const select = document.getElementById('enrollBuildingSelect');
-    select.innerHTML = '<option value="">Select a building…</option>' +
-      notEnrolled.map(b => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('');
-  }
+  // Enrolled Buildings' own cache/edit-state (enrolledBuildingsCache, allBuildingsCache,
+  // editingItemsBuildingId/draftItemOverrides and the whole item-streams editor, the
+  // tenant-enable checklist) now lives entirely in admin-enrolled-buildings.html (Workstream 2,
+  // Phase 5 of the architecture roadmap).
 
   // Turns a building name into a short, readable link ID (was crypto.randomUUID() — a link
   // like "?b=123-example-tower" reads as trustworthy where "?b=a3f8b2c1-1234-..." looked
@@ -5244,59 +4980,11 @@ try {
     if (!existing.exists()) return base;
     return `${base}-${crypto.randomUUID().slice(0, 6)}`; // name collision — short unique suffix
   }
-  // "Deleted" buildings/tenants are soft-deleted (active:false), not actually removed — see
-  // the multi-program plan's data-integrity section — so they're filtered out here rather
-  // than by the delete action having removed the doc.
-  async function loadAllActiveBuildings(){
-    const buildingsSnap = await getDocs(collection(db, 'buildings'));
-    return buildingsSnap.docs.filter(d => d.data().active !== false);
-  }
-
   // Master building list (loadMasterBuildings) now lives entirely in admin-buildings.html
-  // (Workstream 2, Phase 2 of the architecture roadmap).
-
-  // Scoped to whichever program is selected at the top of the screen — a building only shows
-  // up here once it's enrolled in that program (enrollments.active !== false). Every existing
-  // building was auto-enrolled in Recycling (either at creation time or by the one-time
-  // migration script), so this is a no-op change in behavior for that program's default case.
-  // Distribution (link generation) now has its own copy of this fetch (Workstream 2, Phase 4 of
-  // the architecture roadmap) — the `links` collection is no longer read here at all, since
-  // nothing left in this file needs it.
-  async function loadEnrolledData(){
-    const [enrollmentsSnap, allBuildingDocs] = await Promise.all([
-      getDocs(query(collection(db, 'enrollments'), where('programId', '==', currentProgramId))),
-      loadAllActiveBuildings(),
-    ]);
-    const buildingDocsById = new Map(allBuildingDocs.map(d => [d.id, d]));
-    allBuildingsCache = allBuildingDocs.map(d => ({ id: d.id, name: d.data().name || '(untitled)' }));
-
-    const enrollments = enrollmentsSnap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(e => e.active !== false && buildingDocsById.has(e.buildingId));
-
-    const buildings = await Promise.all(enrollments.map(async (enrollment) => {
-      const d = buildingDocsById.get(enrollment.buildingId);
-      const tenantsSnap = await getDocs(collection(db, 'buildings', d.id, 'tenants'));
-      return {
-        id: d.id,
-        name: d.data().name || '(untitled)',
-        itemOverrides: enrollment.itemOverrides || {},
-        // Left as the raw stored value (undefined/null/array/[]) — the 3-state model from the
-        // plan (absent-or-null = everyone; array = only these; [] = no one) is interpreted at
-        // render/save time, not collapsed here.
-        enabledTenantIds: enrollment.enabledTenantIds,
-        tenants: tenantsSnap.docs
-          .filter(t => t.data().active !== false)
-          .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [], emails: t.data().emails || [] })),
-      };
-    }));
-    enrolledBuildingsCache = buildings;
-    refreshEnrolledBuildingsView();
-  }
-
-  function isEnrolledBuildingExpanded(b){
-    return expandedEnrolledBuildingIds.has(b.id) || editingItemsBuildingId === b.id;
-  }
+  // (Workstream 2, Phase 2 of the architecture roadmap). loadAllActiveBuildings/
+  // loadEnrolledData/renderEnrolledBuildingsList/renderTenantEnableChecklistHtml (Enrolled
+  // Buildings' own per-program data load + rendering) now live entirely in
+  // admin-enrolled-buildings.html (Workstream 2, Phase 5 of the architecture roadmap).
 
   // renderDistributionLinksHtml/renderDistributionList/renderQrCode (tenant-scoped/expiring
   // link generation) now live entirely in admin-distribution.html (Workstream 2, Phase 4 of the
@@ -5305,74 +4993,6 @@ try {
 
   // renderBuildingsList (⚙ Edificios building/tenant CRUD) now lives entirely in
   // admin-buildings.html (Workstream 2, Phase 2 of the architecture roadmap).
-
-  // Edificios inscritos: buildings enrolled in the selected program. Content configuration
-  // (Configure streams) and the tenant-enable checklist live here — no tenant CRUD (that's
-  // master's job), no real distribution links (that's the Distribution tab's job) beyond the
-  // Preview button, which never writes real data (?preview=1).
-  function renderEnrolledBuildingsList(buildings){
-    const container = document.getElementById('enrolledBuildingsList');
-    if (buildings.length === 0){
-      container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet — enrol one above.</p>';
-      return;
-    }
-    container.innerHTML = buildings.map(b => {
-      // No &preview=1 here — the shared .preview-link-btn click handler below already appends
-      // it (it has to, for Distribution's own Preview button, whose link has none); adding it
-      // here too used to produce a harmless but confusing "&preview=1&preview=1" in the URL.
-      const previewLink = `${pageBaseUrl()}${currentProgram().file}?b=${b.id}`;
-      const isExpanded = isEnrolledBuildingExpanded(b);
-      const headerHtml = `<div class="building-header-row">
-        <button type="button" class="building-toggle-btn" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
-        <h3>${esc(b.name)}</h3>
-        <span class="building-tenant-count">${b.tenants.length} tenant${b.tenants.length === 1 ? '' : 's'}</span>
-        ${currentProgramId === 'recycling-sorting' && Object.keys(b.itemOverrides || {}).length ? '<span class="custom-config-badge">Custom bins</span>' : ''}
-        <div class="building-header-actions">
-          ${currentProgramId === 'recycling-sorting' ? '<button class="btn secondary configure-items-btn">Configure streams</button>' : ''}
-          <button class="btn secondary preview-link-btn" data-link="${previewLink}">Preview →</button>
-          <button class="btn secondary remove-enrollment-btn danger-btn">Remove from this induction</button>
-        </div>
-      </div>`;
-      if (!isExpanded){
-        return `<div class="report-block enrolled-building-row" data-building-id="${b.id}">${headerHtml}</div>`;
-      }
-      return `
-      <div class="report-block enrolled-building-row" data-building-id="${b.id}">
-        ${headerHtml}
-        ${editingItemsBuildingId === b.id ? renderItemStreamsEditorHtml() : ''}
-        ${renderTenantEnableChecklistHtml(b)}
-      </div>
-    `;
-    }).join('');
-  }
-
-  // The tenant-enable checklist — the actual admin-side control for `enrollments.enabledTenantIds`
-  // (the data model already existed; this is the UI that was missing). Interprets the 3-state
-  // model exactly as documented: absent/null = everyone enabled, an array = only those tenants,
-  // an explicit [] = no one (paused for everyone without un-enrolling the building).
-  function renderTenantEnableChecklistHtml(b){
-    const enabledIds = b.enabledTenantIds;
-    const isTenantEnabled = (tenantId) => !Array.isArray(enabledIds) || enabledIds.includes(tenantId);
-    const rowsHtml = b.tenants.length
-      ? b.tenants.map(t => `
-        <li data-tenant-id="${esc(t.id)}">
-          <label class="tenant-enable-label">
-            <input type="checkbox" class="tenant-enable-checkbox" data-tenant-id="${esc(t.id)}"${isTenantEnabled(t.id) ? ' checked' : ''}>
-            <span class="tenant-name">${esc(t.name)}</span>
-          </label>
-        </li>`).join('')
-      : '<li class="block-sub">This building has no tenants yet — add them in Edificios (⚙).</li>';
-    return `
-      <div class="report-block tenant-enable-block">
-        <p class="generate-link-title"><strong>Tenants allowed to take this induction</strong></p>
-        <p class="block-sub">Uncheck a tenant to stop offering them this induction's link — their access to other inductions, and all of their history, are unaffected.</p>
-        <ul class="tenant-list">${rowsHtml}</ul>
-        <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
-          <button class="btn secondary save-tenant-enable-btn">Save</button>
-        </div>
-        <p class="block-sub save-tenant-enable-status" style="margin-top:8px;">${esc(tenantEnableStatusByBuildingId[b.id] || '')}</p>
-      </div>`;
-  }
 
   // Shared with admin-distribution.html's own copy — renders a QR code SVG for any link into
   // any container. Distribution's own renderQrCode(buildingId, link) wrapper moved there with
@@ -5390,25 +5010,8 @@ try {
   // (bulk tenant + contact-email Excel import) now live entirely in admin-buildings.html
   // (Workstream 2, Phase 2 of the architecture roadmap).
 
-  document.getElementById('enrollBuildingBtn').addEventListener('click', async () => {
-    const select = document.getElementById('enrollBuildingSelect');
-    const status = document.getElementById('enrollBuildingStatus');
-    const buildingId = select.value;
-    if (!buildingId){ status.textContent = 'Choose a building first.'; return; }
-    status.textContent = 'Enrolling…';
-    try {
-      await setDoc(doc(db, 'enrollments', `${currentProgramId}__${buildingId}`), {
-        programId: currentProgramId, buildingId, itemOverrides: {}, enabledTenantIds: null,
-        createdAt: serverTimestamp(),
-      });
-      status.textContent = 'Enrolled.';
-      await loadEnrolledData();
-    } catch (err){
-      console.error('Failed to enroll building:', err);
-      status.textContent = 'Failed to enrol — check the console for details.';
-    }
-  });
-
+  // The "Enrol an existing building" picker (#enrollBuildingBtn) now lives entirely in
+  // admin-enrolled-buildings.html (Workstream 2, Phase 5 of the architecture roadmap).
 
   // Admins management now lives entirely in admin-admins.html (Workstream 2, Phase 1 of the
   // architecture roadmap).
@@ -5468,15 +5071,10 @@ try {
   // renderProgramsList/addProgramBtn/archive/unarchive now live entirely in admin-catalog.html
   // (Workstream 2, Phase 3 of the architecture roadmap).
 
-  // Shared, stateless — used by both Edificios inscritos' Preview button and Distribution's
-  // Preview/Copy buttons. Attached once at document level rather than duplicated per section.
+  // Only the Reports "Demo" panel's own copy button (#copyDemoLinkBtn) uses this now —
+  // Enrolled Buildings' and Distribution's own Preview/Copy buttons (and .preview-link-btn
+  // entirely) moved to their own pages along with the rest of those tabs (Workstream 2).
   document.addEventListener('click', async (e) => {
-    const previewBtn = e.target.closest('.preview-link-btn');
-    if (previewBtn){
-      window.open(`${previewBtn.dataset.link}&preview=1`, '_blank');
-      return;
-    }
-
     const copyBtn = e.target.closest('.copy-link-btn');
     if (copyBtn){
       try {
@@ -5497,164 +5095,10 @@ try {
   });
 
   // ⚙ Edificios (master) building/tenant CRUD now lives entirely in admin-buildings.html
-  // (Workstream 2, Phase 2 of the architecture roadmap).
-
-  // Pulled out of the .save-items-btn click handler so the programSelector's change handler can
-  // also call it (switching induction while this editor is open now offers to save first — see
-  // that handler below) without duplicating the validate/write/reload logic.
-  async function saveItemStreamsEditor(){
-    const err = validateDraftOverrides();
-    if (err){ itemsEditorError = err; refreshEnrolledBuildingsView(); return false; }
-    try {
-      // updateDoc, NOT setDoc(..., {merge:true}) — merge:true recursively merges a nested
-      // map field instead of replacing it, so a removed item's old override would silently
-      // survive in Firestore even though the draft no longer has it. updateDoc replaces the
-      // whole itemOverrides map wholesale while leaving every other field untouched — found
-      // empirically (a dedicated diagnostic script against the emulator) when a "reset to
-      // default" test only cleared some items and not others.
-      await updateDoc(doc(db, 'enrollments', `recycling-sorting__${editingItemsBuildingId}`), { itemOverrides: draftItemOverrides });
-      editingItemsBuildingId = null;
-      draftItemOverrides = null;
-      itemsEditorError = '';
-      await loadEnrolledData();
-      return true;
-    } catch (err2){
-      console.error('Failed to save item-stream configuration:', err2);
-      alert('Failed to save — check the console for details.');
-      return false;
-    }
-  }
-
-  // ---------------- Edificios inscritos: per-program enrollment + content + tenant access ----------------
-  document.getElementById('enrolledBuildingsList').addEventListener('click', async (e) => {
-    const toggleBtn = e.target.closest('.building-toggle-btn');
-    if (toggleBtn){
-      const buildingId = toggleBtn.closest('.enrolled-building-row').dataset.buildingId;
-      if (expandedEnrolledBuildingIds.has(buildingId)) expandedEnrolledBuildingIds.delete(buildingId);
-      else expandedEnrolledBuildingIds.add(buildingId);
-      refreshEnrolledBuildingsView();
-      return;
-    }
-
-    const configureItemsBtn = e.target.closest('.configure-items-btn');
-    if (configureItemsBtn){
-      const buildingId = configureItemsBtn.closest('.enrolled-building-row').dataset.buildingId;
-      const building = enrolledBuildingsCache.find(b => b.id === buildingId);
-      editingItemsBuildingId = buildingId;
-      draftItemOverrides = JSON.parse(JSON.stringify((building && building.itemOverrides) || {}));
-      itemsEditorError = '';
-      refreshEnrolledBuildingsView();
-      return;
-    }
-
-    const cancelItemsBtn = e.target.closest('.cancel-items-btn');
-    if (cancelItemsBtn){
-      editingItemsBuildingId = null;
-      draftItemOverrides = null;
-      itemsEditorError = '';
-      refreshEnrolledBuildingsView();
-      return;
-    }
-
-    const resetItemsBtn = e.target.closest('.reset-items-btn');
-    if (resetItemsBtn){
-      draftItemOverrides = {};
-      itemsEditorError = '';
-      refreshEnrolledBuildingsView();
-      return;
-    }
-
-    const quickMergeBtn = e.target.closest('.quick-merge-btn');
-    if (quickMergeBtn){
-      const row = quickMergeBtn.closest('.items-editor');
-      const fromStream = row.querySelector('.quick-merge-from').value;
-      const toStream = row.querySelector('.quick-merge-to').value;
-      if (fromStream === toStream){ alert('Choose two different streams to merge.'); return; }
-      Object.keys(catalog).forEach(id => {
-        // Only items actually active in the "from" stream get swept into the merge — an
-        // inactive item sitting there nominally isn't really "in" that stream for a trainee.
-        if (!effectiveActiveInDraft(id)) return;
-        if (effectiveStreamInDraft(id) !== fromStream) return;
-        setDraftOverride(id, toStream, effectiveAcceptableInDraft(id));
-      });
-      itemsEditorError = '';
-      refreshEnrolledBuildingsView();
-      return;
-    }
-
-    const saveItemsBtn = e.target.closest('.save-items-btn');
-    if (saveItemsBtn){
-      await saveItemStreamsEditor();
-      return;
-    }
-
-    const removeEnrollmentBtn = e.target.closest('.remove-enrollment-btn');
-    if (removeEnrollmentBtn){
-      const buildingId = removeEnrollmentBtn.closest('.enrolled-building-row').dataset.buildingId;
-      const building = enrolledBuildingsCache.find(b => b.id === buildingId);
-      const confirmed = confirm(
-        `Remove "${building ? building.name : 'this building'}" from ${currentProgram().name}?\n\n` +
-        `New links for this programme stop working for this building right away. Its configuration ` +
-        `and history are kept and come back automatically if it's re-enrolled later. Its enrolment ` +
-        `in any other induction is not affected.`
-      );
-      if (!confirmed) return;
-      try {
-        // Un-enroll is a soft-delete too (active:false on the enrollment doc, not a real
-        // delete) — same reasoning as "Delete building" in Edificios.
-        await updateDoc(doc(db, 'enrollments', `${currentProgramId}__${buildingId}`), { active: false });
-        await loadEnrolledData();
-      } catch (err){
-        console.error('Failed to remove enrollment:', err);
-        alert('Failed to remove — check the console for details.');
-      }
-      return;
-    }
-
-    const saveTenantEnableBtn = e.target.closest('.save-tenant-enable-btn');
-    if (saveTenantEnableBtn){
-      const row = saveTenantEnableBtn.closest('.enrolled-building-row');
-      const buildingId = row.dataset.buildingId;
-      const building = enrolledBuildingsCache.find(b => b.id === buildingId);
-      const checkboxes = [...row.querySelectorAll('.tenant-enable-checkbox')];
-      const wasEnabled = (tenantId) => !Array.isArray(building.enabledTenantIds) || building.enabledTenantIds.includes(tenantId);
-      const newlyDisabledNames = checkboxes
-        .filter(c => !c.checked && wasEnabled(c.dataset.tenantId))
-        .map(c => (building.tenants.find(t => t.id === c.dataset.tenantId) || {}).name)
-        .filter(Boolean);
-      if (newlyDisabledNames.length){
-        const confirmed = confirm(
-          `Disable this induction for ${newlyDisabledNames.join(', ')}?\n\n` +
-          `People from ${newlyDisabledNames.length === 1 ? 'that tenant' : 'those tenants'} immediately ` +
-          `lose access to this induction's link. Re-enabling is instant and has no side effects.`
-        );
-        if (!confirmed) return;
-      }
-      const status = row.querySelector('.save-tenant-enable-status');
-      status.textContent = 'Saving…';
-      try {
-        const checkedIds = checkboxes.filter(c => c.checked).map(c => c.dataset.tenantId);
-        // 3-state model (see the multi-program plan): every tenant checked -> null (the clean
-        // "no restriction" default, not a redundant full array); none checked -> [] (explicitly
-        // paused for everyone); otherwise the array of checked tenant ids.
-        const value = checkedIds.length === building.tenants.length ? null : checkedIds;
-        await updateDoc(doc(db, 'enrollments', `${currentProgramId}__${buildingId}`), { enabledTenantIds: value });
-        status.textContent = 'Saved.';
-        // Real bug found in testing: loadEnrolledData() fully re-renders #enrolledBuildingsList
-        // right after this, which would otherwise wipe the "Saved." text we just set (a fresh
-        // renderTenantEnableChecklistHtml() starts with a blank status paragraph every time) —
-        // the confirmation was never actually visible to an admin. Stash it in JS state first so
-        // the re-render picks it back up, same fix as itemsEditorError uses for the same problem.
-        tenantEnableStatusByBuildingId[buildingId] = 'Saved.';
-        await loadEnrolledData();
-      } catch (err){
-        console.error('Failed to save tenant access:', err);
-        status.textContent = 'Failed to save — check the console for details.';
-        tenantEnableStatusByBuildingId[buildingId] = 'Failed to save — check the console for details.';
-      }
-      return;
-    }
-  });
+  // (Workstream 2, Phase 2 of the architecture roadmap). saveItemStreamsEditor and the
+  // #enrolledBuildingsList click/change handlers (toggle-expand, Configure streams,
+  // quick-merge, remove-enrollment, tenant-enable checklist) now live entirely in
+  // admin-enrolled-buildings.html (Workstream 2, Phase 5 of the architecture roadmap).
 
   // Distribution's #distributionList click handler (generate-link-btn/revoke-link-btn) now
   // lives entirely in admin-distribution.html (Workstream 2, Phase 4 of the architecture
@@ -5663,63 +5107,21 @@ try {
   // Buildings' own tenant-levels editor + bulk Excel import now live entirely in
   // admin-buildings.html (Workstream 2, Phase 2 of the architecture roadmap).
 
-  document.getElementById('enrolledBuildingsList').addEventListener('change', (e) => {
-    const activeToggle = e.target.closest('.item-active-toggle');
-    if (activeToggle){
-      setDraftActive(activeToggle.dataset.itemId, activeToggle.checked);
-      itemsEditorError = '';
-      refreshEnrolledBuildingsView();
-      return;
-    }
-
-    const itemStreamSelect = e.target.closest('.item-stream-select');
-    if (itemStreamSelect){
-      const itemId = itemStreamSelect.dataset.itemId;
-      setDraftOverride(itemId, itemStreamSelect.value, effectiveAcceptableInDraft(itemId));
-      itemsEditorError = '';
-      refreshEnrolledBuildingsView();
-      return;
-    }
-
-    const acceptableCheckbox = e.target.closest('.item-acceptable-checkbox');
-    if (acceptableCheckbox){
-      const itemId = acceptableCheckbox.dataset.itemId;
-      const stream = acceptableCheckbox.value;
-      const current = effectiveAcceptableInDraft(itemId);
-      const updated = acceptableCheckbox.checked
-        ? [...new Set([...current, stream])]
-        : current.filter(s => s !== stream);
-      setDraftOverride(itemId, effectiveStreamInDraft(itemId), updated);
-      itemsEditorError = '';
-      refreshEnrolledBuildingsView();
-      return;
-    }
-  });
-
-  // Two possible sections, one visible at a time — showTab() is the single place that knows how
-  // to switch between them. Both are scoped to whichever induction is selected above (only
-  // reachable once one is). Buildings/Admins/Catalog live on their own pages (Workstream 2 of the
-  // architecture roadmap); Distribution does too now (Workstream 2 Phase 4) — this file never
-  // shows any of them, so ALL_TABS/showTab no longer need an unscoped mode at all.
-  const ALL_TABS = {
-    reports: { btn: 'tabReportsBtn', section: 'reportSection' },
-    enrolledBuildings: { btn: 'tabEnrolledBuildingsBtn', section: 'enrolledBuildingsSection' },
-  };
+  // Reports is the only section left in this file — Buildings/Admins/Catalog/Distribution/
+  // Enrolled Buildings all live on their own pages now (Workstream 2 of the architecture
+  // roadmap, all 6 phases complete). The old ALL_TABS/showTab(tabName) machinery existed to
+  // switch between multiple sections in-page; with exactly one section left, it collapsed down
+  // to this — #tabDistributionBtn/#tabEnrolledBuildingsBtn (below) are real cross-page
+  // navigations now, not in-page tab switches, so they never call this at all.
   const REPORTS_HEADER = {
     eyebrow: 'Recycling Training · Client Report',
     headline: 'Recycling knowledge, by the numbers.',
     sub: 'Sign in with an authorized account to see live results straight from Firestore — pass rates, weak streams, and the specific items people get wrong most often.',
   };
 
-  // Every remaining tab is induction-scoped now (Buildings/Admins/Catalog moved to their own
-  // pages in Workstream 2), so showTab() no longer needs an unscoped/⚙ mode at all — always
-  // show the tab bar, induction selector, and Reports-flavored header, just swap sections.
-  function showTab(tabName){
-    Object.keys(ALL_TABS).forEach(name => {
-      const { btn, section } = ALL_TABS[name];
-      document.getElementById(btn).classList.toggle('active', name === tabName);
-      document.getElementById(section).style.display = name === tabName ? 'block' : 'none';
-    });
+  function showReports(){
+    document.getElementById('tabReportsBtn').classList.add('active');
+    document.getElementById('reportSection').style.display = 'block';
     // #programTabs stays hidden (no default selection — Sergio's explicit correction) until the
     // first real induction is picked; this is the one place that reveals it.
     document.getElementById('programTabs').style.display = 'flex';
@@ -5728,15 +5130,19 @@ try {
     document.getElementById('pageSub').textContent = REPORTS_HEADER.sub;
     updateViewingBadge();
   }
-  document.getElementById('tabReportsBtn').addEventListener('click', () => showTab('reports'));
-  document.getElementById('tabEnrolledBuildingsBtn').addEventListener('click', () => showTab('enrolledBuildings'));
+  document.getElementById('tabReportsBtn').addEventListener('click', showReports);
 
-  // Distribution now lives on its own page (admin-distribution.html, Workstream 2 Phase 4 of the
-  // architecture roadmap) — unlike Buildings/Admins/Catalog it's program-scoped, so the link
-  // carries whichever induction is currently selected as ?program=.
+  // Distribution and Enrolled Buildings now live on their own pages (admin-distribution.html,
+  // admin-enrolled-buildings.html — Workstream 2 Phases 4 and 5 of the architecture roadmap) —
+  // unlike Buildings/Admins/Catalog they're program-scoped, so each link carries whichever
+  // induction is currently selected as ?program=.
   document.getElementById('tabDistributionBtn').addEventListener('click', () => {
     const emulatorSuffix = new URLSearchParams(window.location.search).get('emulator') === '1' ? '&emulator=1' : '';
     window.location.href = `admin-distribution.html?program=${encodeURIComponent(currentProgramId)}${emulatorSuffix}`;
+  });
+  document.getElementById('tabEnrolledBuildingsBtn').addEventListener('click', () => {
+    const emulatorSuffix = new URLSearchParams(window.location.search).get('emulator') === '1' ? '&emulator=1' : '';
+    window.location.href = `admin-enrolled-buildings.html?program=${encodeURIComponent(currentProgramId)}${emulatorSuffix}`;
   });
 
   // Buildings now lives on its own page (admin-buildings.html, Workstream 2 Phase 2 of the
@@ -5757,42 +5163,16 @@ try {
   // Sergio's explicit correction. The placeholder option has no value, so this only ever
   // fires with a real programId.
   document.getElementById('programSelector').addEventListener('change', async (e) => {
-    // Real bug found in the interface audit: "Configure streams" is Recycling-Sorting-only, but
-    // nothing reset editingItemsBuildingId/draftItemOverrides when the admin switched induction
-    // out from under it — the editor could re-render (and silently save against the wrong
-    // enrollment doc) if the same building happened to be enrolled in whichever program was
-    // switched to. Ask before letting the switch go through with an editor still open.
-    if (editingItemsBuildingId){
-      const buildingName = (enrolledBuildingsCache.find(b => b.id === editingItemsBuildingId) || {}).name || 'this building';
-      const wantsSave = confirm(
-        `You have unsaved changes to ${buildingName}'s item streams.\n\n` +
-        `Press OK to save them before switching inductions, or Cancel to choose whether to discard them instead.`
-      );
-      if (wantsSave){
-        const saved = await saveItemStreamsEditor();
-        if (!saved){
-          // Validation failed (or the write itself failed) — stay put so the admin can see and
-          // fix the error rather than losing the draft to an induction switch.
-          e.target.value = currentProgramId;
-          return;
-        }
-      } else {
-        const wantsDiscard = confirm(`Discard your unsaved changes to ${buildingName} and switch inductions anyway?`);
-        if (!wantsDiscard){
-          e.target.value = currentProgramId;
-          return;
-        }
-        editingItemsBuildingId = null;
-        draftItemOverrides = null;
-        itemsEditorError = '';
-      }
-    }
+    // The "unsaved item-streams edits" guard that used to live here (Configure streams could
+    // silently save against the wrong enrollment doc if the admin switched induction mid-edit)
+    // is gone along with the rest of the item-streams editor — Enrolled Buildings now lives on
+    // its own page (admin-enrolled-buildings.html, Workstream 2 Phase 5), which has no live
+    // induction <select> to switch away from mid-edit in the first place (fixed by ?program=
+    // for the page's whole lifetime, same as Distribution).
     currentProgramId = e.target.value;
     if (!currentProgramId) return;
-    // showTab('reports') itself now shows #programTabs and calls updateViewingBadge() (both
-    // tied to the tab's own scoped:true), since it has to do the same for every other switch
-    // between a scoped and an un-scoped tab — no need to duplicate either call here too.
-    showTab('reports');
+    // showReports() itself shows #programTabs and calls updateViewingBadge().
+    showReports();
     refreshDemoLink(); // no-op if the demo panel isn't open — see its own definition below
     await loadLiveData();
   });
@@ -5893,11 +5273,6 @@ try {
         // programs after sign-out, rather than the safe single-entry default — inconsistent with
         // how thoroughly everything else here resets on sign-out.
         programsCache = DEFAULT_PROGRAMS_CACHE();
-        document.getElementById('enrolledBuildingsSection').style.display = 'none';
-        document.getElementById('enrolledBuildingsList').innerHTML = '';
-        document.getElementById('enrollBuildingSelect').innerHTML = '<option value="">Select a building…</option>';
-        enrolledBuildingsCache = [];
-        allBuildingsCache = [];
         document.getElementById('reportSection').style.display = 'none';
         document.getElementById('kpiRow').innerHTML = '';
         document.getElementById('completedTable').innerHTML = '';
@@ -5906,11 +5281,10 @@ try {
         document.getElementById('missedList').innerHTML = '';
         document.getElementById('streamBars').innerHTML = '';
         document.getElementById('trendChart').innerHTML = '';
-        // Reset which tab LOOKS active for next sign-in, without using showTab() here — that
-        // would set reportSection back to display:block, undoing the hide two lines above and
-        // reintroducing the exact post-sign-out data-visibility bug fixed earlier this project.
+        // Reset which tab LOOKS active for next sign-in, without using showReports() here —
+        // that would set reportSection back to display:block, undoing the hide two lines above
+        // and reintroducing the exact post-sign-out data-visibility bug fixed earlier this project.
         document.getElementById('tabReportsBtn').classList.add('active');
-        document.getElementById('tabEnrolledBuildingsBtn').classList.remove('active');
       }
     });
   }
@@ -5919,7 +5293,7 @@ try {
   // (currentProgram() falls back to Recycling when nothing's selected) — this is a standalone
   // demo feature, not part of the sign-in-gated admin flow.
   document.getElementById('loadSampleBtn').addEventListener('click', () => {
-    showTab('reports');
+    showReports();
     const program = currentProgram();
     const generator = program.id === 'organics-focus' ? generateOrganicsSampleData
       : program.id === 'battery-disposal' ? generateBatterySampleData

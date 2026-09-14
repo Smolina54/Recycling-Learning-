@@ -3110,6 +3110,16 @@ if (auth){
         return;
       }
       document.getElementById('programNameLabel').textContent = currentProgram.name || currentProgram.id;
+      // "← Back to reports" should return to the SAME induction rather than the neutral
+      // "nothing shown yet" state — carry ?program= on the way back too. (Real gap found while
+      // building admin-enrolled-buildings.html: this link was never actually doing this despite
+      // sorting-station-report.html's own onAuthStateChanged comment claiming it did.) Built by
+      // string concatenation (not the URL API/`.href` property, which resolves to a fully-
+      // qualified file:// URL and silently drops the relative form every other cross-page link
+      // in this app relies on).
+      const backLink = document.getElementById('backToReportsLink');
+      const backHrefSep = backLink.getAttribute('href').includes('?') ? '&' : '?';
+      backLink.setAttribute('href', backLink.getAttribute('href') + backHrefSep + 'program=' + encodeURIComponent(currentProgram.id));
       document.getElementById('distributionSection').style.display = 'block';
       await refreshDistributionView();
     } else {

@@ -240,8 +240,12 @@ async function runFlow(page){
     linksListTextAfterOneRevoke);
 
   // --- Sidebar-less nav: "← Back to reports" and cross-page session persistence ---
+  // Carries ?program= too (a real gap found and fixed while building admin-enrolled-buildings.html
+  // — this link used to silently drop it) so the round trip lands back on the same induction
+  // instead of a neutral "nothing selected" state.
   const backHref = await page.$eval('#backToReportsLink', el => el.getAttribute('href')).catch(() => null);
-  check('"← Back to reports" points at sorting-station-report.html, preserving ?emulator=1', backHref === 'sorting-station-report.html?emulator=1', backHref);
+  check('"← Back to reports" points at sorting-station-report.html, preserving ?emulator=1 and carrying ?program=',
+    backHref === 'sorting-station-report.html?emulator=1&program=recycling-sorting', backHref);
 
   await Promise.all([page.waitForNavigation(), page.click('#backToReportsLink')]);
   await page.waitForFunction(

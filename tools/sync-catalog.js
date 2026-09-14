@@ -1,15 +1,24 @@
-// Regenerates the `catalog` object inside sorting-station-report.html from the
-// authoritative `ALL_ITEMS` array in recycling-training.html, so the two files can
-// never silently drift apart. Run: npm run sync-catalog
+// Regenerates the `catalog` object inside every page that carries its own copy from the
+// authoritative `ALL_ITEMS` array in recycling-training.html, so none of them can silently
+// drift apart. Run: npm run sync-catalog
 //
-// Syncs ALL catalog items (both the ones in rotation and the inactive backups) — the report's
-// "Configure streams" editor lets an admin turn any of them on or off per building, so it needs
-// to know about every one of them, not just the currently-active subset.
+// Syncs ALL catalog items (both the ones in rotation and the inactive backups) — the item-
+// streams editor (in admin-enrolled-buildings.html) lets an admin turn any of them on or off
+// per building, so it needs to know about every one of them, not just the currently-active
+// subset. sorting-station-report.html also carries its own copy (used by sample-data
+// generation and the missed-items ranking) even though it no longer has the editor itself
+// (Workstream 2, Phase 5 of the architecture roadmap moved Enrolled Buildings — and with it
+// the editor — to its own page, but Reports still needs `catalog` for other things).
 const fs = require('fs');
 const path = require('path');
 
 const GAME_PATH = path.join(__dirname, '..', 'outputs', 'recycling-training.html');
-const REPORT_PATH = path.join(__dirname, '..', 'outputs', 'sorting-station-report.html');
+// Every page with its own AUTO-GENERATED CATALOG block — add a new path here if a future page
+// ever needs its own copy too.
+const TARGET_PATHS = [
+  path.join(__dirname, '..', 'outputs', 'sorting-station-report.html'),
+  path.join(__dirname, '..', 'outputs', 'admin-enrolled-buildings.html'),
+];
 const START_MARKER = '// AUTO-GENERATED CATALOG START';
 const END_MARKER = '// AUTO-GENERATED CATALOG END';
 
@@ -41,22 +50,17 @@ function buildCatalogBlock(catalog){
   return `${START_MARKER} — do not edit by hand, run \`npm run sync-catalog\` after\n  // changing the \`ALL_ITEMS\` array in recycling-training.html (see tools/sync-catalog.js).\n  const catalog = {\n${lines.join('\n')}\n  };\n  ${END_MARKER}`;
 }
 
-function computeUpdatedReport(){
-  const gameHtml = fs.readFileSync(GAME_PATH, 'utf8');
-  const catalog = extractCatalog(gameHtml);
-  if (catalog.length === 0){
-    throw new Error('No items extracted from recycling-training.html — refusing to overwrite the report catalog with an empty one.');
-  }
+// Computes the updated content for one target file. Returns null if that file has no
+// AUTO-GENERATED CATALOG markers at all (not every page needs one).
+function computeUpdatedFile(targetPath, catalog){
+  if (!fs.existsSync(targetPath)) return null;
+  const targetHtml = fs.readFileSync(targetPath, 'utf8');
+  const startIdx = targetHtml.indexOf(START_MARKER);
+  const endIdx = targetHtml.indexOf(END_MARKER);
+  if (startIdx === -1 || endIdx === -1) return null;
 
-  const reportHtml = fs.readFileSync(REPORT_PATH, 'utf8');
-  const startIdx = reportHtml.indexOf(START_MARKER);
-  const endIdx = reportHtml.indexOf(END_MARKER);
-  if (startIdx === -1 || endIdx === -1){
-    throw new Error('Could not find the AUTO-GENERATED CATALOG markers in sorting-station-report.html.');
-  }
-
-  const before = reportHtml.slice(0, startIdx);
-  const after = reportHtml.slice(endIdx + END_MARKER.length);
+  const before = targetHtml.slice(0, startIdx);
+  const after = targetHtml.slice(endIdx + END_MARKER.length);
   // The file is CRLF on disk (Windows); buildCatalogBlock() writes plain LF. Left as-is, the
   // very next edit to this file (any editor/tool that normalizes line endings) turns the
   // freshly-written block's LF into CRLF — which then looks "out of sync" again the next time
@@ -71,19 +75,43 @@ function computeUpdatedReport(){
   const rawBlock = buildCatalogBlock(catalog).replace(/\r\n/g, '\n');
   const usesCRLF = before.includes('\r\n');
   const catalogBlock = usesCRLF ? rawBlock.replace(/\n/g, '\r\n') : rawBlock;
-  return { reportHtml, updated: before + catalogBlock + after, catalogCount: catalog.length };
+  return { targetHtml, updated: before + catalogBlock + after };
+}
+
+// Computes updates for every target file that has its own catalog block. Used by
+// tests/catalog-sync.test.js to verify all of them stay in sync, and by main() to write them.
+function computeAllUpdates(){
+  const gameHtml = fs.readFileSync(GAME_PATH, 'utf8');
+  const catalog = extractCatalog(gameHtml);
+  if (catalog.length === 0){
+    throw new Error('No items extracted from recycling-training.html — refusing to overwrite any catalog with an empty one.');
+  }
+  const results = TARGET_PATHS.map((targetPath) => {
+    const result = computeUpdatedFile(targetPath, catalog);
+    return result ? { targetPath, ...result } : { targetPath, missing: true };
+  });
+  const missing = results.filter(r => r.missing);
+  return { results: results.filter(r => !r.missing), catalogCount: catalog.length, missing };
 }
 
 function main(){
-  const { reportHtml, updated, catalogCount } = computeUpdatedReport();
-  if (updated === reportHtml){
-    console.log(`Already in sync — ${catalogCount} items, nothing to change.`);
-    return;
+  const { results, catalogCount, missing } = computeAllUpdates();
+  if (missing.length){
+    throw new Error(`Could not find the AUTO-GENERATED CATALOG markers in: ${missing.map(r => r.targetPath).join(', ')}`);
   }
-  fs.writeFileSync(REPORT_PATH, updated, 'utf8');
-  console.log(`Synced ${catalogCount} items into sorting-station-report.html.`);
+  let anyChanged = false;
+  for (const { targetPath, targetHtml, updated } of results){
+    if (updated === targetHtml){
+      console.log(`Already in sync — ${catalogCount} items, nothing to change in ${path.basename(targetPath)}.`);
+      continue;
+    }
+    fs.writeFileSync(targetPath, updated, 'utf8');
+    console.log(`Synced ${catalogCount} items into ${path.basename(targetPath)}.`);
+    anyChanged = true;
+  }
+  if (!anyChanged) console.log('Every target file was already in sync.');
 }
 
-module.exports = { computeUpdatedReport };
+module.exports = { computeAllUpdates, TARGET_PATHS };
 
 if (require.main === module) main();
