@@ -198,7 +198,12 @@ async function runFlow(page){
   await page.select(`${enrolledSelector} .item-stream-select[data-item-id="pc-box"]`, 'mr');
   await page.select(`${enrolledSelector} .item-stream-select[data-item-id="mr-bottle"]`, 'pc');
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  // save-items-btn's handler is async (updateDoc + await loadEnrolledData()) — wait for the
+  // real re-rendered badge instead of guessing how long that takes.
+  await page.waitForFunction(
+    (sel) => document.querySelector(`${sel} .custom-config-badge`) !== null,
+    { timeout: 8000 }, enrolledSelector
+  );
   check('"Custom bins" badge appears on the building once an override is saved',
     Boolean(await page.$(`${enrolledSelector} .custom-config-badge`)));
 
@@ -212,7 +217,10 @@ async function runFlow(page){
   await page.select(`${enrolledSelector} .item-stream-select[data-item-id="pc-box"]`, 'pc');
   await page.select(`${enrolledSelector} .item-stream-select[data-item-id="mr-bottle"]`, 'mr');
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    (sel) => document.querySelector(`${sel} .items-editor`) === null,
+    { timeout: 8000 }, enrolledSelector
+  );
   await page.click(`${enrolledSelector} .configure-items-btn`);
   await new Promise(r => setTimeout(r, 200));
 
@@ -225,7 +233,10 @@ async function runFlow(page){
 
   await page.click(`${enrolledSelector} .item-active-toggle[data-item-id="ew-battery"]`);
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    (sel) => document.querySelector(`${sel} .items-editor`) === null,
+    { timeout: 8000 }, enrolledSelector
+  );
   await page.click(`${enrolledSelector} .configure-items-btn`);
   await new Promise(r => setTimeout(r, 200));
   const batteryOnAfterReload = await page.$eval(`${enrolledSelector} .item-active-toggle[data-item-id="ew-battery"]`, el => el.checked);
@@ -234,7 +245,12 @@ async function runFlow(page){
   // A stream must land on 0 (merged away) or ≥5 correct items, never a partial number.
   await page.click(`${enrolledSelector} .item-active-toggle[data-item-id="og-fish"]`);
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 400));
+  // A rejected save (validateDraftOverrides() fails) never awaits anything — refreshEnrolledBuildingsView()
+  // runs synchronously — but wait for the real error text instead of assuming that stays true.
+  await page.waitForFunction(
+    (sel) => (document.querySelector(`${sel} .items-editor-error`)?.textContent || '').length > 0,
+    { timeout: 5000 }, enrolledSelector
+  );
   const partialStreamError = await page.$eval(`${enrolledSelector} .items-editor-error`, el => el.textContent).catch(() => '');
   check('turning Organics down to 4 correct items is rejected at save time, naming the stream and count',
     partialStreamError.includes('Organics') && partialStreamError.includes('4'), partialStreamError);
@@ -243,7 +259,10 @@ async function runFlow(page){
 
   await page.click(`${enrolledSelector} .item-active-toggle[data-item-id="og-breadcrust"]`);
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    (sel) => document.querySelector(`${sel} .items-editor`) === null,
+    { timeout: 8000 }, enrolledSelector
+  );
   await page.click(`${enrolledSelector} .configure-items-btn`);
   await new Promise(r => setTimeout(r, 200));
   const fishOffAfterReload = await page.$eval(`${enrolledSelector} .item-active-toggle[data-item-id="og-fish"]`, el => !el.checked);
@@ -254,7 +273,10 @@ async function runFlow(page){
   await page.click(`${enrolledSelector} .item-active-toggle[data-item-id="og-fish"]`);
   await page.click(`${enrolledSelector} .item-active-toggle[data-item-id="og-breadcrust"]`);
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    (sel) => document.querySelector(`${sel} .items-editor`) === null,
+    { timeout: 8000 }, enrolledSelector
+  );
   await page.click(`${enrolledSelector} .configure-items-btn`);
   await new Promise(r => setTimeout(r, 200));
 
@@ -262,7 +284,10 @@ async function runFlow(page){
   const appleCheckboxSelector = `${enrolledSelector} .item-acceptable-checkbox[data-item-id="og-apple"][value="gw"]`;
   await page.$eval(appleCheckboxSelector, el => el.click());
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    (sel) => document.querySelector(`${sel} .items-editor`) === null,
+    { timeout: 8000 }, enrolledSelector
+  );
   await page.click(`${enrolledSelector} .configure-items-btn`);
   await new Promise(r => setTimeout(r, 200));
   const applePrimaryValue = await page.$eval(`${enrolledSelector} .item-stream-select[data-item-id="og-apple"]`, el => el.value);
@@ -272,7 +297,10 @@ async function runFlow(page){
 
   await page.$eval(appleCheckboxSelector, el => el.click());
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    (sel) => document.querySelector(`${sel} .items-editor`) === null,
+    { timeout: 8000 }, enrolledSelector
+  );
   await page.click(`${enrolledSelector} .configure-items-btn`);
   await new Promise(r => setTimeout(r, 200));
   const appleAcceptableAfterUncheck = await page.$eval(appleCheckboxSelector, el => el.checked);
@@ -280,7 +308,10 @@ async function runFlow(page){
 
   await page.$eval(`${enrolledSelector} .reset-items-btn`, el => el.click());
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    (sel) => document.querySelector(`${sel} .custom-config-badge`) === null,
+    { timeout: 8000 }, enrolledSelector
+  );
   check('the "Custom bins" badge disappears after resetting to default and saving',
     !(await page.$(`${enrolledSelector} .custom-config-badge`)));
 
@@ -308,7 +339,10 @@ async function runFlow(page){
   await page.$eval(`${enrolledSelector} .quick-merge-btn`, el => el.click());
   await new Promise(r => setTimeout(r, 150));
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 300));
+  await page.waitForFunction(
+    (sel) => (document.querySelector(`${sel} .items-editor-error`)?.textContent || '').length > 0,
+    { timeout: 5000 }, enrolledSelector
+  );
   const validationErrorText = await page.$eval(`${enrolledSelector} .items-editor-error`, el => el.textContent).catch(() => '');
   check('a configuration that would starve a stream of decoys is rejected at save time, not silently accepted',
     validationErrorText.length > 0, validationErrorText);
@@ -320,8 +354,12 @@ async function runFlow(page){
   await page.evaluate(() => { window.__openedUrls = []; window.open = (u) => { window.__openedUrls.push(u); return null; }; });
   await page.click(`${enrolledSelector} .preview-link-btn`);
   const previewUrls = await page.evaluate(() => window.__openedUrls);
-  check('the "Preview" button opens that building\'s real link with &preview=1 appended',
-    previewUrls.length === 1 && previewUrls[0].includes(`recycling-training.html?b=${buildingId}`) && previewUrls[0].endsWith('&preview=1'),
+  // In emulator mode, the preview window also needs &emulator=1 appended so it talks to the
+  // local emulator too (a real, fixed bug found in a code audit — the ephemeral preview window
+  // used to silently open against production Firebase during local testing) — this test runs
+  // in emulator mode, so expect it appended after &preview=1.
+  check('the "Preview" button opens that building\'s real link with &preview=1&emulator=1 appended',
+    previewUrls.length === 1 && previewUrls[0].includes(`recycling-training.html?b=${buildingId}`) && previewUrls[0].endsWith('&preview=1&emulator=1'),
     previewUrls.join(', '));
 
   // --- Tenant-enable checklist: 3-state model — absent/null = everyone, an array = only those

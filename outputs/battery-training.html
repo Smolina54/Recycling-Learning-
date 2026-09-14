@@ -646,6 +646,12 @@ try {
     let buildingId = params.get('b');
     let lockedTenantId = null;
     const linkId = params.get('l');
+    // Both params feed straight into doc(db, ..., id) calls below — reject a '/' outright
+    // rather than letting it split into unintended path segments (see recycling-training.html).
+    if ((buildingId && buildingId.includes('/')) || (linkId && linkId.includes('/'))){
+      showInvalidLink();
+      return;
+    }
     if (linkId){
       if (!db){ showInvalidLink(); return; }
       const resolved = await resolveDistributionLink(linkId);

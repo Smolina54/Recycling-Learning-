@@ -2742,6 +2742,7 @@ var qrcode = function() {
     </label>
     <span class="viewing-badge" id="viewingBadge" style="display:none;"></span>
   </div>
+  <p class="block-sub" id="pageLoadError" style="display:none;">Something went wrong loading the induction list — try reloading. If it keeps happening, check the browser console for details.</p>
 
   <div class="admin-tabs" id="programTabs" style="display:none;">
     <button class="tab-btn active" id="tabReportsBtn">Reports</button>
@@ -2901,12 +2902,16 @@ const firebaseConfig = {
 const RECAPTCHA_SITE_KEY = '';
 
 let db = null, auth = null, functions = null;
+// Hoisted out of the try block below (not `const` inside it) — code further down the page
+// (the Preview/Demo-link builders) needs to read this too, and a `const` scoped to the try
+// block is unreachable from there, throwing "isEmulatorMode is not defined" the moment
+// anything outside the block references it.
+const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
   auth = getAuth(firebaseApp);
   functions = getFunctions(firebaseApp);
-  const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
   // Same reasoning as recycling-training.html: App Check's reCAPTCHA Enterprise call needs a
   // real round-trip from one of the key's registered domains, which file:// (what every
   // automated test loads, with or without ?emulator=1 — e.g. report-ui.test.js never sets it)
@@ -5233,15 +5238,23 @@ try {
         // what?"). programSelector starts on its own disabled placeholder; nothing below it
         // renders until the change handler fires with a real selection.
         document.getElementById('programSelectorRow').style.display = 'flex';
-        await refreshProgramSelector();
-        // Lets admin-distribution.html's "← Back to reports" link (Workstream 2 Phase 4 of the
-        // architecture roadmap) land back on the same induction instead of the neutral "nothing
-        // shown yet" state — an explicit, URL-carried choice, not a silent guessed default.
-        const requestedProgramId = new URLSearchParams(window.location.search).get('program');
-        const select = document.getElementById('programSelector');
-        if (requestedProgramId && [...select.options].some(o => o.value === requestedProgramId)){
-          select.value = requestedProgramId;
-          select.dispatchEvent(new Event('change'));
+        document.getElementById('pageLoadError').style.display = 'none';
+        try {
+          await refreshProgramSelector();
+          // Lets admin-distribution.html's "← Back to reports" link (Workstream 2 Phase 4 of the
+          // architecture roadmap) land back on the same induction instead of the neutral "nothing
+          // shown yet" state — an explicit, URL-carried choice, not a silent guessed default.
+          const requestedProgramId = new URLSearchParams(window.location.search).get('program');
+          const select = document.getElementById('programSelector');
+          if (requestedProgramId && [...select.options].some(o => o.value === requestedProgramId)){
+            select.value = requestedProgramId;
+            select.dispatchEvent(new Event('change'));
+          }
+        } catch (err){
+          // A Firestore read here can genuinely fail (network blip, offline) — surface it
+          // instead of leaving the page stuck on a permanently-disabled empty dropdown.
+          console.error('Failed to load the induction list:', err);
+          document.getElementById('pageLoadError').style.display = 'block';
         }
       }
       else {
@@ -5267,6 +5280,7 @@ try {
         document.getElementById('programSelector').innerHTML = '';
         document.getElementById('viewingBadge').style.display = 'none';
         document.getElementById('viewingBadge').textContent = '';
+        document.getElementById('pageLoadError').style.display = 'none';
         currentProgramId = '';
         // Otherwise currentProgram() (which falls back to programsCache[0] whenever
         // currentProgramId doesn't match) would keep returning the PREVIOUS session's fetched
@@ -5334,7 +5348,8 @@ try {
   // No building/tenant to pick here — just "what does the training itself look like".
   // <program file>?preview=1 with no ?b= skips the id-gate entirely for this case.
   document.getElementById('previewTrainingBtn').addEventListener('click', () => {
-    window.open(`${pageBaseUrl()}${currentProgram().file}?preview=1`, '_blank');
+    const emulatorSuffix = isEmulatorMode ? '&emulator=1' : '';
+    window.open(`${pageBaseUrl()}${currentProgram().file}?preview=1${emulatorSuffix}`, '_blank');
   });
 
   // Recomputes and re-renders the demo link/QR for whichever induction is currently selected.
@@ -5348,7 +5363,8 @@ try {
     // Only recycling-sorting has a real short demo mode (?demo=1) built. Other inductions fall
     // back to the full preview flow (?preview=1) until demo mode is built for them too.
     const param = program.id === 'recycling-sorting' ? 'demo=1' : 'preview=1';
-    const link = `${pageBaseUrl()}${program.file}?${param}`;
+    const emulatorSuffix = isEmulatorMode ? '&emulator=1' : '';
+    const link = `${pageBaseUrl()}${program.file}?${param}${emulatorSuffix}`;
     document.getElementById('demoLinkText').textContent = link;
     document.getElementById('copyDemoLinkBtn').dataset.link = link;
     renderQrInto(document.getElementById('demoQrContainer'), link);

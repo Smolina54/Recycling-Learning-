@@ -656,6 +656,12 @@ try {
     let buildingId = params.get('b');
     let lockedTenantId = null;
     const linkId = params.get('l');
+    // Both params feed straight into doc(db, ..., id) calls below — reject a '/' outright
+    // rather than letting it split into unintended path segments (see recycling-training.html).
+    if ((buildingId && buildingId.includes('/')) || (linkId && linkId.includes('/'))){
+      showInvalidLink();
+      return;
+    }
     if (linkId){
       if (!db){ showInvalidLink(); return; }
       const resolved = await resolveDistributionLink(linkId);
@@ -1146,6 +1152,10 @@ try {
   }
 
   nextPhaseBtn.addEventListener('click', () => {
+    // The button is only ever hidden via style.display, not disabled — guard on phaseLocked
+    // (the same flag every drag/drop handler already checks) so it can't be clicked
+    // programmatically to skip straight to a fabricated 100% result.
+    if (!phaseLocked) return;
     if (phaseIndex === streams.length - 1) showResults();
     else startPhase(phaseIndex + 1);
   });

@@ -122,7 +122,8 @@ async function runFlow(page){
   await page.click('#toGameBtn');
   await new Promise(r => setTimeout(r, 300));
   await page.click('#startGameBtn');
-  await new Promise(r => setTimeout(r, 300));
+  // startPhase(0) renders the board synchronously — wait for the real board instead of guessing.
+  await page.waitForFunction(() => document.querySelectorAll('.board-item').length > 0, { timeout: 5000 });
 
   const boardIds = await page.$$eval('.board-item', els => els.map(el => el.dataset.id));
   check('the board shows exactly 10 items (5 correct + 5 decoys)', boardIds.length === 10, boardIds.join(','));
@@ -134,7 +135,11 @@ async function runFlow(page){
   const reached = await resolvePhase(page, 25);
   check('the single phase can be fully resolved (all correct items sorted)', reached);
   await page.click('#nextPhaseBtn');
-  await new Promise(r => setTimeout(r, 400));
+  // showResults() renders synchronously — wait for the real active state instead of guessing.
+  await page.waitForFunction(
+    () => document.getElementById('results').classList.contains('active'),
+    { timeout: 5000 }
+  ).catch(() => {});
 
   check('results screen is active after the one phase', await page.$eval('#results', el => el.classList.contains('active')).catch(() => false));
   const scoreOfText = await page.$eval('#scoreOf', el => el.textContent.trim()).catch(() => '');
@@ -144,16 +149,22 @@ async function runFlow(page){
     projectId: 'esg-1-98f35',
     firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
   });
+  // submitResults() is fire-and-forget from showResults()'s point of view — poll for the doc to
+  // actually land instead of assuming a single read right after is enough (same reasoning as
+  // battery-training.test.js / game-regression-overrides.test.js).
   let submissionOk = false;
-  await verifyEnv.withSecurityRulesDisabled(async (context) => {
-    const db = context.firestore();
-    const q = query(collection(db, 'submissions'), where('email', '==', 'jane-organics@example.com'));
-    const snap = await getDocs(q);
-    if (!snap.empty){
-      const data = snap.docs[0].data();
-      submissionOk = data.programId === 'organics-focus' && data.total === 5 && typeof data.score === 'number';
-    }
-  });
+  for (let i = 0; i < 20 && !submissionOk; i++){
+    if (i > 0) await new Promise(r => setTimeout(r, 300));
+    await verifyEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      const q = query(collection(db, 'submissions'), where('email', '==', 'jane-organics@example.com'));
+      const snap = await getDocs(q);
+      if (!snap.empty){
+        const data = snap.docs[0].data();
+        submissionOk = data.programId === 'organics-focus' && data.total === 5 && typeof data.score === 'number';
+      }
+    });
+  }
   check('the submission was written with programId organics-focus and total 5', submissionOk);
 }
 
@@ -161,7 +172,12 @@ async function runNotEnrolledFlow(browser){
   const page = await browser.newPage();
   const gameUrl = `${url.pathToFileURL(GAME_PATH).href}?b=${NOT_ENROLLED_BUILDING_ID}&emulator=1`;
   await page.goto(gameUrl, { waitUntil: 'domcontentloaded' });
-  await new Promise(r => setTimeout(r, 1500));
+  // The enrollment-gate check is its own Firestore round-trip — poll for the real invalid-link
+  // card instead of guessing how long that takes.
+  await page.waitForFunction(
+    () => document.getElementById('idCardInvalid') && getComputedStyle(document.getElementById('idCardInvalid')).display !== 'none',
+    { timeout: 10000 }
+  ).catch(() => {});
   const invalidShown = await page.$eval('#idCardInvalid', el => getComputedStyle(el).display !== 'none').catch(() => false);
   check('a building enrolled in Recycling but NOT Organics Focus sees the invalid-link fallback here', invalidShown);
   await page.close();

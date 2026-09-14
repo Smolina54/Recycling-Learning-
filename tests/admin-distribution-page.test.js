@@ -147,8 +147,11 @@ async function runFlow(page){
   await page.evaluate(() => { window.__openedUrls = []; window.open = (u) => { window.__openedUrls.push(u); return null; }; });
   await page.click(`${distributionSelector} .preview-link-btn`);
   const previewUrls = await page.evaluate(() => window.__openedUrls);
-  check('Preview opens the link with &preview=1 appended',
-    previewUrls.length === 1 && previewUrls[0] === `${linkText}&preview=1`, previewUrls.join(', '));
+  // In emulator mode, the preview window also needs &emulator=1 appended so it talks to the
+  // local emulator too (a real, fixed bug found in a code audit — the ephemeral preview window
+  // used to silently open against production Firebase during local testing).
+  check('Preview opens the link with &preview=1 (and &emulator=1, since this test runs in emulator mode) appended',
+    previewUrls.length === 1 && previewUrls[0] === `${linkText}&preview=1&emulator=1`, previewUrls.join(', '));
 
   let clipboardGrantable = true;
   try { await page.browserContext().overridePermissions(distributionUrl('recycling-sorting'), ['clipboard-write', 'clipboard-read']); }

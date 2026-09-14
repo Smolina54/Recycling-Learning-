@@ -133,9 +133,30 @@ async function main(){
     groupRowsAfterClear === groupRowsBaseline, `${groupRowsAfterClear} == ${groupRowsBaseline}`);
 
   const errorsBeforeExport = consoleErrors.length;
+  // exportBtn's handler builds a Blob and downloads it via URL.createObjectURL() + a throwaway
+  // <a click> — there's no real save-file dialog to intercept under Puppeteer, but the Blob
+  // itself is real, so capture its text here instead of only checking that the click didn't
+  // throw (a regression that emitted an empty/malformed CSV would otherwise pass silently).
+  await page.evaluate(() => {
+    window.__exportedCsvText = null;
+    const origCreateObjectURL = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = (blob) => {
+      blob.text().then((text) => { window.__exportedCsvText = text; });
+      return origCreateObjectURL(blob);
+    };
+  });
   await page.click('#exportBtn');
-  await new Promise(r => setTimeout(r, 300));
+  await page.waitForFunction(() => window.__exportedCsvText !== null, { timeout: 8000 });
   check('export CSV click does not throw', consoleErrors.length === errorsBeforeExport);
+
+  const exportedCsvText = await page.evaluate(() => window.__exportedCsvText);
+  const exportedCsvLines = exportedCsvText.trim().length ? exportedCsvText.trim().split('\n') : [];
+  check('the exported CSV has a real, non-empty header row with the expected columns',
+    exportedCsvLines.length > 0 && ['building', 'tenant', 'level', 'email', 'timestamp'].every(h => exportedCsvLines[0].split(',').includes(h)),
+    exportedCsvLines[0] || '(empty)');
+  check('the exported CSV has one data row per submission in the current (unfiltered) view, not empty/truncated',
+    exportedCsvLines.length - 1 === parseInt(submissionsKpi, 10),
+    `${exportedCsvLines.length - 1} rows vs KPI ${submissionsKpi}`);
 
   const unexpectedErrors = consoleErrors.filter(e => !e.includes('Firebase is not configured yet'));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));

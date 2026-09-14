@@ -2733,6 +2733,7 @@ var qrcode = function() {
       <h2>Distribution</h2>
     </div>
     <p class="block-sub" id="noProgramNote" style="display:none;">No <code>?program=</code> was given, or it doesn't match a registered induction — <a class="back-to-reports-link" href="sorting-station-report.html">go back and pick one from Reports</a>.</p>
+    <p class="block-sub" id="pageLoadError" style="display:none;">Something went wrong loading this page — try reloading. If it keeps happening, check the browser console for details.</p>
 
     <div id="distributionList"></div>
   </section>
@@ -2765,12 +2766,15 @@ const firebaseConfig = {
 const RECAPTCHA_SITE_KEY = ''; // disabled 2026-08-28 — see sorting-station-report.html's comment
 
 let db = null, auth = null, functions = null;
+// Hoisted out of the try block below — code further down the page (the Preview button) needs
+// to read this too, and a `const` scoped to the try block is unreachable from there, throwing
+// "isEmulatorMode is not defined" the moment anything outside the block references it.
+const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
   auth = getAuth(firebaseApp);
   functions = getFunctions(firebaseApp);
-  const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
   if (RECAPTCHA_SITE_KEY && !isEmulatorMode && window.location.protocol !== 'file:'){
     initializeAppCheck(firebaseApp, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
   }
@@ -3021,7 +3025,11 @@ document.getElementById('distributionList').addEventListener('click', async (e) 
 document.addEventListener('click', async (e) => {
   const previewBtn = e.target.closest('.preview-link-btn');
   if (previewBtn){
-    window.open(`${previewBtn.dataset.link}&preview=1`, '_blank');
+    // The stored link is the real, shareable one (no ?emulator=1, so Copy/QR stay correct for
+    // production) — only the ephemeral preview window needs to also talk to the local emulator
+    // while testing, so append it here rather than on the stored link itself.
+    const emulatorSuffix = isEmulatorMode ? '&emulator=1' : '';
+    window.open(`${previewBtn.dataset.link}&preview=1${emulatorSuffix}`, '_blank');
     return;
   }
 
@@ -3103,25 +3111,34 @@ if (auth){
       document.getElementById('authZone').style.display = 'none';
       document.getElementById('showEmailSignInBtn').style.display = 'none';
       document.getElementById('emailSignInForm').style.display = 'none';
-      currentProgram = await loadProgram();
-      if (!currentProgram){
-        document.getElementById('noProgramNote').style.display = 'block';
+      document.getElementById('pageLoadError').style.display = 'none';
+      try {
+        currentProgram = await loadProgram();
+        if (!currentProgram){
+          document.getElementById('noProgramNote').style.display = 'block';
+          document.getElementById('distributionSection').style.display = 'block';
+          return;
+        }
+        document.getElementById('programNameLabel').textContent = currentProgram.name || currentProgram.id;
+        // "← Back to reports" should return to the SAME induction rather than the neutral
+        // "nothing shown yet" state — carry ?program= on the way back too. (Real gap found while
+        // building admin-enrolled-buildings.html: this link was never actually doing this despite
+        // sorting-station-report.html's own onAuthStateChanged comment claiming it did.) Built by
+        // string concatenation (not the URL API/`.href` property, which resolves to a fully-
+        // qualified file:// URL and silently drops the relative form every other cross-page link
+        // in this app relies on).
+        const backLink = document.getElementById('backToReportsLink');
+        const backHrefSep = backLink.getAttribute('href').includes('?') ? '&' : '?';
+        backLink.setAttribute('href', backLink.getAttribute('href') + backHrefSep + 'program=' + encodeURIComponent(currentProgram.id));
         document.getElementById('distributionSection').style.display = 'block';
-        return;
+        await refreshDistributionView();
+      } catch (err){
+        // Firestore reads here can genuinely fail (network blip, offline) — surface it instead
+        // of leaving the page silently stuck with nothing rendered and no explanation.
+        console.error('Failed to load Distribution:', err);
+        document.getElementById('pageLoadError').style.display = 'block';
+        document.getElementById('distributionSection').style.display = 'block';
       }
-      document.getElementById('programNameLabel').textContent = currentProgram.name || currentProgram.id;
-      // "← Back to reports" should return to the SAME induction rather than the neutral
-      // "nothing shown yet" state — carry ?program= on the way back too. (Real gap found while
-      // building admin-enrolled-buildings.html: this link was never actually doing this despite
-      // sorting-station-report.html's own onAuthStateChanged comment claiming it did.) Built by
-      // string concatenation (not the URL API/`.href` property, which resolves to a fully-
-      // qualified file:// URL and silently drops the relative form every other cross-page link
-      // in this app relies on).
-      const backLink = document.getElementById('backToReportsLink');
-      const backHrefSep = backLink.getAttribute('href').includes('?') ? '&' : '?';
-      backLink.setAttribute('href', backLink.getAttribute('href') + backHrefSep + 'program=' + encodeURIComponent(currentProgram.id));
-      document.getElementById('distributionSection').style.display = 'block';
-      await refreshDistributionView();
     } else {
       document.getElementById('authZone').style.display = '';
       document.getElementById('authStatus').textContent = 'Sign in with an authorized account to manage distribution links.';
@@ -3131,6 +3148,7 @@ if (auth){
       document.getElementById('distributionSection').style.display = 'none';
       document.getElementById('distributionList').innerHTML = '';
       document.getElementById('noProgramNote').style.display = 'none';
+      document.getElementById('pageLoadError').style.display = 'none';
     }
   });
 }

@@ -23,6 +23,8 @@ const GRAPH_SENDER_MAILBOX = defineSecret('GRAPH_SENDER_MAILBOX');
 const OWNER_EMAIL = 'esgtradeflex@gmail.com';
 
 const MAX_RECIPIENTS = 20;
+const MAX_SUBJECT_LENGTH = 300;
+const MAX_TEXT_LENGTH = 20000;
 
 function isValidEmail(str) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(str || '').trim());
@@ -46,6 +48,12 @@ function validatePayload(data) {
   }
   if (!subject || !text) {
     throw new HttpsError('invalid-argument', 'A subject and message body are required.');
+  }
+  if (String(subject).length > MAX_SUBJECT_LENGTH) {
+    throw new HttpsError('invalid-argument', `Subject must be ${MAX_SUBJECT_LENGTH} characters or fewer.`);
+  }
+  if (String(text).length > MAX_TEXT_LENGTH) {
+    throw new HttpsError('invalid-argument', `Message body must be ${MAX_TEXT_LENGTH} characters or fewer.`);
   }
   return { to, subject, text };
 }

@@ -138,7 +138,12 @@ async function runFlow(page, consoleErrors){
   await page.evaluate(() => { document.getElementById('newBuildingName').value = ''; });
   await page.type('#newBuildingName', buildingName);
   await page.click('#addBuildingBtn');
-  await new Promise(r => setTimeout(r, 600));
+  // addBuildingBtn's handler is async (setDoc + await loadMasterBuildings()) — wait for the
+  // second row to actually render instead of guessing how long that takes.
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('.building-row h3')].filter(el => el.textContent === name).length === 2,
+    { timeout: 8000 }, buildingName
+  );
   const allBuildingIds = await page.$$eval('.building-row', els => els.map(el => el.dataset.buildingId));
   const matchingIds = allBuildingIds.filter(id => id === buildingId || id.startsWith(buildingId + '-'));
   check('a second building with the same name gets a distinct id, not overwriting the first',
@@ -147,7 +152,10 @@ async function runFlow(page, consoleErrors){
   const duplicateId = matchingIds.find(id => id !== buildingId);
   if (duplicateId){
     await page.$eval(`.building-row[data-building-id="${duplicateId}"] .delete-building-btn`, el => el.click());
-    await new Promise(r => setTimeout(r, 600));
+    await page.waitForFunction(
+      (id) => !document.querySelector(`.building-row[data-building-id="${id}"]`),
+      { timeout: 8000 }, duplicateId
+    );
   }
 
   // --- Collapse/expand: a just-created building auto-expands, showing its tenant list/add-
@@ -188,7 +196,12 @@ async function runFlow(page, consoleErrors){
   const newTenantEmailsEditor = await rowHandle.$('.new-tenant-emails-editor');
   await fillEmailsEditor(newTenantEmailsEditor, ['jane@example.com', 'bob@example.com']);
   await rowHandle.$eval('.add-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  // add-tenant-btn's handler is async (setDoc + await loadMasterBuildings()) — wait for the
+  // real tenant list to actually show the new tenant instead of guessing.
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('.building-row .tenant-list li')].some(li => li.textContent.includes(name)),
+    { timeout: 8000 }, tenantName
+  );
 
   const tenantEntries = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
   const matchingTenant = tenantEntries.find(t => t.includes(tenantName));
@@ -205,7 +218,10 @@ async function runFlow(page, consoleErrors){
   const fiveLevelEditor = await fiveLevelRowHandle.$('.new-tenant-levels-editor');
   await fillLevelsEditor(fiveLevelEditor, ['Level 1', 'Level 2', 'Level 3', 'Level 4', 'Level 5']);
   await fiveLevelRowHandle.$eval('.add-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.building-row .tenant-list li')].some(li => li.textContent.includes('Five Level Co')),
+    { timeout: 8000 }
+  );
   const tenantEntriesAfterFiveLevel = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
   check('a tenant with 5 levels shows one compact "Levels 1, 2, 3, 4, 5" line, not 5 repeated "Level N"s',
     tenantEntriesAfterFiveLevel.some(t => t.includes('Five Level Co') && t.includes('Levels 1, 2, 3, 4, 5')),
@@ -213,7 +229,10 @@ async function runFlow(page, consoleErrors){
   const fiveLevelRowForDelete = await findRowByName(page, '.building-row', buildingName);
   const fiveLevelLi = await findTenantLi(fiveLevelRowForDelete, 'Five Level Co');
   await fiveLevelLi.$eval('.delete-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 400));
+  await page.waitForFunction(
+    () => ![...document.querySelectorAll('.building-row .tenant-list li')].some(li => li.textContent.includes('Five Level Co')),
+    { timeout: 8000 }
+  );
 
   // --- Invalid email blocks the save ---
   const badEmailRowHandle = await findRowByName(page, '.building-row', buildingName);
@@ -237,7 +256,12 @@ async function runFlow(page, consoleErrors){
   const fixturePath = path.join(__dirname, 'fixtures', 'sample-collection-points.xlsx');
   const fileInput = await freshRowHandle.$('.import-xlsx-input');
   await fileInput.uploadFile(fixturePath);
-  await new Promise(r => setTimeout(r, 500));
+  // The change handler awaits file.arrayBuffer() before rendering the review rows — wait for
+  // them to actually exist instead of guessing how long that read takes.
+  await page.waitForFunction(
+    (row) => row.querySelectorAll('.import-row').length > 0,
+    { timeout: 8000 }, freshRowHandle
+  );
 
   const candidates = await freshRowHandle.$$eval('.import-row', rows => rows.map(r => ({
     name: r.querySelector('.import-name').value,
@@ -259,7 +283,12 @@ async function runFlow(page, consoleErrors){
     if (junkNames.includes(name)) await r.$eval('.import-check', el => { el.checked = false; });
   }
   await freshRowHandle.$eval('.import-confirm-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 800));
+  // import-confirm-btn's handler is async (a setDoc per selected row + await
+  // loadMasterBuildings()) — wait for Widgetco to actually land instead of guessing.
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.building-row .tenant-list li')].some(li => li.textContent.includes('Widgetco')),
+    { timeout: 8000 }
+  );
 
   const tenantEntriesAfterImport = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
   check('Widgetco was imported with both its levels merged, compacted into one "Levels 3, 4"',
@@ -288,7 +317,10 @@ async function runFlow(page, consoleErrors){
   await editLevelNumberInputs[0].evaluate(el => { el.value = '5'; });
   await editLevelNumberInputs[1].evaluate(el => { el.value = '6'; });
   await editRowVisible.$eval('.save-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.building-row .tenant-list li')].some(li => li.textContent.includes('Test Tenant Renamed') && li.textContent.includes('Levels 5, 6')),
+    { timeout: 8000 }
+  );
 
   let tenantEntriesLive = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
   check('tenant rename + level change saved correctly, compacted into one "Levels 5, 6"',
@@ -311,7 +343,13 @@ async function runFlow(page, consoleErrors){
   })))).find(r2 => r2.value === 'bob@example.com');
   await bobRow.handle.$eval('.remove-email-row-btn', el => el.click());
   await editRowForEmailRemoval.$eval('.save-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    () => {
+      const li = [...document.querySelectorAll('.building-row .tenant-list li')].find(l => l.textContent.includes('Test Tenant Renamed'));
+      return Boolean(li) && !li.textContent.includes('bob@example.com');
+    },
+    { timeout: 8000 }
+  );
 
   tenantEntriesLive = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
   const renamedEntry = tenantEntriesLive.find(t => t.includes('Test Tenant Renamed'));
@@ -322,7 +360,10 @@ async function runFlow(page, consoleErrors){
   row = await findRowByName(page, '.building-row', buildingName);
   const renamedTenantLi = await findTenantLi(row, 'Test Tenant Renamed');
   await renamedTenantLi.$eval('.delete-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    () => ![...document.querySelectorAll('.building-row .tenant-list li')].some(li => li.textContent.includes('Test Tenant Renamed')),
+    { timeout: 8000 }
+  );
 
   tenantEntriesLive = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
   check('deleted tenant no longer appears', !tenantEntriesLive.some(t => t.includes('Test Tenant Renamed')), tenantEntriesLive.join(' || '));
@@ -351,7 +392,13 @@ async function runFlow(page, consoleErrors){
   const widgetcoEmailsEditor = await widgetcoEditRow.$('.edit-tenant-emails-editor');
   await fillEmailsEditor(widgetcoEmailsEditor, ['widgetco-contact@example.com']);
   await widgetcoEditRow.$eval('.save-tenant-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  await page.waitForFunction(
+    () => {
+      const li = [...document.querySelectorAll('.building-row .tenant-list li')].find(l => l.textContent.includes('Widgetco'));
+      return Boolean(li) && li.textContent.includes('widgetco-contact@example.com');
+    },
+    { timeout: 8000 }
+  );
 
   const buildingsRowForCoverage = await findRowByName(page, '.building-row', buildingName);
   const coverageText = await buildingsRowForCoverage.$eval('.contacts-coverage-note', el => el.textContent);
@@ -363,9 +410,40 @@ async function runFlow(page, consoleErrors){
   const acmeLegalId = buildingsTenantIds.find(t => t.name === 'Acme Legal').id;
 
   const errorsBeforeExport = consoleErrors.length;
+  // xlsxWriteFile() in the browser builds the workbook, turns it into a Blob, and downloads it
+  // via URL.createObjectURL() + a throwaway <a click> — there's no real save-file dialog to
+  // intercept under Puppeteer, but the Blob itself is real, so capture it here instead of only
+  // checking that the click didn't throw (a regression that emitted an empty/malformed workbook
+  // would otherwise pass silently).
+  await page.evaluate(() => {
+    window.__exportedXlsxBase64 = null;
+    const origCreateObjectURL = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = (blob) => {
+      blob.arrayBuffer().then((buf) => {
+        let binary = '';
+        const bytes = new Uint8Array(buf);
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        window.__exportedXlsxBase64 = btoa(binary);
+      });
+      return origCreateObjectURL(blob);
+    };
+  });
   await buildingsRowForCoverage.$eval('.export-contacts-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 300));
+  await page.waitForFunction(() => window.__exportedXlsxBase64 !== null, { timeout: 8000 });
   check('"Export contacts template" click does not throw', consoleErrors.length === errorsBeforeExport);
+
+  const exportedBase64 = await page.evaluate(() => window.__exportedXlsxBase64);
+  const exportedWb = xlsxLib.read(Buffer.from(exportedBase64, 'base64'), { type: 'buffer' });
+  check('the exported workbook has a "Contacts" sheet', exportedWb.SheetNames.includes('Contacts'), exportedWb.SheetNames.join(','));
+  const exportedRows = xlsxLib.utils.sheet_to_json(exportedWb.Sheets['Contacts']);
+  const exportedHeaders = exportedRows.length ? Object.keys(exportedRows[0]) : [];
+  check('the exported Contacts sheet has the expected columns (Tenant ID/Tenant/Levels/Email)',
+    ['Tenant ID', 'Tenant', 'Levels', 'Email'].every(h => exportedHeaders.includes(h)), exportedHeaders.join(','));
+  check('the exported Contacts sheet has one real row per tenant (6), not empty/truncated',
+    exportedRows.length === 6, exportedRows.length);
+  const widgetcoExportRow = exportedRows.find(r => r.Tenant === 'Widgetco');
+  check('the exported Contacts sheet carries Widgetco\'s real, just-saved contact email, not blank/stale data',
+    Boolean(widgetcoExportRow) && widgetcoExportRow.Email === 'widgetco-contact@example.com', JSON.stringify(widgetcoExportRow));
 
   const contactsFixturePath = path.join(require('os').tmpdir(), `contacts-import-${Date.now()}.xlsx`);
   const contactsWb = xlsxLib.utils.book_new();
@@ -378,7 +456,12 @@ async function runFlow(page, consoleErrors){
 
   const contactsFileInput = await buildingsRowForCoverage.$('.import-contacts-input');
   await contactsFileInput.uploadFile(contactsFixturePath);
-  await new Promise(r => setTimeout(r, 500));
+  // Same as the tenant-import upload above — the change handler awaits file.arrayBuffer()
+  // before rendering the review rows.
+  await page.waitForFunction(
+    (row) => row.querySelectorAll('.import-contacts-review .import-row').length > 0,
+    { timeout: 8000 }, buildingsRowForCoverage
+  );
   fs.unlinkSync(contactsFixturePath);
 
   const contactsReview = await buildingsRowForCoverage.$$eval('.import-contacts-review .import-row', rows =>
@@ -391,7 +474,15 @@ async function runFlow(page, consoleErrors){
     JSON.stringify(contactsReview));
 
   await buildingsRowForCoverage.$eval('.import-contacts-confirm-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  // import-contacts-confirm-btn's handler is async (a batch commit + await
+  // loadMasterBuildings()) — wait for Acme Legal's merged emails to actually land.
+  await page.waitForFunction(
+    () => {
+      const li = [...document.querySelectorAll('.building-row .tenant-list li')].find(l => l.textContent.includes('Acme Legal'));
+      return Boolean(li) && li.textContent.includes('acme-one@example.com') && li.textContent.includes('acme-two@example.com');
+    },
+    { timeout: 8000 }
+  );
 
   const tenantEntriesAfterContactsImport = await page.$$eval('.building-row .tenant-list li', els => els.map(el => el.textContent));
   check('after confirming the import, Acme Legal now shows both emails from the two merged rows',
@@ -410,14 +501,24 @@ async function runFlow(page, consoleErrors){
   const renamedBuildingName = buildingName + ' Renamed';
   await page.$eval(`${buildingSelector} .edit-building-name-input`, (el, v) => { el.value = v; }, renamedBuildingName);
   await page.$eval(`${buildingSelector} .save-building-name-btn`, el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  // save-building-name-btn's handler is async (setDoc + await loadMasterBuildings()) — wait for
+  // the renamed row to actually appear.
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('.building-row h3')].some(el => el.textContent === name),
+    { timeout: 8000 }, renamedBuildingName
+  );
 
   let buildingNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
   check('building rename saved correctly', buildingNames.includes(renamedBuildingName), buildingNames.join('|'));
 
   row = await findRowByName(page, '.building-row', renamedBuildingName);
   await row.$eval('.delete-building-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 600));
+  // delete-building-btn's handler is async (updateDoc + await loadMasterBuildings()) — wait for
+  // the row to actually disappear.
+  await page.waitForFunction(
+    (name) => ![...document.querySelectorAll('.building-row h3')].some(el => el.textContent === name),
+    { timeout: 8000 }, renamedBuildingName
+  );
 
   buildingNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
   check('deleted building no longer appears in the list', !buildingNames.includes(renamedBuildingName), buildingNames.join('|') || '(none left)');
@@ -425,7 +526,12 @@ async function runFlow(page, consoleErrors){
   // "Delete building" is a soft-delete (active:false) — confirm the real link stops working too.
   const deletedBuildingPage = await page.browser().newPage();
   await deletedBuildingPage.goto(`${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'recycling-training.html')).href}?b=${buildingId}&emulator=1`, { waitUntil: 'domcontentloaded' });
-  await new Promise(r => setTimeout(r, 1200));
+  // Same enrollment-gate Firestore round-trip as the tenant-check page above — poll for the
+  // real invalid-link card instead of guessing how long that takes.
+  await deletedBuildingPage.waitForFunction(
+    () => document.getElementById('idCardInvalid') && getComputedStyle(document.getElementById('idCardInvalid')).display !== 'none',
+    { timeout: 10000 }
+  ).catch(() => {});
   const invalidShownForDeleted = await deletedBuildingPage.$eval('#idCardInvalid', el => getComputedStyle(el).display !== 'none').catch(() => false);
   check('a soft-deleted building\'s real link now shows the invalid-link fallback, same as a real delete would', invalidShownForDeleted);
   await deletedBuildingPage.close();
@@ -439,7 +545,12 @@ async function runFlow(page, consoleErrors){
   check('the Catalog sidebar link points at admin-catalog.html (its own page, Workstream 2 Phase 3)', catalogHref === 'admin-catalog.html?emulator=1', catalogHref);
 
   await page.click('#signOutBtn');
-  await new Promise(r => setTimeout(r, 500));
+  // onAuthStateChanged fires asynchronously after signOut() resolves — wait for the real
+  // post-sign-out DOM state instead of guessing.
+  await page.waitForFunction(
+    () => getComputedStyle(document.getElementById('authZone')).display !== 'none',
+    { timeout: 8000 }
+  );
   check('signing out shows the sign-in form again',
     await page.$eval('#authZone', el => getComputedStyle(el).display !== 'none'));
   check('signing out hides the Buildings section',

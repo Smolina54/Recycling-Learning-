@@ -18,11 +18,15 @@ service cloud.firestore {
     // to everything. Deliberately a SEPARATE collection from /admins — isAllowedReviewer()
     // is a bare exists() check with no field inspection, so a scoped grant living inside
     // /admins would itself satisfy isAllowedReviewer() and hand out full global access.
-    // Not yet referenced by any collection's rules below (added inert first, wired in once
-    // its own tests are green — see the roadmap plan for the staged rollout).
+    // Wired into submissions.read/attempts.read below via canReviewBuilding().
+    // Grant doc ids are keyed on the LOWERCASED email (see buildingAccess match below) —
+    // .lower() here so a mixed-case Firebase Auth email (e.g. Foo@Bar.com) still resolves
+    // to the same grant instead of silently failing closed. buildingId is also restricted
+    // to a slug-safe charset so it can never smuggle its own '__' into the composite key.
     function isBuildingScopedReviewer(buildingId) {
-      return request.auth != null && buildingId is string && buildingId.size() > 0 &&
-        exists(/databases/$(database)/documents/buildingAccess/$(request.auth.token.email + '__' + buildingId));
+      return request.auth != null && buildingId is string &&
+        buildingId.matches('^[A-Za-z0-9_-]{1,200}$') &&
+        exists(/databases/$(database)/documents/buildingAccess/$(request.auth.token.email.lower() + '__' + buildingId));
     }
 
     // Additive only: always at least as permissive as isAllowedReviewer() alone, since that's
@@ -40,7 +44,7 @@ service cloud.firestore {
     // exists today) — required now, before any real data exists, so a future second
     // training course never has to backfill/guess it on old docs.
     function isValidPersonFields(data) {
-      return data.buildingId is string && data.buildingId.size() > 0 && data.buildingId.size() <= 200
+      return data.buildingId is string && data.buildingId.matches('^[A-Za-z0-9_-]{1,200}$')
         && data.tenantId is string && data.tenantId.size() > 0 && data.tenantId.size() <= 200
         && data.name is string && data.name.size() > 0 && data.name.size() <= 200
         && data.email is string && data.email.size() > 0 && data.email.size() <= 320
@@ -77,7 +81,7 @@ service cloud.firestore {
     // any of them.
     match /buildingAccess/{grantId} {
       allow read: if isAllowedReviewer() ||
-        (request.auth != null && resource.data.email == request.auth.token.email);
+        (request.auth != null && resource.data.email.lower() == request.auth.token.email.lower());
       allow write: if isAllowedReviewer();
     }
 

@@ -95,17 +95,24 @@ async function runFlow(page, consoleErrors){
 
   // Trying to submit with nothing answered must be rejected, not silently scored.
   await page.click('#startGameBtn');
-  await new Promise(r => setTimeout(r, 200));
+  // startGameBtn's handler renders the quiz synchronously, but wait for the real questions
+  // instead of guessing how long that (and the click's own event dispatch) takes.
+  await page.waitForFunction(() => document.querySelectorAll('.quiz-question').length > 0, { timeout: 5000 });
   const questionBlocks = await page.$$eval('.quiz-question', els => els.length);
   check('all 5 questions render', questionBlocks === 5, questionBlocks);
 
   // The page's own window.confirm/alert flow through the harness's blanket page.on('dialog')
   // handler (dismisses everything) — check the expected alert landed in consoleErrors instead
-  // of racing a second dialog handler against it.
+  // of racing a second dialog handler against it. The dialog event itself arrives over the
+  // DevTools protocol asynchronously relative to the click resolving, so poll briefly for it
+  // to land instead of guessing a fixed delay.
   const errorsBeforeSubmitAttempt = consoleErrors.length;
   await page.click('#submitQuizBtn');
-  await new Promise(r => setTimeout(r, 200));
-  const alertFired = consoleErrors.slice(errorsBeforeSubmitAttempt).some(e => e.includes('answer every question'));
+  let alertFired = false;
+  for (let i = 0; i < 20 && !alertFired; i++){
+    if (consoleErrors.slice(errorsBeforeSubmitAttempt).some(e => e.includes('answer every question'))) alertFired = true;
+    else await new Promise(r => setTimeout(r, 50));
+  }
   check('submitting with no answers is rejected (alert, no results shown)',
     alertFired && !(await page.$eval('#results', el => el.classList.contains('active'))));
 
@@ -115,7 +122,11 @@ async function runFlow(page, consoleErrors){
     await page.click(`input[name="${name}"][value="${value}"]`);
   }
   await page.click('#submitQuizBtn');
-  await new Promise(r => setTimeout(r, 400));
+  // showResults() renders synchronously — wait for the real active state instead of guessing.
+  await page.waitForFunction(
+    () => document.getElementById('results').classList.contains('active'),
+    { timeout: 5000 }
+  ).catch(() => {});
 
   check('results screen is active after submitting', await page.$eval('#results', el => el.classList.contains('active')).catch(() => false));
   const scoreOfText = await page.$eval('#scoreOf', el => el.textContent.trim()).catch(() => '');
@@ -127,16 +138,22 @@ async function runFlow(page, consoleErrors){
     projectId: 'esg-1-98f35',
     firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
   });
+  // submitResults() is fire-and-forget from showResults()'s point of view, and addDocWithRetry()
+  // can need a couple of retry rounds against the emulator (see its own comment) — poll for the
+  // doc to actually land instead of assuming a single read right after is enough.
   let submissionOk = false;
-  await verifyEnv.withSecurityRulesDisabled(async (context) => {
-    const db = context.firestore();
-    const q = query(collection(db, 'submissions'), where('email', '==', 'jane-battery@example.com'));
-    const snap = await getDocs(q);
-    if (!snap.empty){
-      const data = snap.docs[0].data();
-      submissionOk = data.programId === 'battery-disposal' && data.total === 5 && data.correctCount === 5 && data.score === 100;
-    }
-  });
+  for (let i = 0; i < 20 && !submissionOk; i++){
+    if (i > 0) await new Promise(r => setTimeout(r, 300));
+    await verifyEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      const q = query(collection(db, 'submissions'), where('email', '==', 'jane-battery@example.com'));
+      const snap = await getDocs(q);
+      if (!snap.empty){
+        const data = snap.docs[0].data();
+        submissionOk = data.programId === 'battery-disposal' && data.total === 5 && data.correctCount === 5 && data.score === 100;
+      }
+    });
+  }
   check('the submission was written with programId battery-disposal, correctCount 5, score 100', submissionOk);
 }
 

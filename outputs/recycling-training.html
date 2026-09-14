@@ -856,6 +856,15 @@ try {
     let buildingId = params.get('b');
     let lockedTenantId = null;
     const linkId = params.get('l');
+    // Both params feed straight into doc(db, ..., id) calls below — the modular Firestore SDK
+    // splits a '/' inside a path segment into additional segments instead of treating it as
+    // part of one id, so a crafted ?b=/?l= could otherwise resolve to an unintended nested
+    // document. Firestore rules already make this fail closed (the resulting path won't match
+    // a real enrollment/link), but reject it outright here rather than relying on that alone.
+    if ((buildingId && buildingId.includes('/')) || (linkId && linkId.includes('/'))){
+      showInvalidLink();
+      return;
+    }
     if (linkId){
       if (!db){ showInvalidLink(); return; }
       const resolved = await resolveDistributionLink(linkId);
@@ -2814,6 +2823,11 @@ try {
   }
 
   nextPhaseBtn.addEventListener('click', () => {
+    // The button is only ever hidden via style.display, not disabled — it still exists in the
+    // DOM and still fires this listener if clicked programmatically before a phase is actually
+    // cleared. Guard on phaseLocked (the same flag every drag/drop handler already checks) so
+    // this can't be used to skip straight to a fabricated 100% result.
+    if (!phaseLocked) return;
     if (phaseIndex === streams.length - 1) showResults();
     else startPhase(phaseIndex + 1);
   });
