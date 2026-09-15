@@ -1677,6 +1677,17 @@ try {
     if (entry){ entry.avoided = false; entry.wrongStream = wrongStream; }
   }
 
+  // allResults starts out seeded ONLY with decoys (freshResults()) — a home item correctly
+  // sorted during its own phase had no entry at all and no code path ever created one, so it
+  // silently never appeared in the item-by-item review unless it also happened to be picked as
+  // some OTHER phase's decoy. Mirrors recordMiss's find-or-update shape, but also creates the
+  // entry when missing, so every item that's actually played ends up represented.
+  function recordCorrect(item, actualStream){
+    const entry = allResults.find(r => r.itemId === item.id);
+    if (entry){ entry.avoided = true; entry.shownInPhase = actualStream; entry.wrongStream = null; }
+    else { allResults.push({itemId: item.id, shownInPhase: actualStream, avoided: true, wrongStream: null}); }
+  }
+
   function completePhase(){
     phaseLocked = true;
     itemBoard.querySelectorAll('.board-item').forEach(card => card.classList.add('locked'));
@@ -1696,6 +1707,7 @@ try {
     if (correct){
       flashBin(true);
       collectIntoBin(card, item);
+      recordCorrect(item, targetStream);
       sortedCount++;
       document.getElementById('phaseCounter').textContent = `Sorted ${sortedCount} of ${phaseCorrectTarget}`;
       showFeedback(item, true, targetStream);

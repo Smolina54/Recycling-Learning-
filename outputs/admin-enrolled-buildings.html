@@ -103,7 +103,11 @@
   }
   .settings-btn{font-size:16px; padding:6px 12px; line-height:1;}
 
-  .page-shell{display:flex;}
+  /* Unlike admin-buildings.html/admin-catalog.html, this page has no sidebar to lay out
+     next to .wrap — display:flex here was inherited from that shared template and, with no
+     flex:1 on .wrap, made it shrink-to-fit its content's width instead of filling the page,
+     so the whole enrolled-buildings list visibly widened whenever an accordion row expanded
+     into wider content. Plain block layout keeps .wrap's own max-width/margin:auto centering. */
   /* Embedded mode (?embedded=1 — this page rendered inside sorting-station-report.html's
      #adminIframe instead of opened standalone): the shell page already shows its own header,
      tab row, and sign-out button, so this page's own copies of those would look doubled.
