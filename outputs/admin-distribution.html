@@ -2834,6 +2834,10 @@ function pageBaseUrl(){
 // already established for the induction selector there).
 const REQUESTED_PROGRAM_ID = new URLSearchParams(window.location.search).get('program') || '';
 let currentProgram = null; // set once loadProgram() resolves against the `programs` catalog
+// Collapsed by default (same accordion pattern as admin-enrolled-buildings.html's
+// expandedEnrolledBuildingIds) — with several buildings enrolled, showing every one's link,
+// QR code, and full link-generation form expanded at once made the page unreadably long.
+const expandedDistributionBuildingIds = new Set();
 
 async function loadProgram(){
   if (!REQUESTED_PROGRAM_ID) return null;
@@ -2964,13 +2968,23 @@ function renderDistributionList(buildings){
   }
   container.innerHTML = buildings.map(b => {
     const link = `${pageBaseUrl()}${currentProgram.file}?b=${b.id}`;
-    return `
-    <div class="report-block distribution-building-row" data-building-id="${b.id}">
+    const isExpanded = expandedDistributionBuildingIds.has(b.id);
+    const headerHtml = `<div class="building-header-row">
+      <button type="button" class="building-toggle-btn" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
       <h3>${esc(b.name)}</h3>
-      <div class="building-link-row">
-        <code class="building-link-text">${link}</code>
+      <div class="building-header-actions">
         <button class="btn secondary copy-link-btn" data-link="${link}">Copy link →</button>
         <button class="btn secondary preview-link-btn" data-link="${link}">Preview →</button>
+      </div>
+    </div>`;
+    if (!isExpanded){
+      return `<div class="report-block distribution-building-row" data-building-id="${b.id}">${headerHtml}</div>`;
+    }
+    return `
+    <div class="report-block distribution-building-row" data-building-id="${b.id}">
+      ${headerHtml}
+      <div class="building-link-row">
+        <code class="building-link-text">${link}</code>
       </div>
       <div class="building-qr" data-link="${link}"></div>
       ${renderDistributionLinksHtml(b)}
@@ -2978,7 +2992,7 @@ function renderDistributionList(buildings){
   `;
   }).join('');
 
-  buildings.forEach(b => {
+  buildings.filter(b => expandedDistributionBuildingIds.has(b.id)).forEach(b => {
     renderQrCode(b.id, `${pageBaseUrl()}${currentProgram.file}?b=${b.id}`);
   });
 }
@@ -2989,6 +3003,15 @@ async function refreshDistributionView(){
 }
 
 document.getElementById('distributionList').addEventListener('click', async (e) => {
+  const toggleBtn = e.target.closest('.building-toggle-btn');
+  if (toggleBtn){
+    const buildingId = toggleBtn.closest('.distribution-building-row').dataset.buildingId;
+    if (expandedDistributionBuildingIds.has(buildingId)) expandedDistributionBuildingIds.delete(buildingId);
+    else expandedDistributionBuildingIds.add(buildingId);
+    refreshDistributionView();
+    return;
+  }
+
   const generateLinkBtn = e.target.closest('.generate-link-btn');
   if (generateLinkBtn){
     const block = generateLinkBtn.closest('.generate-link-block');

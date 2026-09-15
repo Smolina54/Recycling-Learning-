@@ -160,6 +160,12 @@ async function runFlow(page){
   const distributionSelector = `.distribution-building-row[data-building-id="${buildingId}"]`;
   check('the enrolled building appears in Distribution', Boolean(await page.$(distributionSelector)));
 
+  // Each building row is collapsed by default (accordion, same pattern as Enrolled Buildings) —
+  // Copy link/Preview stay visible in the header either way, but the QR code, the plain link
+  // text, and the tenant-scoped link generator only render once expanded.
+  await page.click(`${distributionSelector} .building-toggle-btn`);
+  await page.waitForSelector(`${distributionSelector} .building-link-text`);
+
   const linkText = await page.$eval(`${distributionSelector} .building-link-text`, el => el.textContent);
   check('the whole-building link contains the real buildingId and points at the training page',
     linkText.includes('recycling-training.html?b=' + buildingId), linkText);
