@@ -21,6 +21,7 @@
     "test:functions": "firebase emulators:exec --only firestore,auth,functions \"node tests/functions-sendinductionemail.test.js\"",
     "test:scoped-report": "firebase emulators:exec --only firestore,auth \"node tests/scoped-report-access.test.js\"",
     "test:catalog": "node tests/catalog-sync.test.js",
+    "test:all": "firebase --config firebase.local-test.json emulators:exec --only firestore,auth,functions \"node tests/run-all.js\"",
     "sync-catalog": "node tools/sync-catalog.js"
   },
   "devDependencies": {

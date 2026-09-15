@@ -9,11 +9,25 @@
 const path = require('path');
 const url = require('url');
 const puppeteer = require('puppeteer-core');
+const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 
 const EDGE_PATH = process.env.TEST_BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const CATALOG_URL = `${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'admin-catalog.html')).href}?emulator=1`;
 const REPORT_PATH = path.join(__dirname, '..', 'outputs', 'sorting-station-report.html');
 const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
+
+// This suite's very first assertion needs a genuinely EMPTY programs collection (the "No
+// inductions registered yet" empty state) — true by construction when this ran against its own
+// fresh emulator, but no longer guaranteed once multiple suites share one long-lived emulator
+// (npm run test:all, see tests/run-all.js). Wipe Firestore first so this check stays valid
+// regardless of what any earlier suite in the same run already registered; every other suite
+// seeds its own uniquely-named fixtures and doesn't depend on state surviving from before this
+// one, so clearing here doesn't risk breaking anything later in the sequence either.
+async function clearFirestoreBeforeStart(){
+  const testEnv = await initializeTestEnvironment({ projectId: 'esg-1-98f35' });
+  await testEnv.clearFirestore();
+  await testEnv.cleanup();
+}
 
 const results = [];
 function check(label, cond, extra){ results.push({ label, ok: Boolean(cond), extra: extra || '' }); }
@@ -56,6 +70,7 @@ async function main(){
 }
 
 async function runFlow(page){
+  await clearFirestoreBeforeStart();
   await page.goto(CATALOG_URL, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
     () => document.getElementById('catalogSection') && getComputedStyle(document.getElementById('catalogSection')).display !== 'none',
