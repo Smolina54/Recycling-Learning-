@@ -430,7 +430,6 @@
     <p class="eyebrow">Waste Stream Training · 5 Streams · 5-Phase Sort</p>
     <h1 class="headline">Know your bin.<br><em>Sort it right.</em></h1>
     <p class="hero-sub">A five-minute walkthrough of the core waste streams used across your building, followed by a short interactive quiz to confirm what has been learned.</p>
-    <button class="btn" id="startBtn">Start the walkthrough →</button>
 
     <div class="station" role="tablist" aria-label="Waste streams">
       <button class="bin-tab active" data-stream="gw" role="tab" aria-selected="true">
@@ -1073,7 +1072,6 @@ try {
   }
 
   tabs.forEach(t => t.addEventListener('click', () => showStream(t.dataset.stream)));
-  document.getElementById('startBtn').addEventListener('click', () => showStream(streams[0]));
 
   // .onclick (not addEventListener) so the demo-mode block below can cleanly override a
   // button's target/label by reassigning .onclick, instead of stacking a second listener that
@@ -1983,8 +1981,9 @@ try {
         return `<div class="review-wrong-item">
           <span class="item-thumb">${item.icon}</span>
           <span>
-            <span class="review-wrong-name">${item.name}</span> — sorted into
-            <span class="review-wrong-dest" style="color:var(--${r.shownInPhase})">${streamNames[r.shownInPhase]}</span><br>
+            <span class="review-wrong-name">${item.name}</span> — you sorted this into
+            <span class="review-wrong-dest" style="color:var(--${r.shownInPhase})">${streamNames[r.shownInPhase]}</span>, but it belongs in
+            <span class="review-wrong-dest" style="color:var(--${homeStream})">${streamNames[homeStream]}</span><br>
             <span class="review-wrong-reason">${item.shortWhy}</span>
           </span>
         </div>`;
