@@ -2436,7 +2436,8 @@ var qrcode = function() {
   .building-qr{width:120px; height:120px; margin-bottom:16px;}
   .building-qr svg{width:100%; height:100%;}
   .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
-  .building-row:has(> .building-header-row:only-child) .building-header-row{margin-bottom:0;}
+  .building-row:has(> .building-header-row:only-child) .building-header-row,
+  .distribution-building-row:has(> .building-header-row:only-child) .building-header-row{margin-bottom:0;}
   .building-header-row h3{margin-bottom:0;}
   .building-toggle-btn{
     background:transparent; border:none; cursor:pointer; font-size:16px; color:var(--ink-soft);
@@ -2491,7 +2492,8 @@ var qrcode = function() {
   .acceptable-checkbox-label{display:flex; align-items:center; gap:5px; font-weight:400; cursor:pointer;}
   .items-editor-actions{display:flex; gap:8px; margin-top:20px;}
   .items-editor-error{color:var(--gw); font-size:13px; margin:10px 0 0;}
-  .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
+  .building-row:has(> .building-header-row:only-child),
+  .distribution-building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
   .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
   .building-edit-row input{flex:1; min-width:160px;}
   .tenant-list{list-style:none; margin:0 0 16px; padding:0; font-size:13.5px;}
@@ -2720,10 +2722,10 @@ var qrcode = function() {
   </div>
 
   <div class="upload-zone" id="authZone">
-    <p id="authStatus">Sign in with an authorized account to manage distribution links.</p>
+    <p id="authStatus">Loading…</p>
     <div class="upload-actions">
-      <button class="btn" id="signInBtn">Sign in with Google →</button>
-      <button class="btn secondary" id="showEmailSignInBtn">Sign in with email →</button>
+      <button class="btn" id="signInBtn" style="display:none;">Sign in with Google →</button>
+      <button class="btn secondary" id="showEmailSignInBtn" style="display:none;">Sign in with email →</button>
     </div>
     <form id="emailSignInForm" style="display:none; margin-top:16px;">
       <div class="filter-row">
