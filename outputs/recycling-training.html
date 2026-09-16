@@ -1674,7 +1674,13 @@ try {
 
   function recordMiss(item, wrongStream){
     const entry = allResults.find(r => r.itemId === item.id);
-    if (entry){ entry.avoided = false; entry.wrongStream = wrongStream; }
+    // shownInPhase must also update here, not just avoided/wrongStream — an item correctly
+    // sorted in its own phase earlier (recordCorrect) can later turn up as a decoy elsewhere and
+    // get dropped wrong there; leaving shownInPhase stale from the earlier correct recording
+    // made the review read "you sorted this into General Waste, but it belongs in General
+    // Waste" (both sides showing the item's OWN stream) instead of where it was actually
+    // mis-sorted.
+    if (entry){ entry.avoided = false; entry.wrongStream = wrongStream; entry.shownInPhase = wrongStream; }
   }
 
   // allResults starts out seeded ONLY with decoys (freshResults()) — a home item correctly
