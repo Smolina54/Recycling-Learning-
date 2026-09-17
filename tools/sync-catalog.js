@@ -18,6 +18,7 @@ const GAME_PATH = path.join(__dirname, '..', 'outputs', 'recycling-training.html
 const TARGET_PATHS = [
   path.join(__dirname, '..', 'outputs', 'sorting-station-report.html'),
   path.join(__dirname, '..', 'outputs', 'admin-enrolled-buildings.html'),
+  path.join(__dirname, '..', 'outputs', 'client-report.html'),
 ];
 const START_MARKER = '// AUTO-GENERATED CATALOG START';
 const END_MARKER = '// AUTO-GENERATED CATALOG END';

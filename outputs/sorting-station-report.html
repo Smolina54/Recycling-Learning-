@@ -2896,6 +2896,7 @@ var qrcode = function() {
       <button class="btn secondary" id="exportBtn">Export CSV →</button>
       <button class="btn secondary" id="deleteBtn" style="display:none; border-color:var(--gw); color:var(--gw);">Delete these submissions</button>
       <button class="btn secondary" id="printBtn">Print / Save as PDF →</button>
+      <button class="btn secondary" id="generateReportBtn">Generate report →</button>
     </div>
   </section>
 </div>
@@ -4415,6 +4416,14 @@ try {
   });
 
   document.getElementById('printBtn').addEventListener('click', () => window.print());
+
+  // Opens the new dedicated client-report template (a real top-level navigation, not the
+  // #adminIframe tabs — this is a standalone document meant to be printed/saved, not part of
+  // the in-page tab flow) for the currently-viewed induction.
+  document.getElementById('generateReportBtn').addEventListener('click', () => {
+    const emulatorSuffix = isEmulatorMode ? '&emulator=1' : '';
+    window.location.href = `client-report.html?program=${encodeURIComponent(currentProgramId)}${emulatorSuffix}`;
+  });
 
   // No building/tenant to pick here — just "what does the training itself look like".
   // <program file>?preview=1 with no ?b= skips the id-gate entirely for this case.
