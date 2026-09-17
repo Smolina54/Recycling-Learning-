@@ -145,7 +145,7 @@ async function runFlow(page, consoleErrors){
   const scoreOfText = await page.$eval('#scoreOf', el => el.textContent.trim()).catch(() => '');
   check('a perfect run scores 5 / 5', scoreOfText.includes('5 / 5'), scoreOfText);
   const reviewText = await page.$eval('#quizReview', el => el.textContent).catch(() => '');
-  check('review shows all 5 questions marked correct', (reviewText.match(/Correct —/g) || []).length === 5, reviewText.slice(0, 200));
+  check('review shows all 5 questions marked correct', (reviewText.match(/Correct -/g) || []).length === 5, reviewText.slice(0, 200));
 
   const verifyEnv = await initializeTestEnvironment({
     projectId: 'esg-1-98f35',

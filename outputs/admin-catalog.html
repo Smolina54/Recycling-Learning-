@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Recycling Training — Catalog</title>
+<title>Recycling Training - Catalog</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232F6F4E'/%3E%3Cpath d='M16 6 L26 16 L16 26 L6 16 Z' fill='%23EEEBE1'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -445,7 +445,7 @@
   <header class="top">
     <p class="eyebrow" id="pageEyebrow">Recycling Training · Settings</p>
     <h1 id="pageHeadline">Catalog</h1>
-    <p class="sub" id="pageSub">Register or archive inductions — program-agnostic, applies across every building.</p>
+    <p class="sub" id="pageSub">Register or archive inductions - program-agnostic, applies across every building.</p>
   </header>
 
   <div class="corner-settings" id="cornerSettings">
@@ -453,7 +453,7 @@
   </div>
 
   <div class="upload-zone" id="authZone">
-    <p id="authStatus">Sign in with an authorized account to manage the induction catalog.</p>
+    <p id="authStatus">Sign in with an authorised account to manage the induction catalog.</p>
     <div class="upload-actions">
       <button class="btn" id="signInBtn">Sign in with Google →</button>
       <button class="btn secondary" id="showEmailSignInBtn">Sign in with email →</button>
@@ -475,7 +475,7 @@
     </div>
 
     <div class="report-block">
-      <p class="block-sub">Registers an induction so it can be enrolled to buildings and reported on. This only records it in the catalog — the game/quiz file itself must already exist and be deployed.</p>
+      <p class="block-sub">Registers an induction so it can be enrolled to buildings and reported on. This only records it in the catalog - the game/quiz file itself must already exist and be deployed.</p>
       <div class="filter-row">
         <label class="filter-field"><span>Name</span><input type="text" id="newProgramName" placeholder="e.g. Organics Focus"></label>
         <label class="filter-field"><span>Description</span><input type="text" id="newProgramDescription" placeholder="One line shown on the demo catalog"></label>
@@ -555,7 +555,7 @@ try {
     });
   }
 } catch (err) {
-  console.error('Firebase is not configured yet — sign-in and catalog management will stay unavailable until firebaseConfig is filled in.', err);
+  console.error('Firebase is not configured yet - sign-in and catalog management will stay unavailable until firebaseConfig is filled in.', err);
 }
 
 const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
@@ -593,7 +593,7 @@ async function loadPrograms(){
     return programs;
   } catch (err){
     console.error('Failed to load the induction catalog:', err);
-    document.getElementById('catalogStatus').textContent = "Couldn't load the induction catalog — check your connection and reload the page.";
+    document.getElementById('catalogStatus').textContent = "Couldn't load the induction catalog - check your connection and reload the page.";
     return [];
   }
 }
@@ -606,7 +606,7 @@ function renderProgramsList(programs){
   }
   list.innerHTML = programs.map(p => `
     <li>
-      <span class="tenant-name">${esc(p.name || p.id)}${p.status === 'archived' ? ' (archived)' : ''} — <span class="block-sub">${esc(p.description || '')} · ${esc(p.file || '')}</span></span>
+      <span class="tenant-name">${esc(p.name || p.id)}${p.status === 'archived' ? ' (archived)' : ''} - <span class="block-sub">${esc(p.description || '')} · ${esc(p.file || '')}</span></span>
       ${p.status === 'archived'
         ? `<button class="btn secondary unarchive-program-btn" data-id="${esc(p.id)}">Unarchive</button>`
         : `<button class="btn secondary archive-program-btn" data-id="${esc(p.id)}">Archive</button>`}
@@ -625,7 +625,7 @@ document.getElementById('addProgramBtn').addEventListener('click', async () => {
   if (!name || !file){ status.textContent = 'Enter a name and a file first.'; return; }
   const confirmed = confirm(
     `Register "${name}" in the catalog?\n\n` +
-    `This only adds a catalog entry pointing at "${file}" — it does NOT create or design the ` +
+    `This only adds a catalog entry pointing at "${file}" - it does NOT create or design the ` +
     `induction itself. Make sure that file is already built and deployed before registering it, ` +
     `or links generated from it will point at something that doesn't exist yet.`
   );
@@ -642,7 +642,7 @@ document.getElementById('addProgramBtn').addEventListener('click', async () => {
     await loadPrograms();
   } catch (err){
     console.error('Failed to add program:', err);
-    status.textContent = 'Failed to add — check the console for details.';
+    status.textContent = 'Failed to add - check the console for details.';
   }
 });
 
@@ -653,7 +653,7 @@ document.getElementById('programsList').addEventListener('click', async (e) => {
     const confirmed = confirm(
       `Archive this induction?\n\n` +
       `It stops appearing as an option for new enrolments/links and drops off the public demo ` +
-      `catalog. Its data and every report already tied to it are NOT deleted — you can still see ` +
+      `catalog. Its data and every report already tied to it are NOT deleted - you can still see ` +
       `them, and you can unarchive it later.`
     );
     if (!confirmed) return;
@@ -662,7 +662,7 @@ document.getElementById('programsList').addEventListener('click', async (e) => {
       await loadPrograms();
     } catch (err){
       console.error('Failed to archive program:', err);
-      alert('Could not archive — check the console for details.');
+      alert('Could not archive - check the console for details.');
     }
     return;
   }
@@ -673,7 +673,7 @@ document.getElementById('programsList').addEventListener('click', async (e) => {
       await loadPrograms();
     } catch (err){
       console.error('Failed to unarchive program:', err);
-      alert('Could not unarchive — check the console for details.');
+      alert('Could not unarchive - check the console for details.');
     }
   }
 });
@@ -703,7 +703,7 @@ document.getElementById('emailSignInForm').addEventListener('submit', async (e) 
     await signInWithEmailAndPassword(auth, email, password);
   } catch (err){
     console.error('Email sign-in failed:', err);
-    document.getElementById('authStatus').textContent = 'Sign-in failed — check the email and password and try again.';
+    document.getElementById('authStatus').textContent = 'Sign-in failed - check the email and password and try again.';
   }
 });
 
@@ -721,7 +721,7 @@ if (auth){
       loadPrograms();
     } else {
       document.getElementById('authZone').style.display = '';
-      document.getElementById('authStatus').textContent = 'Sign in with an authorized account to manage the induction catalog.';
+      document.getElementById('authStatus').textContent = 'Sign in with an authorised account to manage the induction catalog.';
       document.getElementById('emailSignInForm').style.display = 'none';
       document.getElementById('emailSignInForm').reset();
       document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';

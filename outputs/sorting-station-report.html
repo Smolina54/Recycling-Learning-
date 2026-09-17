@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Recycling Training — Client Report</title>
+<title>Recycling Training - Client Report</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232F6F4E'/%3E%3Cpath d='M16 6 L26 16 L16 26 L6 16 Z' fill='%23EEEBE1'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -2707,17 +2707,17 @@ var qrcode = function() {
 <body>
 
 <div class="page-shell" id="pageShell">
-  <!-- The settings sidebar (Buildings/Admins/Catalog) is gone from this page — all three now
+  <!-- The settings sidebar (Buildings/Admins/Catalog) is gone from this page - all three now
        live on their own pages (Workstream 2 of the architecture roadmap); the ⚙ button below
        jumps straight to admin-buildings.html instead of opening an in-page sidebar. -->
 <div class="wrap">
   <header class="top">
     <p class="eyebrow" id="pageEyebrow">Recycling Training · Client Report</p>
     <h1 id="pageHeadline">Recycling knowledge, by the numbers.</h1>
-    <p class="sub" id="pageSub">Recycling Training is a short, interactive induction that teaches tenants how to sort waste correctly — this is the live report on how each building is doing. Sign in with an authorized account to get started.</p>
+    <p class="sub" id="pageSub">Recycling Training is a short, interactive induction that teaches tenants how to sort waste correctly - this is the live report on how each building is doing. Sign in with an authorised account to get started.</p>
   </header>
 
-  <!-- Fixed to the page (not the header block, not the tab row) — a page-level settings
+  <!-- Fixed to the page (not the header block, not the tab row) - a page-level settings
        cluster, independent of whatever induction is selected. "Load sample data" works
        whether signed in or not (same as today); "Sign out" always does; ⚙ only once signed in,
        and now enters the sidebar directly (see the settingsBtn listener) rather than opening a
@@ -2729,7 +2729,7 @@ var qrcode = function() {
   </div>
 
   <div class="upload-zone" id="authZone">
-    <p id="authStatus">Sign in with an authorized account to load live results.</p>
+    <p id="authStatus">Sign in with an authorised account to load live results.</p>
     <div class="upload-actions">
       <button class="btn" id="signInBtn">Sign in with Google →</button>
       <button class="btn secondary" id="showEmailSignInBtn">Sign in with email →</button>
@@ -2753,7 +2753,7 @@ var qrcode = function() {
     </label>
     <span class="viewing-badge" id="viewingBadge" style="display:none;"></span>
   </div>
-  <p class="block-sub" id="pageLoadError" style="display:none;">Something went wrong loading the induction list — try reloading. If it keeps happening, check the browser console for details.</p>
+  <p class="block-sub" id="pageLoadError" style="display:none;">Something went wrong loading the induction list - try reloading. If it keeps happening, check the browser console for details.</p>
 
   <div class="admin-tabs" id="programTabs" style="display:none;">
     <button class="tab-btn active" id="tabReportsBtn">Reports</button>
@@ -2762,23 +2762,23 @@ var qrcode = function() {
   </div>
 
   <!-- Enrolled Buildings/Distribution render here, in place, instead of a full page navigation
-       away from this tab row — keeps the induction context (selector + badge, above) always
+       away from this tab row - keeps the induction context (selector + badge, above) always
        visible so it's never ambiguous which induction the admin is working in. Still two
        physically separate files/pages under the hood (outputs/admin-distribution.html,
-       outputs/admin-enrolled-buildings.html — kept separate on purpose, see the plan), each
-       still fully openable standalone (every existing test does exactly that) — this iframe
+       outputs/admin-enrolled-buildings.html - kept separate on purpose, see the plan), each
+       still fully openable standalone (every existing test does exactly that) - this iframe
        just navigates to them with &embedded=1, which tells that page to suppress its own
-       header/sign-in-zone/back-link so nothing looks doubled. Fixed height (not dynamic —
+       header/sign-in-zone/back-link so nothing looks doubled. Fixed height (not dynamic -
        tried matching the real content height per tab/state, but real testing showed that made
        the WHOLE page visibly jump size on every tab switch, which read as worse than a fixed
        box with its own scroll). Sized from real measured content: Distribution's list ≈1160px,
        Enrolled Buildings with one row expanded ≈1310px, both comfortable within this; only the
-       full "Configure streams" editor (53 items, ≈3630px) needs its own internal scroll here —
+       full "Configure streams" editor (53 items, ≈3630px) needs its own internal scroll here -
        same as it already did as a full standalone page. -->
   <iframe id="adminIframe" title="Induction admin content" style="display:none; width:100%; height:1300px; border:0;"></iframe>
 
   <section id="reportSection" style="display:none;">
-    <!-- On-screen this is invisible (see .print-header) — it only exists so the printed/PDF
+    <!-- On-screen this is invisible (see .print-header) - it only exists so the printed/PDF
          version opens with real document context (which induction, which building, which
          period) instead of launching straight into charts with no cover. Populated in
          renderFiltered() from the same building/date-range filter state as the on-screen
@@ -2797,12 +2797,12 @@ var qrcode = function() {
     </div>
 
     <!-- Short (2 correct + 2 decoy items per stream) version of Recycling Sorting for live
-         presentations — someone can play it end-to-end in under a minute. Same ?preview=1
+         presentations - someone can play it end-to-end in under a minute. Same ?preview=1
          write-skipping as the full Preview button, plus a QR so attendees can scan it on their
          own phone during a demo/stand rather than everyone crowding one screen. -->
     <div class="report-block" id="demoQrBlock" style="display:none;">
-      <h3>Demo link — for live presentations</h3>
-      <p class="block-sub">A short version of Recycling Sorting: 2 correct items + 2 decoys per stream instead of 5 — playable in under a minute. Nothing is saved, same as Preview.</p>
+      <h3>Demo link - for live presentations</h3>
+      <p class="block-sub">A short version of Recycling Sorting: 2 correct items + 2 decoys per stream instead of 5 - playable in under a minute. Nothing is saved, same as Preview.</p>
       <div class="building-link-row">
         <code class="building-link-text" id="demoLinkText"></code>
         <button class="btn secondary copy-link-btn" id="copyDemoLinkBtn" data-link="">Copy link →</button>
@@ -2839,7 +2839,7 @@ var qrcode = function() {
 
       <div class="report-block">
         <h3>Score trend over time</h3>
-        <p class="block-sub">Average score per day across the current filter — use the date range above to zoom into a period.</p>
+        <p class="block-sub">Average score per day across the current filter - use the date range above to zoom into a period.</p>
         <div id="trendChart"></div>
       </div>
 
@@ -2850,9 +2850,9 @@ var qrcode = function() {
 
       <div class="report-block">
         <h3>Completed</h3>
-        <p class="block-sub">Everyone who has finished, within the current filter — one row per person (their most recent attempt, if they retried).</p>
+        <p class="block-sub">Everyone who has finished, within the current filter - one row per person (their most recent attempt, if they retried).</p>
         <p class="block-sub" id="completedEmpty" style="display:none;">Nobody in this filter has completed it yet.</p>
-        <!-- Collapsed by default — this list is one row per person and a real induction can run
+        <!-- Collapsed by default - this list is one row per person and a real induction can run
              into the hundreds, so an always-expanded table doesn't scale on screen or on a
              printed page. Prints exactly as collapsed as it's left on screen (see the
              .roster-details print rule above) rather than force-expanding a full name roster
@@ -2867,8 +2867,8 @@ var qrcode = function() {
 
       <div class="report-block">
         <h3>Pending completion</h3>
-        <p class="block-sub">Started the sort but haven't finished yet, within the current filter — useful for following up when training is mandatory.</p>
-        <p class="block-sub" id="pendingEmpty" style="display:none;">Nobody in this filter has started without finishing — everyone who began also completed it.</p>
+        <p class="block-sub">Started the sort but haven't finished yet, within the current filter - useful for following up when training is mandatory.</p>
+        <p class="block-sub" id="pendingEmpty" style="display:none;">Nobody in this filter has started without finishing - everyone who began also completed it.</p>
         <details class="roster-details" id="pendingDetails">
           <summary id="pendingSummary">0 people pending</summary>
           <div style="overflow-x:auto;">
@@ -2976,7 +2976,7 @@ try {
     });
   }
 } catch (err) {
-  console.error('Firebase is not configured yet — sign-in and live data will stay unavailable until firebaseConfig is filled in.', err);
+  console.error('Firebase is not configured yet - sign-in and live data will stay unavailable until firebaseConfig is filled in.', err);
 }
 
 (function(){
@@ -3551,7 +3551,7 @@ try {
     document.getElementById('reportTitle').textContent = focused ? 'Focused Report' : 'Overview';
     const scopeParts = [t, b, l].filter(Boolean);
     if (from || to) scopeParts.push(`${from || '…'} to ${to || '…'}`);
-    document.getElementById('focusNote').textContent = focused ? `Focused on: ${scopeParts.join(' — ')}` : '';
+    document.getElementById('focusNote').textContent = focused ? `Focused on: ${scopeParts.join(' - ')}` : '';
     document.getElementById('deleteBtn').style.display = isLiveData ? 'inline-flex' : 'none';
 
     // Print-only cover context (invisible on screen — see .print-header) — reuses the exact
@@ -3648,7 +3648,7 @@ try {
       crosshair.setAttribute('x1', xAt(nearest)); crosshair.setAttribute('x2', xAt(nearest)); crosshair.setAttribute('opacity', '1');
       tooltip.style.display = 'block';
       tooltip.style.left = `${(xAt(nearest) / W) * 100}%`;
-      tooltip.textContent = `${p.day} — ${p.avg}% avg`;
+      tooltip.textContent = `${p.day} - ${p.avg}% avg`;
     });
     svg.addEventListener('mouseleave', () => { crosshair.setAttribute('opacity', '0'); tooltip.style.display = 'none'; });
   }
@@ -3680,10 +3680,10 @@ try {
       <tbody>
         ${completed.map(p => `
           <tr>
-            <td>${esc(p.name) || '—'}</td><td>${esc(p.email)}</td><td>${esc(p.building) || '—'}</td>
-            <td>${esc(p.tenant) || '—'}</td><td>${esc(p.level) || '—'}</td>
-            <td><span class="pass-pill ${(p.score||0)>=75?'pass':'fail'}">${p.score!=null ? p.score+'%' : '—'}</span></td>
-            <td>${p.timestamp ? esc(p.timestamp.slice(0,10)) : '—'}</td>
+            <td>${esc(p.name) || '-'}</td><td>${esc(p.email)}</td><td>${esc(p.building) || '-'}</td>
+            <td>${esc(p.tenant) || '-'}</td><td>${esc(p.level) || '-'}</td>
+            <td><span class="pass-pill ${(p.score||0)>=75?'pass':'fail'}">${p.score!=null ? p.score+'%' : '-'}</span></td>
+            <td>${p.timestamp ? esc(p.timestamp.slice(0,10)) : '-'}</td>
           </tr>
         `).join('')}
       </tbody>
@@ -3714,9 +3714,9 @@ try {
       <tbody>
         ${pending.map(p => `
           <tr>
-            <td>${esc(p.name) || '—'}</td><td>${esc(p.email)}</td><td>${esc(p.building) || '—'}</td>
-            <td>${esc(p.tenant) || '—'}</td><td>${esc(p.level) || '—'}</td>
-            <td>${p.timestamp ? esc(p.timestamp.slice(0,10)) : '—'}</td>
+            <td>${esc(p.name) || '-'}</td><td>${esc(p.email)}</td><td>${esc(p.building) || '-'}</td>
+            <td>${esc(p.tenant) || '-'}</td><td>${esc(p.level) || '-'}</td>
+            <td>${p.timestamp ? esc(p.timestamp.slice(0,10)) : '-'}</td>
           </tr>
         `).join('')}
       </tbody>
@@ -3740,21 +3740,21 @@ try {
     if (streamAgg.length){
       const worst = streamAgg[0];
       insights.push({
-        text: `<b>${streamNames[worst.stream]}</b> is the weakest category (${worst.pct}% accuracy) — recommend a focused refresher on this stream.`,
+        text: `<b>${streamNames[worst.stream]}</b> is the weakest category (${worst.pct}% accuracy) - recommend a focused refresher on this stream.`,
         concern: true,
       });
     }
     if (groupRows.length){
       const worstGroup = groupRows[0];
-      const label = [worstGroup.tenant, worstGroup.level].filter(Boolean).join(' — ') || worstGroup.building;
+      const label = [worstGroup.tenant, worstGroup.level].filter(Boolean).join(' - ') || worstGroup.building;
       insights.push({
-        text: `<b>${esc(label)}</b> has the lowest average score (${worstGroup.avg}%) — flagged for follow-up.`,
+        text: `<b>${esc(label)}</b> has the lowest average score (${worstGroup.avg}%) - flagged for follow-up.`,
         concern: true,
       });
     }
     if (completionRate != null){
       insights.push({
-        text: `<b>${completionRate}% completion rate</b> — ${100 - completionRate}% of people who started haven't finished yet.`,
+        text: `<b>${completionRate}% completion rate</b> - ${100 - completionRate}% of people who started haven't finished yet.`,
         concern: completionRate < 80,
       });
     }
@@ -3806,11 +3806,11 @@ try {
     const kpiRow = document.getElementById('kpiRow');
     kpiRow.innerHTML = `
       <div class="kpi-tile"><div class="kpi-label">Submissions</div><div class="kpi-value">${totalSubs}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Pass rate</div><div class="kpi-value ${passRate>=75?'good':'bad'}">${passRate!=null ? passRate+'%' : '—'}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Average score</div><div class="kpi-value">${avgScore!=null ? avgScore+'%' : '—'}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Avg. time to complete</div><div class="kpi-value">${avgDuration!=null ? Math.floor(avgDuration/60)+'m '+(avgDuration%60)+'s' : '—'}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Completed on mobile</div><div class="kpi-value">${mobilePct!=null ? mobilePct+'%' : '—'}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Completion rate</div><div class="kpi-value">${completionRate!=null ? completionRate+'%' : '—'}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Pass rate</div><div class="kpi-value ${passRate>=75?'good':'bad'}">${passRate!=null ? passRate+'%' : '-'}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Average score</div><div class="kpi-value">${avgScore!=null ? avgScore+'%' : '-'}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Avg. time to complete</div><div class="kpi-value">${avgDuration!=null ? Math.floor(avgDuration/60)+'m '+(avgDuration%60)+'s' : '-'}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Completed on mobile</div><div class="kpi-value">${mobilePct!=null ? mobilePct+'%' : '-'}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Completion rate</div><div class="kpi-value">${completionRate!=null ? completionRate+'%' : '-'}</div></div>
     `;
 
     buildTrendChart(rows);
@@ -3854,7 +3854,7 @@ try {
         <div class="missed-bar-track"><div class="missed-bar-fill" style="width:${it.missRate}%;"></div></div>
         <span class="missed-pct">${it.missRate}%</span>
       </div>
-    `).join('') || '<p class="block-sub">No per-item data found in this file — item_&lt;id&gt; columns are missing.</p>';
+    `).join('') || '<p class="block-sub">No per-item data found in this file - item_&lt;id&gt; columns are missing.</p>';
 
     // Group table (building / level / tenant)
     const groups = {};
@@ -3921,7 +3921,7 @@ try {
     const email = (auth.currentUser?.email || '').toLowerCase();
     const grantsSnap = await getDocs(query(collection(db, 'buildingAccess'), where('email', '==', email)));
     const buildingIds = grantsSnap.docs.map(d => d.data().buildingId);
-    if (!buildingIds.length) return null; // signed in, but no grant at all — genuinely not authorized
+    if (!buildingIds.length) return null; // signed in, but no grant at all — genuinely not authorised
 
     const chunks = chunkArray(buildingIds, BUILDING_ID_CHUNK_SIZE);
     const [subSnaps, attSnaps] = await Promise.all([
@@ -3943,7 +3943,7 @@ try {
 
   async function loadLiveData(){
     if (!db){
-      document.getElementById('authStatus').textContent = 'Firebase is not configured yet — check back once the project is connected.';
+      document.getElementById('authStatus').textContent = 'Firebase is not configured yet - check back once the project is connected.';
       return;
     }
     try {
@@ -3955,7 +3955,7 @@ try {
       const attempts = attemptsSnap.docs.map(d => attemptToRow(d.id, d.data()));
       const truncated = rows.length >= MAX_ROWS || attempts.length >= MAX_ROWS;
       const sourceLabel = `Live data from Firestore · ${rows.length} submissions` +
-        (truncated ? ` (most recent ${MAX_ROWS} — narrow with the date filter to see an older period)` : '');
+        (truncated ? ` (most recent ${MAX_ROWS} - narrow with the date filter to see an older period)` : '');
       loadRows(rows, attempts, sourceLabel, true);
     } catch (err){
       // A global reviewer never reaches here (their query above always succeeds). Only a
@@ -3963,14 +3963,14 @@ try {
       try {
         const scoped = await loadScopedLiveData();
         if (!scoped){
-          document.getElementById('authStatus').textContent = "Your account isn't authorized to view this report, or something went wrong loading it.";
+          document.getElementById('authStatus').textContent = "Your account isn't authorised to view this report, or something went wrong loading it.";
           return;
         }
         const sourceLabel = `Live data from Firestore · ${scoped.rows.length} submissions (scoped to your granted building(s))`;
         loadRows(scoped.rows, scoped.attempts, sourceLabel, true);
       } catch (scopedErr){
         console.error('Failed to load submissions (both unscoped and scoped attempts failed):', err, scopedErr);
-        document.getElementById('authStatus').textContent = "Your account isn't authorized to view this report, or something went wrong loading it.";
+        document.getElementById('authStatus').textContent = "Your account isn't authorised to view this report, or something went wrong loading it.";
       }
     }
   }
@@ -4108,7 +4108,7 @@ try {
         setTimeout(() => { copyBtn.textContent = original; }, 1500);
       } catch (err){
         console.error('Clipboard write failed:', err);
-        alert('Could not copy automatically — select and copy the link text manually.');
+        alert('Could not copy automatically - select and copy the link text manually.');
       }
       return;
     }
@@ -4139,7 +4139,7 @@ try {
   const REPORTS_HEADER = {
     eyebrow: 'Recycling Training · Client Report',
     headline: 'Recycling knowledge, by the numbers.',
-    sub: 'Recycling Training is a short, interactive induction that teaches tenants how to sort waste correctly — this is the live report on how each building is doing. Sign in with an authorized account to get started.',
+    sub: 'Recycling Training is a short, interactive induction that teaches tenants how to sort waste correctly - this is the live report on how each building is doing. Sign in with an authorised account to get started.',
   };
 
   let activeTab = 'reports'; // 'reports' | 'distribution' | 'enrolled'
@@ -4274,7 +4274,7 @@ try {
       await signInWithEmailAndPassword(auth, email, password);
     } catch (err){
       console.error('Email sign-in failed:', err);
-      document.getElementById('authStatus').textContent = 'Sign-in failed — check the email and password and try again.';
+      document.getElementById('authStatus').textContent = 'Sign-in failed - check the email and password and try again.';
     }
   });
 
@@ -4324,7 +4324,7 @@ try {
         isLiveData = false;
         allRows = []; currentRows = []; allAttempts = [];
         document.getElementById('authZone').style.display = '';
-        document.getElementById('authStatus').textContent = 'Sign in with an authorized account to load live results.';
+        document.getElementById('authStatus').textContent = 'Sign in with an authorised account to load live results.';
         // Reset the email form back to its collapsed state, and never leave a typed password
         // sitting visible on screen after signing out.
         document.getElementById('emailSignInForm').style.display = 'none';
@@ -4384,7 +4384,7 @@ try {
       : program.id === 'battery-disposal' ? generateBatterySampleData
       : generateSampleData;
     const { rows, attempts } = generator();
-    loadRows(rows, attempts, 'Sample / preview data — not real submissions', false);
+    loadRows(rows, attempts, 'Sample / preview data - not real submissions', false);
     document.getElementById('reportSection').scrollIntoView({behavior:'smooth', block:'start'});
   });
 
@@ -4410,7 +4410,7 @@ try {
       await loadLiveData();
     } catch (err){
       console.error('Delete failed:', err);
-      alert('Delete failed — check the console for details.');
+      alert('Delete failed - check the console for details.');
     }
   });
 

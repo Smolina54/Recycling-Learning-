@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Recycling Training — Enrolled Buildings</title>
+<title>Recycling Training - Enrolled Buildings</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232F6F4E'/%3E%3Cpath d='M16 6 L26 16 L16 26 L6 16 Z' fill='%23EEEBE1'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -441,8 +441,8 @@
     <div class="report-header-row">
       <h2>Enrolled Buildings</h2>
     </div>
-    <p class="block-sub" id="noProgramNote" style="display:none;">No <code>?program=</code> was given, or it doesn't match a registered induction — <a class="back-to-reports-link" href="sorting-station-report.html">go back and pick one from Reports</a>.</p>
-    <p class="block-sub" id="pageLoadError" style="display:none;">Something went wrong loading this page — try reloading. If it keeps happening, check the browser console for details.</p>
+    <p class="block-sub" id="noProgramNote" style="display:none;">No <code>?program=</code> was given, or it doesn't match a registered induction - <a class="back-to-reports-link" href="sorting-station-report.html">go back and pick one from Reports</a>.</p>
+    <p class="block-sub" id="pageLoadError" style="display:none;">Something went wrong loading this page - try reloading. If it keeps happening, check the browser console for details.</p>
 
     <div class="report-block">
       <h3>Enrol an existing building in this induction</h3>
@@ -527,7 +527,7 @@ try {
     });
   }
 } catch (err) {
-  console.error('Firebase is not configured yet — sign-in and enrolled-building management will stay unavailable until firebaseConfig is filled in.', err);
+  console.error('Firebase is not configured yet - sign-in and enrolled-building management will stay unavailable until firebaseConfig is filled in.', err);
 }
 
 const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
@@ -833,13 +833,13 @@ function validateDraftOverrides(){
   const claimed = computeClaimedCounts();
   for (const s of streams){
     if (claimed[s] > 0 && claimed[s] < DECOY_CAP){
-      return `${streamNames[s]} only has ${claimed[s]} correct item${claimed[s] === 1 ? '' : 's'} — needs at least ${DECOY_CAP} (or merge it away entirely with Quick-merge).`;
+      return `${streamNames[s]} only has ${claimed[s]} correct item${claimed[s] === 1 ? '' : 's'} - needs at least ${DECOY_CAP} (or merge it away entirely with Quick-merge).`;
     }
   }
   const filled = tryFillDecoySlots();
   for (const s of streams){
     if (filled[s] < DECOY_CAP){
-      return `${streamNames[s]}'s phase wouldn't have enough decoys (${filled[s]} of ${DECOY_CAP}) — too many items are claimed by other streams. Turn a few more items on, or move some out of the streams claiming the most.`;
+      return `${streamNames[s]}'s phase wouldn't have enough decoys (${filled[s]} of ${DECOY_CAP}) - too many items are claimed by other streams. Turn a few more items on, or move some out of the streams claiming the most.`;
     }
   }
   return '';
@@ -851,7 +851,7 @@ function activeStreamsSummary(){
   const empty = streams.filter(s => claimed[s] === 0);
   let text = `Active bins for this building: ${active.map(s => streamNames[s]).join(', ')} (${active.length} of ${streams.length}).`;
   if (empty.length){
-    text += ` ${empty.map(s => streamNames[s]).join(', ')} — no items here, won't get a game phase to sort into, but the walkthrough panel stays visible as general info.`;
+    text += ` ${empty.map(s => streamNames[s]).join(', ')} - no items here, won't get a game phase to sort into, but the walkthrough panel stays visible as general info.`;
   }
   return text;
 }
@@ -997,7 +997,7 @@ function isEnrolledBuildingExpanded(b){
 function renderEnrolledBuildingsList(buildings){
   const container = document.getElementById('enrolledBuildingsList');
   if (buildings.length === 0){
-    container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet — enrol one above.</p>';
+    container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet - enrol one above.</p>';
     return;
   }
   container.innerHTML = buildings.map(b => {
@@ -1042,11 +1042,11 @@ function renderTenantEnableChecklistHtml(b){
           <span class="tenant-name">${esc(t.name)}</span>
         </label>
       </li>`).join('')
-    : '<li class="block-sub">This building has no tenants yet — add them in Edificios (⚙).</li>';
+    : '<li class="block-sub">This building has no tenants yet - add them in Edificios (⚙).</li>';
   return `
     <div class="report-block tenant-enable-block">
       <p class="generate-link-title"><strong>Tenants allowed to take this induction</strong></p>
-      <p class="block-sub">Uncheck a tenant to stop offering them this induction's link — their access to other inductions, and all of their history, are unaffected.</p>
+      <p class="block-sub">Uncheck a tenant to stop offering them this induction's link - their access to other inductions, and all of their history, are unaffected.</p>
       <ul class="tenant-list">${rowsHtml}</ul>
       <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
         <button class="btn secondary save-tenant-enable-btn">Save</button>
@@ -1070,7 +1070,7 @@ document.getElementById('enrollBuildingBtn').addEventListener('click', async () 
     await loadEnrolledData();
   } catch (err){
     console.error('Failed to enroll building:', err);
-    status.textContent = 'Failed to enrol — check the console for details.';
+    status.textContent = 'Failed to enrol - check the console for details.';
   }
 });
 
@@ -1093,7 +1093,7 @@ async function saveItemStreamsEditor(){
     return true;
   } catch (err2){
     console.error('Failed to save item-stream configuration:', err2);
-    alert('Failed to save — check the console for details.');
+    alert('Failed to save - check the console for details.');
     return false;
   }
 }
@@ -1178,7 +1178,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('click', async
       await loadEnrolledData();
     } catch (err){
       console.error('Failed to remove enrollment:', err);
-      alert('Failed to remove — check the console for details.');
+      alert('Failed to remove - check the console for details.');
     }
     return;
   }
@@ -1219,8 +1219,8 @@ document.getElementById('enrolledBuildingsList').addEventListener('click', async
       await loadEnrolledData();
     } catch (err){
       console.error('Failed to save tenant access:', err);
-      status.textContent = 'Failed to save — check the console for details.';
-      tenantEnableStatusByBuildingId[buildingId] = 'Failed to save — check the console for details.';
+      status.textContent = 'Failed to save - check the console for details.';
+      tenantEnableStatusByBuildingId[buildingId] = 'Failed to save - check the console for details.';
     }
     return;
   }
@@ -1295,7 +1295,7 @@ document.getElementById('emailSignInForm').addEventListener('submit', async (e) 
     await signInWithEmailAndPassword(auth, email, password);
   } catch (err){
     console.error('Email sign-in failed:', err);
-    document.getElementById('authStatus').textContent = 'Sign-in failed — check the email and password and try again.';
+    document.getElementById('authStatus').textContent = 'Sign-in failed - check the email and password and try again.';
   }
 });
 
@@ -1337,7 +1337,7 @@ if (auth){
       }
     } else {
       document.getElementById('authZone').style.display = '';
-      document.getElementById('authStatus').textContent = 'Sign in with an authorized account to manage enrolled buildings.';
+      document.getElementById('authStatus').textContent = 'Sign in with an authorised account to manage enrolled buildings.';
       document.getElementById('emailSignInForm').style.display = 'none';
       document.getElementById('emailSignInForm').reset();
       document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';

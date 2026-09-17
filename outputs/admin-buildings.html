@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Recycling Training — Buildings</title>
+<title>Recycling Training - Buildings</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232F6F4E'/%3E%3Cpath d='M16 6 L26 16 L16 26 L6 16 Z' fill='%23EEEBE1'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -444,7 +444,7 @@
   <header class="top">
     <p class="eyebrow" id="pageEyebrow">Recycling Training · Settings</p>
     <h1 id="pageHeadline">Buildings</h1>
-    <p class="sub" id="pageSub">Manage the buildings and tenants any induction can enrol — program-agnostic, applies to every induction.</p>
+    <p class="sub" id="pageSub">Manage the buildings and tenants any induction can enrol - program-agnostic, applies to every induction.</p>
   </header>
 
   <div class="corner-settings" id="cornerSettings">
@@ -452,7 +452,7 @@
   </div>
 
   <div class="upload-zone" id="authZone">
-    <p id="authStatus">Sign in with an authorized account to manage buildings.</p>
+    <p id="authStatus">Sign in with an authorised account to manage buildings.</p>
     <div class="upload-actions">
       <button class="btn" id="signInBtn">Sign in with Google →</button>
       <button class="btn secondary" id="showEmailSignInBtn">Sign in with email →</button>
@@ -549,7 +549,7 @@ try {
     });
   }
 } catch (err) {
-  console.error('Firebase is not configured yet — sign-in and building management will stay unavailable until firebaseConfig is filled in.', err);
+  console.error('Firebase is not configured yet - sign-in and building management will stay unavailable until firebaseConfig is filled in.', err);
 }
 
 const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
@@ -701,7 +701,7 @@ async function loadMasterBuildings(){
     refreshBuildingsView();
   } catch (err){
     console.error('Failed to load buildings:', err);
-    document.getElementById('buildingsStatus').textContent = "Couldn't load buildings — check your connection and reload the page.";
+    document.getElementById('buildingsStatus').textContent = "Couldn't load buildings - check your connection and reload the page.";
   }
 }
 
@@ -717,7 +717,7 @@ function renderBuildingsList(buildings){
   if (buildings.length === 0){
     container.innerHTML = buildingSearchTerm.trim()
       ? '<p class="block-sub">No buildings match your search.</p>'
-      : '<p class="block-sub">No buildings yet — add one above.</p>';
+      : '<p class="block-sub">No buildings yet - add one above.</p>';
     return;
   }
   container.innerHTML = buildings.map(b => {
@@ -770,7 +770,7 @@ function renderBuildingsList(buildings){
       <ul class="tenant-list">${tenantsHtml}</ul>
       <p class="block-sub contacts-coverage-note">${withEmail} of ${b.tenants.length} tenants have a contact email saved.</p>
       <p class="generate-link-title"><strong>Add tenant</strong></p>
-      <p class="block-sub">Add a new tenant to this building — its name, the level(s) it occupies, and an optional contact email for sending induction links later.</p>
+      <p class="block-sub">Add a new tenant to this building - its name, the level(s) it occupies, and an optional contact email for sending induction links later.</p>
       <div class="filter-row">
         <label class="filter-field"><span>Tenant name</span><input type="text" class="new-tenant-name" placeholder="e.g. Acme Legal"></label>
         <label class="filter-field"><span>Levels</span>${renderLevelsEditorHtml([], 'new-tenant-levels-editor')}</label>
@@ -785,7 +785,7 @@ function renderBuildingsList(buildings){
       </div>
       <div class="import-review" style="display:none;"></div>
       <p class="generate-link-title"><strong>Export or import tenant contacts</strong></p>
-      <p class="block-sub">Download a spreadsheet pre-filled with every tenant's name and saved email(s) — edit it and re-upload to update contact emails in bulk, instead of one tenant at a time.</p>
+      <p class="block-sub">Download a spreadsheet pre-filled with every tenant's name and saved email(s) - edit it and re-upload to update contact emails in bulk, instead of one tenant at a time.</p>
       <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
         <button class="btn secondary export-contacts-btn">Export contacts template →</button>
         <label class="btn secondary import-contacts-label">
@@ -829,7 +829,7 @@ function renderImportReview(row, candidates){
   const reviewEl = row.querySelector('.import-review');
   reviewEl.style.display = 'block';
   reviewEl.innerHTML = `
-    <p class="block-sub" style="margin-top:14px;">Review before importing — untick anything that isn't a real tenant (e.g. "Vacant", "Go Zero", "Base Building"), and fix names/levels if needed.</p>
+    <p class="block-sub" style="margin-top:14px;">Review before importing - untick anything that isn't a real tenant (e.g. "Vacant", "Go Zero", "Base Building"), and fix names/levels if needed.</p>
     <div class="import-candidates">
       ${candidates.map((c, i) => `
         <div class="import-row">
@@ -890,13 +890,13 @@ function renderContactsImportReview(row, parsed){
   const reviewEl = row.querySelector('.import-contacts-review');
   reviewEl.style.display = 'block';
   reviewEl.innerHTML = `
-    <p class="block-sub" style="margin-top:14px;">Review before importing.${parsed.unmatched.length ? ' Rows that didn’t match an existing tenant are shown below, skipped — nothing was written for them.' : ''}</p>
+    <p class="block-sub" style="margin-top:14px;">Review before importing.${parsed.unmatched.length ? ' Rows that didn’t match an existing tenant are shown below, skipped - nothing was written for them.' : ''}</p>
     <div class="import-candidates">
       ${parsed.matched.map(m => `
         <div class="import-row" data-tenant-id="${esc(m.tenant.id)}" data-emails="${esc([...m.emails].join(';'))}">
           <input type="checkbox" class="import-contacts-check" checked>
           <span class="tenant-name">${esc(m.tenant.name)}</span>
-          <span class="block-sub">${esc([...m.emails].join(', ')) || '(no valid emails found)'}${m.invalidCount ? ` — ${m.invalidCount} invalid, skipped` : ''}</span>
+          <span class="block-sub">${esc([...m.emails].join(', ')) || '(no valid emails found)'}${m.invalidCount ? ` - ${m.invalidCount} invalid, skipped` : ''}</span>
         </div>
       `).join('')}
       ${parsed.unmatched.map(u => `
@@ -934,7 +934,7 @@ document.getElementById('addBuildingBtn').addEventListener('click', async () => 
     await loadMasterBuildings();
   } catch (err){
     console.error('Failed to add building:', err);
-    status.textContent = 'Failed to add building — check the console for details.';
+    status.textContent = 'Failed to add building - check the console for details.';
   }
 });
 
@@ -1004,7 +1004,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to rename building:', err);
-      alert('Failed to save — check the console for details.');
+      alert('Failed to save - check the console for details.');
     }
     return;
   }
@@ -1018,7 +1018,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       `Delete "${building ? building.name : 'this building'}" and its ${tenantCount} tenant(s)?\n\n` +
       `Every link/QR code you've shared for this building, in every induction it's enrolled in, ` +
       `stops working immediately. Its data and history (submissions, attempts, configuration) ` +
-      `are NOT deleted — only hidden — but there's no button yet to bring it back if you change ` +
+      `are NOT deleted - only hidden - but there's no button yet to bring it back if you change ` +
       `your mind.`
     );
     if (!confirmed) return;
@@ -1030,7 +1030,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to delete building:', err);
-      alert('Failed to delete — check the console for details.');
+      alert('Failed to delete - check the console for details.');
     }
     return;
   }
@@ -1070,7 +1070,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to update tenant:', err);
-      alert('Failed to save — check the console for details.');
+      alert('Failed to save - check the console for details.');
     }
     return;
   }
@@ -1081,7 +1081,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     const tenantId = deleteTenantBtn.closest('li').dataset.tenantId;
     const confirmed = confirm(
       `Delete this tenant? It disappears from every programme immediately and any link scoped ` +
-      `to it stops working. Its data and history are NOT deleted — only hidden — but there's ` +
+      `to it stops working. Its data and history are NOT deleted - only hidden - but there's ` +
       `no button yet to bring it back if you change your mind.`
     );
     if (!confirmed) return;
@@ -1091,7 +1091,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to delete tenant:', err);
-      alert('Failed to delete — check the console for details.');
+      alert('Failed to delete - check the console for details.');
     }
     return;
   }
@@ -1111,7 +1111,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings(); // re-renders the whole tab, including a fresh blank "add tenant" form
     } catch (err){
       console.error('Failed to add tenant:', err);
-      alert('Failed to add tenant — check the console for details.');
+      alert('Failed to add tenant - check the console for details.');
     }
     return;
   }
@@ -1145,7 +1145,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Bulk import failed:', err);
-      alert('Import failed partway through — check the console for which tenants already got added before retrying.');
+      alert('Import failed partway through - check the console for which tenants already got added before retrying.');
     }
     return;
   }
@@ -1163,7 +1163,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     }));
     const wb = xlsxUtils.book_new();
     xlsxUtils.book_append_sheet(wb, xlsxUtils.json_to_sheet(rows), 'Contacts');
-    xlsxWriteFile(wb, `${b.name} — contacts.xlsx`);
+    xlsxWriteFile(wb, `${b.name} - contacts.xlsx`);
     return;
   }
 
@@ -1201,7 +1201,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to import contact emails:', err);
-      alert('Import failed — check the console for details.');
+      alert('Import failed - check the console for details.');
       confirmContactsBtn.disabled = false;
       confirmContactsBtn.textContent = 'Import selected →';
     }
@@ -1231,7 +1231,7 @@ document.getElementById('buildingsList').addEventListener('change', async (e) =>
       renderImportReview(row, candidates);
     } catch (err){
       console.error('Failed to read Excel file:', err);
-      alert("Could not read that file — make sure it's a valid .xlsx export.");
+      alert("Could not read that file - make sure it's a valid .xlsx export.");
     }
     input.value = '';
     return;
@@ -1252,7 +1252,7 @@ document.getElementById('buildingsList').addEventListener('change', async (e) =>
       renderContactsImportReview(row, parsed);
     } catch (err){
       console.error('Failed to read Excel file:', err);
-      alert("Could not read that file — make sure it's a valid .xlsx export.");
+      alert("Could not read that file - make sure it's a valid .xlsx export.");
     }
     contactsInput.value = '';
     return;
@@ -1284,7 +1284,7 @@ document.getElementById('emailSignInForm').addEventListener('submit', async (e) 
     await signInWithEmailAndPassword(auth, email, password);
   } catch (err){
     console.error('Email sign-in failed:', err);
-    document.getElementById('authStatus').textContent = 'Sign-in failed — check the email and password and try again.';
+    document.getElementById('authStatus').textContent = 'Sign-in failed - check the email and password and try again.';
   }
 });
 
@@ -1302,7 +1302,7 @@ if (auth){
       loadMasterBuildings();
     } else {
       document.getElementById('authZone').style.display = '';
-      document.getElementById('authStatus').textContent = 'Sign in with an authorized account to manage buildings.';
+      document.getElementById('authStatus').textContent = 'Sign in with an authorised account to manage buildings.';
       document.getElementById('emailSignInForm').style.display = 'none';
       document.getElementById('emailSignInForm').reset();
       document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';

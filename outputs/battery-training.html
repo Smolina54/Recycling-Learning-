@@ -368,7 +368,7 @@
 </head>
 <body>
 
-<div class="preview-banner" id="previewBanner" style="display:none;">Preview mode — nothing you do here is saved.</div>
+<div class="preview-banner" id="previewBanner" style="display:none;">Preview mode - nothing you do here is saved.</div>
 
 <section class="id-gate" id="idGate">
   <div class="id-card" id="idCardLoading">
@@ -446,16 +446,16 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--ew)" stroke-width="2"><rect x="7" y="4" width="10" height="17" rx="1.5"/><rect x="10" y="1.5" width="4" height="2.5" rx="0.5"/><path d="M9 9h6M9 12h6" stroke-linecap="round"/></svg>
         </div>
         <div class="detail-title-group">
-          <div class="stream-code">Hazardous — Fire risk</div>
+          <div class="stream-code">Hazardous - Fire risk</div>
           <h2>Batteries</h2>
         </div>
       </div>
-      <p class="detail-desc">A battery in the wrong bin isn't just a recycling mistake — it's a genuine fire risk. Damaged or crushed batteries can ignite inside a collection bin or a waste truck, and that fire is very hard to put out once it starts.</p>
+      <p class="detail-desc">A battery in the wrong bin isn't just a recycling mistake - it's a genuine fire risk. Damaged or crushed batteries can ignite inside a collection bin or a waste truck, and that fire is very hard to put out once it starts.</p>
       <div class="rule-grid">
         <div class="rule-card yes">
           <h3>✓ Where it goes</h3>
           <ul>
-            <li>Every battery — of any size — goes to your building's dedicated battery collection point</li>
+            <li>Every battery - of any size - goes to your building's dedicated battery collection point</li>
             <li>Not sure where that is? Ask your Waste Champion or Building Management</li>
           </ul>
         </div>
@@ -463,11 +463,11 @@
           <h3>✕ Never goes in</h3>
           <ul>
             <li>General waste, Mixed Recycling, or any other stream</li>
-            <li>The E-Waste point — batteries need their own separate, dedicated point</li>
+            <li>The E-Waste point - batteries need their own separate, dedicated point</li>
           </ul>
         </div>
       </div>
-      <div class="tip"><span class="lb">💡</span><span>A single battery in the wrong bin can start a fire in a waste truck — this is the one rule on this page that's about safety, not just sorting.</span></div>
+      <div class="tip"><span class="lb">💡</span><span>A single battery in the wrong bin can start a fire in a waste truck - this is the one rule on this page that's about safety, not just sorting.</span></div>
       <div class="detail-nav"><span></span><button class="btn" id="toGameBtn">Take the quiz →</button></div>
     </div>
 
@@ -493,7 +493,7 @@
     <p class="eyebrow">Results</p>
     <h2>Your quiz score</h2>
     <div class="save-warning" id="saveWarning" style="display:none;">
-      <span>We couldn't save your results — check your connection and try again.</span>
+      <span>We couldn't save your results - check your connection and try again.</span>
       <button class="btn secondary" id="retrySaveBtn">Retry</button>
     </div>
     <div class="score-row">
@@ -565,7 +565,7 @@ try {
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
   }
 } catch (err) {
-  console.error('Firebase is not configured yet — the id-gate will show a fallback message until firebaseConfig is filled in.', err);
+  console.error('Firebase is not configured yet - the id-gate will show a fallback message until firebaseConfig is filled in.', err);
 }
 
 (function(){
@@ -772,7 +772,7 @@ try {
         { key: 'd', text: 'The E-Waste point' },
       ],
       correctKey: 'c',
-      reason: "Batteries need their own dedicated collection point — not general waste, not recycling, and not even the E-Waste point.",
+      reason: "Batteries need their own dedicated collection point - not general waste, not recycling, and not even the E-Waste point.",
     },
     {
       id: 'q2',
@@ -784,7 +784,7 @@ try {
         { key: 'd', text: 'It smells unpleasant' },
       ],
       correctKey: 'b',
-      reason: 'A damaged or crushed battery can ignite — this is a genuine fire-safety issue, not just a sorting mistake.',
+      reason: 'A damaged or crushed battery can ignite - this is a genuine fire-safety issue, not just a sorting mistake.',
     },
     {
       id: 'q3',
@@ -796,7 +796,7 @@ try {
         { key: 'd', text: 'Only for large batteries' },
       ],
       correctKey: 'b',
-      reason: 'Batteries are handled separately from E-Waste — check with your Waste Champion or Building Management for where yours is.',
+      reason: 'Batteries are handled separately from E-Waste - check with your Waste Champion or Building Management for where yours is.',
     },
     {
       id: 'q4',
@@ -808,7 +808,7 @@ try {
         { key: 'd', text: 'Mail it to the manufacturer' },
       ],
       correctKey: 'c',
-      reason: 'Every building has one — asking your Waste Champion or Building Management is the fastest way to find it.',
+      reason: 'Every building has one - asking your Waste Champion or Building Management is the fastest way to find it.',
     },
     {
       id: 'q5',
@@ -820,7 +820,7 @@ try {
         { key: 'd', text: 'Every battery, regardless of size' },
       ],
       correctKey: 'd',
-      reason: 'Size doesn\'t matter — a small button battery is just as much of a fire risk as a large one.',
+      reason: 'Size doesn\'t matter - a small button battery is just as much of a fire risk as a large one.',
     },
   ];
 
@@ -939,7 +939,7 @@ try {
     const verdict = document.getElementById('verdict');
     const verdictSub = document.getElementById('verdictSub');
     if (pct >= 75){
-      verdict.textContent = 'Passed — solid grasp of battery disposal.';
+      verdict.textContent = 'Passed - solid grasp of battery disposal.';
       verdictSub.textContent = 'Keep this as a reference next time you\'re not sure where a battery goes.';
     } else {
       verdict.textContent = 'Not quite at the pass mark yet.';
@@ -954,7 +954,7 @@ try {
         <div class="quiz-review-item ${isCorrect ? 'correct' : 'wrong'}">
           <p class="quiz-review-q">${i + 1}. ${q.text}</p>
           ${isCorrect
-            ? `<p class="quiz-review-answer">Correct — ${correctOption.text}.</p>`
+            ? `<p class="quiz-review-answer">Correct - ${correctOption.text}.</p>`
             : `<p class="quiz-review-answer">Correct answer: ${correctOption.text}. ${q.reason}</p>`}
         </div>
       `;

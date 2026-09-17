@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Recycling Training — Distribution</title>
+<title>Recycling Training - Distribution</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232F6F4E'/%3E%3Cpath d='M16 6 L26 16 L16 26 L6 16 Z' fill='%23EEEBE1'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -2746,8 +2746,8 @@ var qrcode = function() {
     <div class="report-header-row">
       <h2>Distribution</h2>
     </div>
-    <p class="block-sub" id="noProgramNote" style="display:none;">No <code>?program=</code> was given, or it doesn't match a registered induction — <a class="back-to-reports-link" href="sorting-station-report.html">go back and pick one from Reports</a>.</p>
-    <p class="block-sub" id="pageLoadError" style="display:none;">Something went wrong loading this page — try reloading. If it keeps happening, check the browser console for details.</p>
+    <p class="block-sub" id="noProgramNote" style="display:none;">No <code>?program=</code> was given, or it doesn't match a registered induction - <a class="back-to-reports-link" href="sorting-station-report.html">go back and pick one from Reports</a>.</p>
+    <p class="block-sub" id="pageLoadError" style="display:none;">Something went wrong loading this page - try reloading. If it keeps happening, check the browser console for details.</p>
 
     <div id="distributionList"></div>
   </section>
@@ -2818,7 +2818,7 @@ try {
     });
   }
 } catch (err) {
-  console.error('Firebase is not configured yet — sign-in and distribution links will stay unavailable until firebaseConfig is filled in.', err);
+  console.error('Firebase is not configured yet - sign-in and distribution links will stay unavailable until firebaseConfig is filled in.', err);
 }
 
 const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
@@ -2929,9 +2929,9 @@ function renderDistributionLinksHtml(b){
         const emailsCsv = tenant?.emails?.length ? tenant.emails.join(';') : '';
         return `
           <li data-link-id="${esc(l.id)}">
-            <span class="tenant-name">${scopeText} — <span class="block-sub">${expiryText}</span></span>
+            <span class="tenant-name">${scopeText} - <span class="block-sub">${expiryText}</span></span>
             <button class="btn secondary copy-link-btn" data-link="${linkUrl}">Copy link →</button>
-            ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-subject="${esc(`${currentProgram.name} — ${b.name}`)}" data-body="${esc(`Hi,\n\nHere's the induction link for ${b.name}:\n${linkUrl}\n\nThanks.`)}">Send via email →</button>
+            ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-subject="${esc(`${currentProgram.name} - ${b.name}`)}" data-body="${esc(`Hi,\n\nHere's the induction link for ${b.name}:\n${linkUrl}\n\nThanks.`)}">Send via email →</button>
             <button class="btn secondary copy-link-btn" data-link="${esc(tenant.emails.join('; '))}">Copy addresses →</button>` : ''}
             <button class="btn secondary revoke-link-btn danger-btn">Revoke</button>
           </li>`;
@@ -2940,7 +2940,7 @@ function renderDistributionLinksHtml(b){
   return `
     <div class="report-block generate-link-block">
       <p class="generate-link-title"><strong>Generate a distribution link</strong></p>
-      <p class="block-sub">Lock it to one tenant and/or give it an expiry — leave either at its default to skip that restriction.</p>
+      <p class="block-sub">Lock it to one tenant and/or give it an expiry - leave either at its default to skip that restriction.</p>
       <div class="filter-row">
         <label class="filter-field"><span>Tenant</span>
           <select class="new-link-tenant">
@@ -2969,7 +2969,7 @@ function renderDistributionLinksHtml(b){
 function renderDistributionList(buildings){
   const container = document.getElementById('distributionList');
   if (buildings.length === 0){
-    container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet — enrol one in Enrolled Buildings first.</p>';
+    container.innerHTML = '<p class="block-sub">No buildings enrolled in this induction yet - enrol one in Enrolled Buildings first.</p>';
     return;
   }
   container.innerHTML = buildings.map(b => {
@@ -3036,7 +3036,7 @@ document.getElementById('distributionList').addEventListener('click', async (e) 
       await refreshDistributionView();
     } catch (err){
       console.error('Failed to generate link:', err);
-      status.textContent = 'Failed to generate — check the console for details.';
+      status.textContent = 'Failed to generate - check the console for details.';
     }
     return;
   }
@@ -3055,7 +3055,7 @@ document.getElementById('distributionList').addEventListener('click', async (e) 
       await refreshDistributionView();
     } catch (err){
       console.error('Failed to revoke link:', err);
-      alert('Failed to revoke — check the console for details.');
+      alert('Failed to revoke - check the console for details.');
     }
     return;
   }
@@ -3085,7 +3085,7 @@ document.addEventListener('click', async (e) => {
       setTimeout(() => { copyBtn.textContent = original; }, 1500);
     } catch (err){
       console.error('Clipboard write failed:', err);
-      alert('Could not copy automatically — select and copy the link text manually.');
+      alert('Could not copy automatically - select and copy the link text manually.');
     }
     return;
   }
@@ -3107,7 +3107,7 @@ document.addEventListener('click', async (e) => {
       setTimeout(() => { sendEmailBtn.textContent = original; sendEmailBtn.disabled = false; }, 2500);
     } catch (err){
       console.error('sendInductionEmail failed:', err);
-      alert('Could not send automatically — use "Copy addresses" and send it yourself instead.');
+      alert('Could not send automatically - use "Copy addresses" and send it yourself instead.');
       sendEmailBtn.textContent = original;
       sendEmailBtn.disabled = false;
     }
@@ -3140,7 +3140,7 @@ document.getElementById('emailSignInForm').addEventListener('submit', async (e) 
     await signInWithEmailAndPassword(auth, email, password);
   } catch (err){
     console.error('Email sign-in failed:', err);
-    document.getElementById('authStatus').textContent = 'Sign-in failed — check the email and password and try again.';
+    document.getElementById('authStatus').textContent = 'Sign-in failed - check the email and password and try again.';
   }
 });
 
@@ -3184,7 +3184,7 @@ if (auth){
       }
     } else {
       document.getElementById('authZone').style.display = '';
-      document.getElementById('authStatus').textContent = 'Sign in with an authorized account to manage distribution links.';
+      document.getElementById('authStatus').textContent = 'Sign in with an authorised account to manage distribution links.';
       document.getElementById('emailSignInForm').style.display = 'none';
       document.getElementById('emailSignInForm').reset();
       document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';

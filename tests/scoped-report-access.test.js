@@ -110,7 +110,7 @@ async function runFlow(page){
   check('scoped client sees exactly 1 submission (their granted building only), not both', submissionsKpi === '1', submissionsKpi);
 
   const authStatusText = await page.$eval('#authStatus', el => el.textContent);
-  check('no "not authorized" message shown for a validly-scoped client', !authStatusText.includes("isn't authorized"), authStatusText);
+  check('no "not authorised" message shown for a validly-scoped client', !authStatusText.includes("isn't authorised"), authStatusText);
 
   // ---- Negative control: signed in, but zero /buildingAccess grant at all ----
   await page.evaluate((email, password) => window.__testSignIn(email, password), NO_GRANT_EMAIL, PASSWORD);
@@ -118,11 +118,11 @@ async function runFlow(page){
     getComputedStyle(document.getElementById('programSelectorRow')).display !== 'none', { timeout: 10000 });
   await selectProgram(page, 'recycling-sorting');
   await page.waitForFunction(
-    () => (document.getElementById('authStatus')?.textContent || '').includes("isn't authorized"),
+    () => (document.getElementById('authStatus')?.textContent || '').includes("isn't authorised"),
     { timeout: 10000 }
   );
   const noGrantStatusText = await page.$eval('#authStatus', el => el.textContent);
-  check('a signed-in user with NO grant at all still sees the "not authorized" message (unchanged behavior)', noGrantStatusText.includes("isn't authorized"), noGrantStatusText);
+  check('a signed-in user with NO grant at all still sees the "not authorised" message (unchanged behavior)', noGrantStatusText.includes("isn't authorised"), noGrantStatusText);
 }
 
 main().catch((err) => { console.error('Test harness crashed:', err); process.exit(1); });
