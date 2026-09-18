@@ -2313,6 +2313,10 @@ var qrcode = function() {
 
 </script>
 <style>
+  @font-face{ font-family:'Gilroy'; src:url('branding/Gilroy-Bold.otf') format('opentype'); font-weight:700; font-display:swap; }
+  @font-face{ font-family:'Gilroy'; src:url('branding/Gilroy-Medium.otf') format('opentype'); font-weight:500; font-display:swap; }
+  @font-face{ font-family:'Gilroy'; src:url('branding/Gilroy-Light.otf') format('opentype'); font-weight:300; font-display:swap; }
+
   :root{
     --paper:#EEEBE1;
     --panel:#F7F5EE;
@@ -2343,13 +2347,17 @@ var qrcode = function() {
     --settings-line: #8FA0A8;
 
     --radius: 4px;
-    --display: 'Oswald', sans-serif;
-    --body: 'Inter', sans-serif;
+    --display: 'Gilroy', 'Oswald', sans-serif;
+    --body: 'Gilroy', 'Inter', sans-serif;
     --mono: 'Space Mono', monospace;
   }
 
+  .brand-row{display:flex; align-items:center; gap:16px; margin-bottom:22px;}
+  .brand-row img{height:44px; width:auto; display:block;}
+  .brand-divider{width:1px; align-self:stretch; background:var(--line);}
+
   *{box-sizing:border-box;}
-  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--body); line-height:1.5;}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--body); font-weight:300; line-height:1.5;}
   .wrap{max-width:920px; margin:0 auto; padding:0 24px 80px;}
 
   header.top{padding:40px 0 28px; border-bottom:1px solid var(--line); margin-bottom:32px;}
@@ -2358,7 +2366,7 @@ var qrcode = function() {
   .sub{color:var(--ink-soft); font-size:15px; max-width:600px;}
 
   .btn{
-    font-family:var(--body); font-weight:600; font-size:14.5px;
+    font-family:var(--body); font-weight:500; font-size:14.5px;
     padding:12px 22px; border-radius:var(--radius); border:none; cursor:pointer;
     background:var(--ink); color:var(--paper);
     display:inline-flex; align-items:center; gap:10px;
@@ -2715,6 +2723,11 @@ var qrcode = function() {
 <div class="page-shell" id="pageShell">
 <div class="wrap">
   <header class="top">
+    <div class="brand-row">
+      <img src="branding/tradeflex-logo.png" alt="Tradeflex - Integrated facilities services">
+      <div class="brand-divider"></div>
+      <img src="branding/futuregreen-logo.png" alt="FutureGreen - Tradeflex Sustainability Program">
+    </div>
     <p class="eyebrow" id="pageEyebrow">Recycling Training · Distribution</p>
     <h1 id="pageHeadline">Distribution</h1>
     <p class="sub" id="pageSub">Links for <span id="programNameLabel">this induction</span>. A building must be enrolled (see Enrolled Buildings) before it shows up here.</p>

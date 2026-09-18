@@ -8,6 +8,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
+  @font-face{ font-family:'Gilroy'; src:url('branding/Gilroy-Bold.otf') format('opentype'); font-weight:700; font-display:swap; }
+  @font-face{ font-family:'Gilroy'; src:url('branding/Gilroy-Medium.otf') format('opentype'); font-weight:500; font-display:swap; }
+  @font-face{ font-family:'Gilroy'; src:url('branding/Gilroy-Light.otf') format('opentype'); font-weight:300; font-display:swap; }
+
   :root{
     --paper:#EEEBE1;
     --panel:#F7F5EE;
@@ -29,8 +33,8 @@
     --ew-tint: #E4E0EF;
 
     --radius: 4px;
-    --display: 'Oswald', sans-serif;
-    --body: 'Inter', sans-serif;
+    --display: 'Gilroy', 'Oswald', sans-serif;
+    --body: 'Gilroy', 'Inter', sans-serif;
     --mono: 'Space Mono', monospace;
   }
 
@@ -41,6 +45,7 @@
     background:var(--paper);
     color:var(--ink);
     font-family:var(--body);
+    font-weight:300;
     line-height:1.5;
   }
   @media (prefers-reduced-motion: reduce){
@@ -53,8 +58,11 @@
   /* ---------- Identification gate ---------- */
   .id-gate{
     min-height:100vh; min-height:100dvh; max-height:100vh; max-height:100dvh; overflow-y:auto;
-    display:flex; align-items:center; justify-content:center; padding:40px 24px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; padding:40px 24px;
   }
+  .id-gate-brand{display:flex; align-items:center; gap:12px; width:100%; max-width:440px;}
+  .id-gate-brand img{height:32px; width:auto; display:block;}
+  .id-gate-brand .brand-divider{width:1px; align-self:stretch; background:var(--line);}
   .id-card{max-width:440px; width:100%; background:var(--panel); border:1px solid var(--line); padding:44px 36px;}
   .id-card .headline{font-size:clamp(26px,5vw,36px); margin-bottom:16px;}
   .id-form{margin-top:8px;}
@@ -77,6 +85,9 @@
     max-width:960px; margin:0 auto; padding:14px 24px;
     display:flex; align-items:center; justify-content:space-between; gap:16px;
   }
+  .topbar .brand-row{display:flex; align-items:center; gap:10px;}
+  .topbar .brand-row img{height:26px; width:auto; display:block;}
+  .topbar .brand-row .brand-divider{width:1px; align-self:stretch; background:var(--line);}
   .brand{
     font-family:var(--mono); font-size:12px; letter-spacing:0.14em; text-transform:uppercase;
     color:var(--ink-soft);
@@ -112,7 +123,7 @@
     font-size:17px; color:var(--ink-soft); max-width:560px; margin:0 0 28px;
   }
   .btn{
-    font-family:var(--body); font-weight:600; font-size:15px;
+    font-family:var(--body); font-weight:500; font-size:15px;
     padding:13px 26px; border-radius:var(--radius); border:none; cursor:pointer;
     background:var(--ink); color:var(--paper);
     transition:transform .15s ease, background .15s ease;
@@ -391,6 +402,11 @@
 <div class="preview-banner" id="previewBanner" style="display:none;">Preview mode - nothing you do here is saved.</div>
 
 <section class="id-gate" id="idGate">
+  <div class="id-gate-brand">
+    <img src="branding/tradeflex-logo.png" alt="Tradeflex - Integrated facilities services">
+    <div class="brand-divider"></div>
+    <img src="branding/futuregreen-logo.png" alt="FutureGreen - Tradeflex Sustainability Program">
+  </div>
   <div class="id-card" id="idCardLoading">
     <p class="eyebrow">Before you start</p>
     <h1 class="headline">Loading your building…</h1>
@@ -434,7 +450,11 @@
 
 <div class="topbar">
   <div class="topbar-inner">
-    <div class="brand">◆ <b>Recycling Training</b></div>
+    <div class="brand-row">
+      <img src="branding/tradeflex-logo.png" alt="Tradeflex - Integrated facilities services">
+      <div class="brand-divider"></div>
+      <img src="branding/futuregreen-logo.png" alt="FutureGreen - Tradeflex Sustainability Program">
+    </div>
     <div class="progress-rail"><div class="progress-fill" id="progressFill"></div></div>
     <div class="progress-label" id="progressLabel">0% complete</div>
   </div>
@@ -818,7 +838,21 @@ try {
   const isDemoMode = new URLSearchParams(window.location.search).get('demo') === '1';
   const isPreviewMode = isDemoMode || new URLSearchParams(window.location.search).get('preview') === '1';
   if (isDemoMode) document.getElementById('previewBanner').textContent = 'Demo mode - a shorter version, just for trying it out. Nothing is saved.';
-  if (isPreviewMode) document.getElementById('previewBanner').style.display = 'block';
+  // .preview-banner is position:fixed (deliberately - stays visible even after scrolling deep
+  // into the quiz) so it never pushes anything else down on its own; without this, it sits
+  // directly on top of the sticky topbar's first ~35px, which used to just clip a little of the
+  // "◆ Recycling Training" text and now more visibly cuts into the brand logos.
+  if (isPreviewMode){
+    const banner = document.getElementById('previewBanner');
+    banner.style.display = 'block';
+    const bannerHeight = banner.getBoundingClientRect().height + 'px';
+    document.body.style.paddingTop = bannerHeight; // clears the banner in the initial, unscrolled view
+    const topbar = document.querySelector('.topbar');
+    if (topbar) topbar.style.top = bannerHeight; // ...and keeps clearing it once .topbar's own
+    // position:sticky kicks in further down the page - its sticky offset is independent of the
+    // body padding above, and defaults to this file's plain `top:0`, which re-hides it under the
+    // fixed banner the moment the page scrolls far enough for sticky to engage.
+  }
 
   // ---------------- Identification gate ----------------
   const siteContext = {buildingId:'', buildingName:'', tenantId:'', tenantName:'', level:'', name:'', email:'', linkId:''};
