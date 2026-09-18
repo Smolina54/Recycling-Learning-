@@ -3090,9 +3090,9 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  // Calls the sendInductionEmail Cloud Function (Microsoft Graph, application permissions — see
-  // the plan) — not deployable until Blaze + the Entra ID app + its secrets are in place. "Copy
-  // addresses →" right next to this button is the manual fallback for meanwhile, or for
+  // Calls the sendInductionEmail Cloud Function (SMTP AUTH against Exchange Online — see the
+  // plan) — not deployable until Blaze + the mailbox's SMTP AUTH + its secrets are in place.
+  // "Copy addresses →" right next to this button is the manual fallback for meanwhile, or for
   // whenever the automated send fails.
   const sendEmailBtn = e.target.closest('.send-email-btn');
   if (sendEmailBtn){

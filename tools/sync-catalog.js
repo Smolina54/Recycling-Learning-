@@ -19,25 +19,29 @@ const TARGET_PATHS = [
   path.join(__dirname, '..', 'outputs', 'sorting-station-report.html'),
   path.join(__dirname, '..', 'outputs', 'admin-enrolled-buildings.html'),
   path.join(__dirname, '..', 'outputs', 'client-report.html'),
+  path.join(__dirname, '..', 'functions', 'catalog.js'),
 ];
 const START_MARKER = '// AUTO-GENERATED CATALOG START';
 const END_MARKER = '// AUTO-GENERATED CATALOG END';
 
 // Captures id/name/stream, the flags segment between `stream` and `icon:` (used to detect
-// `active:false`), and the icon SVG itself in one pass. `explain` is still skipped — it
-// contains unescaped quotes inside its own backtick-free string — but the icon is safe to
+// `active:false`), the icon SVG itself, and explain/shortWhy, in one pass. The icon is safe to
 // grab verbatim between its own backticks: no stray backtick exists inside any icon's SVG
 // markup in the current catalog (every icon has exactly two backticks, open and close), so
 // the non-greedy `` `([\s\S]*?)` `` reliably stops at this item's own closing backtick.
-const ITEM_PATTERN = /\{\s*id:'([^']+)',\s*name:'([^']+)',\s*stream:'([^']+)'([\s\S]*?)icon:`([\s\S]*?)`/g;
+// explain/shortWhy are plain double-quoted strings with no embedded `"` anywhere in the current
+// catalog (verified directly against the source, 2026-09-18 — previously assumed unsafe to
+// extract and skipped entirely, which turned out to be over-cautious) — `[^"]*` reliably stops
+// at each field's own closing quote.
+const ITEM_PATTERN = /\{\s*id:'([^']+)',\s*name:'([^']+)',\s*stream:'([^']+)'([\s\S]*?)icon:`([\s\S]*?)`[\s\S]*?explain:"([^"]*)",\s*shortWhy:"([^"]*)"/g;
 
 function extractCatalog(gameHtml){
   const catalog = [];
   let match;
   while ((match = ITEM_PATTERN.exec(gameHtml)) !== null){
-    const [, id, name, stream, flags, icon] = match;
+    const [, id, name, stream, flags, icon, explain, shortWhy] = match;
     const active = !flags.includes('active:false');
-    catalog.push({ id, name, stream, icon, active });
+    catalog.push({ id, name, stream, icon, active, explain, shortWhy });
   }
   return catalog;
 }
@@ -46,7 +50,9 @@ function buildCatalogBlock(catalog){
   const lines = catalog.map((item, i) => {
     const comma = i < catalog.length - 1 ? ',' : '';
     const activePart = item.active ? '' : ', active:false';
-    return `    '${item.id}': {name:'${item.name}', stream:'${item.stream}', icon:\`${item.icon}\`${activePart}}${comma}`;
+    // JSON.stringify (not hand-rolled quoting) for explain/shortWhy - safe if either ever grows
+    // an embedded quote or backslash later, unlike the fixed-format id/name/stream/icon fields.
+    return `    '${item.id}': {name:'${item.name}', stream:'${item.stream}', icon:\`${item.icon}\`${activePart}, explain:${JSON.stringify(item.explain)}, shortWhy:${JSON.stringify(item.shortWhy)}}${comma}`;
   });
   return `${START_MARKER} — do not edit by hand, run \`npm run sync-catalog\` after\n  // changing the \`ALL_ITEMS\` array in recycling-training.html (see tools/sync-catalog.js).\n  const catalog = {\n${lines.join('\n')}\n  };\n  ${END_MARKER}`;
 }

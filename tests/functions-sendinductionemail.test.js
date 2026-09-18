@@ -1,8 +1,8 @@
 // Verifies sendInductionEmail's auth + payload-validation logic against the local Functions
-// emulator, without touching real Microsoft Graph — every case here is rejected inside
-// assertIsAdmin()/validatePayload() (functions/index.js), both of which throw before the
-// function ever calls getGraphAccessToken()/fetch() against login.microsoftonline.com or
-// graph.microsoft.com. No Blaze plan or real Microsoft credentials needed — the four Graph
+// emulator, without touching a real mailbox — every case here is rejected inside
+// assertIsAdmin()/validatePayload()/checkRateLimit() (functions/index.js), all of which throw
+// before the function ever calls sendViaSmtp() to open a real SMTP connection to
+// smtp.office365.com. No Blaze plan or real Microsoft 365 credentials needed — the three SMTP
 // secrets are given throwaway values in functions/.secret.local purely so the emulator can
 // load the function at all.
 //
@@ -120,12 +120,12 @@ async function main() {
   // ---- Rate limit ----
   // A fresh admin (not otherAdmin above, to keep this counter isolated from the calls those
   // validation cases made) seeded already AT the cap, within the current window. checkRateLimit()
-  // runs after validatePayload() but before getGraphAccessToken(), so this rejection — like
-  // every case above — never reaches the network. The window-reset path (an expired window
-  // resets the counter and lets a call through) isn't covered here on purpose: proving it would
-  // mean letting a call past checkRateLimit into getGraphAccessToken()/fetch(), which is exactly
-  // the real Microsoft Graph network call this whole file is built to avoid (see the file's own
-  // header comment) — that path stays untested pre-deployment, same as Graph itself.
+  // runs after validatePayload() but before sendViaSmtp(), so this rejection — like every case
+  // above — never reaches the network. The window-reset path (an expired window resets the
+  // counter and lets a call through) isn't covered here on purpose: proving it would mean letting
+  // a call past checkRateLimit into a real SMTP connection attempt, which is exactly the real
+  // network call this whole file is built to avoid (see the file's own header comment) — that
+  // path stays untested pre-deployment, same as the send itself.
   const RATE_LIMITED_EMAIL = 'rate-limited-admin@example.com';
   await setDoc(doc(owner.db, 'admins', RATE_LIMITED_EMAIL), { addedBy: OWNER_EMAIL });
   const rateLimitedAdmin = await makeClient('rateLimitedAdmin', RATE_LIMITED_EMAIL, PASSWORD);

@@ -334,6 +334,21 @@
   .save-warning .btn.secondary{border-color:var(--gw); color:var(--gw); padding:8px 16px; font-size:13px; white-space:nowrap;}
   .save-warning .btn.secondary:hover{background:var(--gw); color:var(--paper);}
 
+  .email-result-panel{
+    background:var(--panel); border:1.5px solid var(--line); border-radius:var(--radius);
+    padding:18px 20px; margin-top:16px; display:flex; flex-direction:column; gap:12px;
+  }
+  .email-result-panel p{margin:0; font-size:14px;}
+  .email-result-panel input[type="email"]{
+    font-family:var(--body); font-size:15px; padding:11px 14px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink); width:100%;
+  }
+  .email-result-panel input[type="email"]:focus-visible{outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);}
+  .email-result-actions{display:flex; gap:10px; flex-wrap:wrap;}
+  .email-result-status{font-size:13.5px; font-weight:600;}
+  .email-result-status.error{color:var(--gw);}
+  .email-result-status.success{color:var(--forest-dark);}
+
   .id-field-error{color:var(--gw); font-size:12.5px; margin-top:4px; display:none;}
 
   .results-section-heading{font-family:var(--display); text-transform:uppercase; letter-spacing:0.02em; font-size:15px; margin:0 0 4px;}
@@ -704,6 +719,16 @@
     <div class="results-actions">
       <button class="btn" id="retryBtn">Retake the check</button>
       <button class="btn secondary" id="reviewBtn">Review the streams again</button>
+      <button class="btn secondary" id="emailResultBtn">Email me these results</button>
+    </div>
+    <div class="email-result-panel" id="emailResultPanel" style="display:none;">
+      <p id="emailResultIntro">We'll send your results to the address below. Not right? Edit it before sending.</p>
+      <input type="email" id="emailResultInput" autocomplete="email">
+      <div class="email-result-actions">
+        <button class="btn" id="emailResultSendBtn">Send</button>
+        <button class="btn secondary" id="emailResultCancelBtn">Cancel</button>
+      </div>
+      <p class="email-result-status" id="emailResultStatus" style="display:none;"></p>
     </div>
   </div>
 
@@ -719,6 +744,7 @@ import {
   getFirestore, doc, getDoc, collection, getDocs, addDoc, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
+import { getFunctions, httpsCallable, connectFunctionsEmulator } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
 
 // Safe to be visible in client code — it's not a secret, protection comes from firestore.rules.
 const firebaseConfig = {
@@ -741,10 +767,11 @@ const firebaseConfig = {
 // Key ID (kept for whenever this gets revisited): 6LcynpwtAAAAAJ5IdNxKtqXRmtXTHrXdGZehA6Vw
 const RECAPTCHA_SITE_KEY = '';
 
-let db = null;
+let db = null, functionsInstance = null;
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
+  functionsInstance = getFunctions(firebaseApp);
   const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
   // App Check's reCAPTCHA Enterprise call needs a real round-trip to Google's servers from
   // one of the key's registered domains (the real esg-1-98f35.web.app/.firebaseapp.com) — it
@@ -759,6 +786,7 @@ try {
   // used only by the automated tests in tests/, so they never write real test data live.
   if (isEmulatorMode){
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
+    connectFunctionsEmulator(functionsInstance, '127.0.0.1', 5001);
   }
 } catch (err) {
   console.error('Firebase is not configured yet - the id-gate will show a fallback message until firebaseConfig is filled in.', err);
@@ -1878,17 +1906,19 @@ try {
   // never observed on the plain default-config path. Root cause unconfirmed (could be emulator-
   // only), but retrying costs nothing and directly protects against losing a real submission
   // either way — matches this app's standing priority that no real attempt/result gets lost.
+  // Returns the DocumentReference on success (so callers can read its .id), or null on failure —
+  // needed so the results screen's "email me these results" button has a real submission to
+  // reference, which a plain boolean never exposed.
   async function addDocWithRetry(collectionRef, payload, attempts = 3){
     for (let i = 0; i < attempts; i++){
       try {
-        await addDoc(collectionRef, payload);
-        return true;
+        return await addDoc(collectionRef, payload);
       } catch (err){
-        if (i === attempts - 1){ console.error('addDocWithRetry: all attempts failed:', err); return false; }
+        if (i === attempts - 1){ console.error('addDocWithRetry: all attempts failed:', err); return null; }
         await new Promise(r => setTimeout(r, 500 * (i + 1)));
       }
     }
-    return false;
+    return null;
   }
 
   async function recordAttemptStarted(){
@@ -1919,16 +1949,21 @@ try {
   });
 
   async function submitResults(payload){
-    if (isPreviewMode) return true; // nothing to save — report success so no warning banner shows
-    return await addDocWithRetry(collection(db, 'submissions'), payload);
+    // Preview/demo mode: nothing real to save (no building/tenant context to attach it to) —
+    // report success so no warning banner shows, but there's no id for the email feature either.
+    if (isPreviewMode) return { ok: true, id: null };
+    const ref = await addDocWithRetry(collection(db, 'submissions'), payload);
+    return { ok: !!ref, id: ref ? ref.id : null };
   }
 
   let lastResultsPayload = null;
+  let lastSubmissionId = null;
 
   async function trySubmitResults(payload){
     lastResultsPayload = payload;
-    const saved = await submitResults(payload);
-    document.getElementById('saveWarning').style.display = saved ? 'none' : 'flex';
+    const { ok, id } = await submitResults(payload);
+    lastSubmissionId = id;
+    document.getElementById('saveWarning').style.display = ok ? 'none' : 'flex';
   }
 
   document.getElementById('retrySaveBtn').addEventListener('click', () => {
@@ -2062,6 +2097,71 @@ try {
   document.getElementById('reviewBtn').addEventListener('click', () => {
     document.getElementById('results').classList.remove('active');
     document.getElementById('detailSection').scrollIntoView({behavior:'smooth', block:'start'});
+  });
+
+  // "Email me these results" — the server builds the actual email from the trainee's own saved
+  // submissions doc (looked up by id); the client only ever names WHICH email address to send to
+  // and WHICH submission to reference, never any free-text content (see the plan's security
+  // note for sendMyResultEmail). Preview/demo mode has no real saved submission to reference
+  // (submitResults() never writes one there), so there's nothing real to send — shown plainly
+  // rather than attempting a call that could only ever fail.
+  document.getElementById('emailResultBtn').addEventListener('click', () => {
+    const panel = document.getElementById('emailResultPanel');
+    const intro = document.getElementById('emailResultIntro');
+    const input = document.getElementById('emailResultInput');
+    const sendBtn = document.getElementById('emailResultSendBtn');
+    const status = document.getElementById('emailResultStatus');
+    panel.style.display = 'flex';
+    if (isPreviewMode || !lastSubmissionId){
+      intro.style.display = 'none';
+      input.style.display = 'none';
+      sendBtn.style.display = 'none';
+      status.className = 'email-result-status error';
+      status.textContent = 'This is a demo - no real email is sent here.';
+      status.style.display = 'block';
+      return;
+    }
+    intro.style.display = '';
+    input.style.display = '';
+    sendBtn.style.display = '';
+    status.style.display = 'none';
+    input.value = siteContext.email || '';
+  });
+
+  document.getElementById('emailResultCancelBtn').addEventListener('click', () => {
+    document.getElementById('emailResultPanel').style.display = 'none';
+  });
+
+  document.getElementById('emailResultSendBtn').addEventListener('click', async () => {
+    const input = document.getElementById('emailResultInput');
+    const status = document.getElementById('emailResultStatus');
+    const email = input.value.trim();
+    status.className = 'email-result-status';
+    if (!isValidEmail(email)){
+      status.textContent = 'Enter a valid email address.';
+      status.classList.add('error');
+      status.style.display = 'block';
+      return;
+    }
+    const sendBtn = document.getElementById('emailResultSendBtn');
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'Sending…';
+    try {
+      const sendMyResultEmail = httpsCallable(functionsInstance, 'sendMyResultEmail');
+      await sendMyResultEmail({ submissionId: lastSubmissionId, confirmedEmail: email });
+      siteContext.email = email; // the trainee's own correction, reflected back in this session too
+      status.textContent = 'Sent ✓ — check your inbox.';
+      status.classList.add('success');
+      status.style.display = 'block';
+    } catch (err){
+      console.error('sendMyResultEmail failed:', err);
+      status.textContent = 'Something went wrong sending your results - try again.';
+      status.classList.add('error');
+      status.style.display = 'block';
+    } finally {
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send';
+    }
   });
 
   updateProgress();

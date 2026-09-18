@@ -19,7 +19,9 @@
     "test:battery": "firebase emulators:exec --only firestore \"node tests/battery-training.test.js\"",
     "test:links": "firebase emulators:exec --only firestore \"node tests/distribution-links.test.js\"",
     "test:functions": "firebase emulators:exec --only firestore,auth,functions \"node tests/functions-sendinductionemail.test.js\"",
+    "test:functions-result-email": "firebase emulators:exec --only firestore,auth,functions \"node tests/functions-sendmyresultemail.test.js\"",
     "test:scoped-report": "firebase emulators:exec --only firestore,auth \"node tests/scoped-report-access.test.js\"",
+    "test:client-report": "firebase emulators:exec --only firestore,auth \"node tests/client-report.test.js\"",
     "test:catalog": "node tests/catalog-sync.test.js",
     "test:all": "firebase --config firebase.local-test.json emulators:exec --only firestore,auth,functions \"node tests/run-all.js\"",
     "sync-catalog": "node tools/sync-catalog.js"

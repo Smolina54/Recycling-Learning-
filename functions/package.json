@@ -1,13 +1,14 @@
 {
   "name": "recycling-training-functions",
   "private": true,
-  "description": "Cloud Functions for the Recycling Training admin panel — currently just sendInductionEmail, which relays through Microsoft Graph so the app can send induction links from a real company mailbox instead of a mailto: draft.",
+  "description": "Cloud Functions for the Recycling Training admin panel — currently just sendInductionEmail, which relays through SMTP AUTH (Exchange Online) so the app can send induction links from a real company mailbox instead of a mailto: draft.",
   "engines": {
     "node": "20"
   },
   "main": "index.js",
   "dependencies": {
     "firebase-admin": "^12.7.0",
-    "firebase-functions": "^6.3.0"
+    "firebase-functions": "^6.3.0",
+    "nodemailer": "^6.9.16"
   }
 }
