@@ -149,6 +149,19 @@
   }
   .report-actions{display:flex; gap:10px; margin-top:20px;}
 
+  /* ---- Printable-PDF overlay (drives the Paged.js iframe — see printReportBtn below) ---- */
+  .print-overlay{
+    position:fixed; inset:0; background:rgba(30,42,34,0.55); z-index:200;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  .print-overlay-box{
+    background:var(--paper); border-radius:8px; padding:28px 32px; text-align:center;
+    box-shadow:0 8px 30px rgba(0,0,0,0.25); max-width:320px;
+  }
+  .print-overlay-box p{margin:0 0 16px; font-size:14.5px; color:var(--ink-soft);}
+  .print-overlay-note{font-size:12.5px !important; line-height:1.5;}
+  .print-frame{position:fixed; top:-10000px; left:-10000px; width:850px; height:1100px; border:0; opacity:0; pointer-events:none;}
+
   @media (max-width:640px){
     .kpi-strip{grid-template-columns:1fr 1fr;}
     .building-block-stats{grid-template-columns:1fr 1fr;}
@@ -162,12 +175,36 @@
        page 1 and the last page, but every page in between started flush against the paper's edge
        with no margin at all (found live: continuation pages looked "pasted on", text glued to
        the top of the sheet). */
-    @page{ margin:0.5in 0.6in; }
+    @page{
+      margin:0.5in 0.6in;
+      /* Chrome's own print engine ignores everything below this line (it has never implemented
+         CSS Paged Media margin boxes) - these only render when this stylesheet is fed through
+         Paged.js (see printReportBtn's iframe below), which polyfills real per-page running
+         headers/footers and page numbers. Plain Ctrl+P on this file falls back to no footer at
+         all rather than a stale/duplicate one - see the .report-footer rule just below. */
+      @top-left{
+        content:"Recycling Training · Client Report";
+        font-family:'Space Mono', monospace; font-size:8.5px; letter-spacing:0.08em;
+        text-transform:uppercase; color:#8A968E;
+      }
+      @bottom-left{
+        content:"Tradeflex · FutureGreen Program";
+        font-family:'Space Mono', monospace; font-size:8.5px; color:#8A968E;
+      }
+      @bottom-right{
+        content:"Page " counter(page) " of " counter(pages);
+        font-family:'Space Mono', monospace; font-size:8.5px; color:#8A968E;
+      }
+    }
     .wrap{ padding:0 !important; max-width:none; }
     *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
     header.top, .corner-settings, .upload-zone, #configSection, .report-actions, .no-print{display:none !important;}
     body{background:#fff;}
     .report-page{box-shadow:none; border:none;}
+    /* Superseded by the real running @bottom-left footer above (present on every Paged.js page,
+       not just the last one) - kept out of print entirely rather than shown once more on
+       whichever page the flow happens to end on. */
+    .report-footer{display:none;}
     /* Most sections (KPI strip, key findings, stream chart, missed items) are small enough to
        always keep whole. "By building" is the exception: with more than 1-2 buildings it can
        easily run longer than a page, so treating THE WHOLE SECTION as one unbreakable block
@@ -753,7 +790,7 @@ async function generateReport(){
     ]);
     const selectedBuildings = allBuildings.filter(b => selectedIds.includes(b.id));
 
-    document.getElementById('reportEyebrow').textContent = `Recycling Training · ${currentProgram.name || currentProgram.id} · Quarterly Report`;
+    document.getElementById('reportEyebrow').textContent = `Recycling Training · ${currentProgram.name || currentProgram.id} · Report`;
     document.getElementById('reportBuildingsMeta').textContent = selectedBuildings.map(b => b.name).join(' · ') || '-';
     document.getElementById('reportPeriodMeta').textContent = `${fmtDate(fromDate)} - ${fmtDate(toDate)}`;
     document.getElementById('reportGeneratedMeta').textContent = fmtDate(new Date());
@@ -845,8 +882,89 @@ async function generateReport(){
   }
 }
 
+// ---- Printable PDF: paginate through Paged.js (vendored, outputs/vendor/paged.polyfill.min.js)
+// in a throwaway iframe, then let the iframe print itself.
+//
+// Why an iframe instead of just calling window.print() on this document directly: Chrome has
+// never implemented CSS Paged Media's @page margin boxes (@top-left/@bottom-right/etc, used
+// above for the running header/footer and "Page X of Y") - there is no way to get a repeating
+// per-page header/footer or real page numbers out of Chrome's native print engine, full stop.
+// Paged.js polyfills this by re-flowing the content into real, fully-realized DOM "page" boxes
+// (each with its own copy of the header/footer text already baked in) *before* printing, so by
+// the time window.print() runs, Chrome is just printing ordinary pre-paginated DOM - same real,
+// selectable/searchable text as before, same offline-capable window.print()/"Save as PDF" flow.
+//
+// It runs in a dedicated iframe (not this live document) for two reasons: (1) Paged.js's default
+// "auto" mode takes over an entire document's <body>, which would destroy this page's live,
+// still-editable report view and its non-print UI (config step, buttons, sign-in) - a throwaway
+// iframe gives it a whole document of its own to consume; (2) it lets the SAME stylesheet already
+// in this page (including the @page rule above) be reused as-is via a srcdoc iframe, which
+// resolves the vendored script's and the Gilroy fonts' relative paths against this page's own
+// file:// folder (an <iframe srcdoc> inherits its base URL from the parent document - unlike
+// window.open()+document.write(), which resolves relative paths against about:blank and breaks
+// them). No fetch()/CORS involved either way, avoiding the exact file:// module-loading trap
+// already hit once in this project (see the architecture roadmap plan, Workstream 2 Phase 0).
+function buildPrintDocument(){
+  const styleText = document.querySelector('style').textContent;
+  const reportPageHtml = document.querySelector('.report-page').outerHTML;
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>${styleText}</style>
+</head>
+<body>
+${reportPageHtml}
+<script>
+  window.PagedConfig = {
+    after: function(){ setTimeout(function(){ window.print(); }, 80); }
+  };
+<\/script>
+<script src="vendor/paged.polyfill.min.js"><\/script>
+</body></html>`;
+}
+
 document.getElementById('generateBtn').addEventListener('click', generateReport);
-document.getElementById('printReportBtn').addEventListener('click', () => window.print());
+document.getElementById('printReportBtn').addEventListener('click', () => {
+  const overlay = document.createElement('div');
+  overlay.className = 'print-overlay no-print';
+  overlay.innerHTML = `
+    <div class="print-overlay-box">
+      <p id="printOverlayMsg">Preparing your report for printing…</p>
+      <p class="print-overlay-note">In the print dialog, turn off "Headers and footers" — otherwise your browser adds its own page title, date and file path on top of this report's own design.</p>
+      <button type="button" class="btn secondary" id="cancelPrintBtn">Cancel</button>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const iframe = document.createElement('iframe');
+  iframe.className = 'print-frame no-print';
+  iframe.setAttribute('title', 'Printable report');
+  document.body.appendChild(iframe);
+
+  let done = false;
+  function cleanup(){
+    if (done) return;
+    done = true;
+    iframe.remove();
+    overlay.remove();
+  }
+  document.getElementById('cancelPrintBtn').addEventListener('click', cleanup);
+
+  iframe.addEventListener('load', () => {
+    iframe.contentWindow.addEventListener('afterprint', cleanup);
+  });
+  iframe.srcdoc = buildPrintDocument();
+
+  // Pagination + font loading is usually near-instant, but leave a visible fallback in case it
+  // silently never finishes (e.g. a font/network hiccup) rather than leaving the overlay stuck
+  // with no explanation.
+  setTimeout(() => {
+    if (!done) {
+      document.getElementById('printOverlayMsg').textContent =
+        'Still working… if this takes much longer, cancel and try again.';
+    }
+  }, 8000);
+});
 document.getElementById('editSelectionBtn').addEventListener('click', () => {
   document.getElementById('reportDoc').style.display = 'none';
   document.getElementById('configSection').style.display = 'block';
