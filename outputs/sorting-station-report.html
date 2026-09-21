@@ -2662,10 +2662,12 @@ var qrcode = function() {
     table.group-table{font-size:12px;}
   }
 
-  /* The client-facing PDF ("Print / Save as PDF") is this same Reports screen printed, not a
-     separate template — but it must never look like a screenshot of an internal admin tool.
-     Anything interactive/admin-only (buttons, nav tabs, filter controls, the ⚙ bar) is hidden;
-     every actual data element (KPIs, charts, tables) stays exactly as on screen. */
+  /* Legacy/manual-print fallback only — the actual client-facing PDF now has its own dedicated,
+     purpose-built template (client-report.html, reached via "Generate report →" below), not this
+     screen. This block is unreachable from any button in this file; it only still fires if
+     someone manually hits Ctrl+P on this raw admin screen. Kept working rather than removed,
+     since a real admin still might do that for a quick unbranded glance — but it must never be
+     confused with "the" client PDF flow again. */
   @media print{
     /* Chrome/Edge reserve a margin band to print their OWN header/footer (page title, the
        file:// URL, date/time, page number) — a browser default, not this page's doing, but it's
@@ -2917,7 +2919,7 @@ var qrcode = function() {
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, collection, getDoc, getDocs, deleteDoc, doc, setDoc, updateDoc, query, where, orderBy, limit, serverTimestamp, connectFirestoreEmulator
+  getFirestore, collection, getDoc, getDocs, deleteDoc, doc, setDoc, updateDoc, writeBatch, query, where, orderBy, limit, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
@@ -3819,7 +3821,7 @@ try {
     const kpiRow = document.getElementById('kpiRow');
     kpiRow.innerHTML = `
       <div class="kpi-tile"><div class="kpi-label">Submissions</div><div class="kpi-value">${totalSubs}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Pass rate</div><div class="kpi-value ${passRate>=75?'good':'bad'}">${passRate!=null ? passRate+'%' : '-'}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Pass rate</div><div class="kpi-value ${passRate==null ? '' : (passRate>=75?'good':'bad')}">${passRate!=null ? passRate+'%' : '-'}</div></div>
       <div class="kpi-tile"><div class="kpi-label">Average score</div><div class="kpi-value">${avgScore!=null ? avgScore+'%' : '-'}</div></div>
       <div class="kpi-tile"><div class="kpi-label">Avg. time to complete</div><div class="kpi-value">${avgDuration!=null ? Math.floor(avgDuration/60)+'m '+(avgDuration%60)+'s' : '-'}</div></div>
       <div class="kpi-tile"><div class="kpi-label">Completed on mobile</div><div class="kpi-value">${mobilePct!=null ? mobilePct+'%' : '-'}</div></div>
@@ -3863,7 +3865,7 @@ try {
     document.getElementById('missedList').innerHTML = itemAgg.map((it, i) => `
       <div class="missed-row">
         <span class="missed-rank">${i+1}</span>
-        <span class="missed-name">${it.name}</span>
+        <span class="missed-name">${esc(it.name)}</span>
         <div class="missed-bar-track"><div class="missed-bar-fill" style="width:${it.missRate}%;"></div></div>
         <span class="missed-pct">${it.missRate}%</span>
       </div>
@@ -3944,13 +3946,22 @@ try {
       )))),
       Promise.all(chunks.map(ids => getDocs(query(
         collection(db, 'attempts'), where('programId', '==', currentProgramId),
-        where('buildingId', 'in', ids), orderBy('timestamp', 'desc'), limit(MAX_ROWS)
+        // attempts docs store the field as startedAt, never timestamp (confirmed by
+        // attemptToRow below, and by every induction page's own recordAttemptStarted()) — the
+        // query used to order by a field that doesn't exist at all, which Firestore rejects
+        // outright (no matching composite index), breaking this whole function — and therefore
+        // Reports entirely — for every scoped/building-access admin.
+        where('buildingId', 'in', ids), orderBy('startedAt', 'desc'), limit(MAX_ROWS)
       )))),
     ]);
     const rows = subSnaps.flatMap(snap => snap.docs.map(d => submissionToRow(d.id, d.data())))
       .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, MAX_ROWS);
+    // attemptToRow() maps the raw startedAt field onto a .timestamp property on the returned row
+    // (same shape as submissionToRow) — re-sorting by .startedAt here (a property these rows
+    // never have) made every comparison 0 - 0, silently turning this "most recent" merge sort
+    // into a no-op once results came from more than one buildingId chunk.
     const attempts = attSnaps.flatMap(snap => snap.docs.map(d => attemptToRow(d.id, d.data())))
-      .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0)).slice(0, MAX_ROWS);
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, MAX_ROWS);
     return { rows, attempts };
   }
 
@@ -3995,28 +4006,9 @@ try {
   // tenant-enable checklist) now lives entirely in admin-enrolled-buildings.html (Workstream 2,
   // Phase 5 of the architecture roadmap).
 
-  // Turns a building name into a short, readable link ID (was crypto.randomUUID() — a link
-  // like "?b=123-example-tower" reads as trustworthy where "?b=a3f8b2c1-1234-..." looked
-  // suspicious to trainees, per Sergio's own report). Doc IDs are immutable in Firestore once
-  // created, so this only ever affects NEW buildings — renaming a building later never breaks
-  // a link/QR already handed out, since the id itself doesn't change when the name field does.
-  function slugify(name){
-    return String(name || '').toLowerCase()
-      .normalize('NFD').replace(/[̀-ͯ]/g, '') // strip accents (e.g. e -> e)
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-  }
-
-  // Shared by both buildings and the program catalog — a readable id slugged from the name,
-  // with a short random suffix only if that slug is already taken. Kept as one function so a
-  // second collection (the program catalog) doesn't invent its own id scheme.
-  async function generateUniqueSlug(collectionName, name){
-    const base = slugify(name);
-    if (!base) return crypto.randomUUID(); // name had no usable characters — fall back
-    const existing = await getDoc(doc(db, collectionName, base));
-    if (!existing.exists()) return base;
-    return `${base}-${crypto.randomUUID().slice(0, 6)}`; // name collision — short unique suffix
-  }
+  // slugify()/generateUniqueSlug() (building/program id generation) now live entirely in
+  // admin-buildings.html and admin-catalog.html — dead code here since building/catalog id
+  // generation moved out in the Workstream 2 split (zero remaining call sites in this file).
   // Master building list (loadMasterBuildings) now lives entirely in admin-buildings.html
   // (Workstream 2, Phase 2 of the architecture roadmap). loadAllActiveBuildings/
   // loadEnrolledData/renderEnrolledBuildingsList/renderTenantEnableChecklistHtml (Enrolled
@@ -4419,7 +4411,15 @@ try {
     const confirmed = confirm(`Delete ${rows.length} submission(s) matching this filter? This cannot be undone.`);
     if (!confirmed) return;
     try {
-      for (const r of rows){ await deleteDoc(doc(db, 'submissions', r._id)); }
+      // Batched (500 ops/batch, Firestore's own cap) instead of one deleteDoc round-trip per
+      // row — for a large filtered set that's hundreds of serialized network calls instead of a
+      // handful, and each batch is atomic, so a network blip can't leave the set half-deleted
+      // with no way to tell which rows actually went through.
+      for (let i = 0; i < rows.length; i += 500){
+        const batch = writeBatch(db);
+        rows.slice(i, i + 500).forEach(r => batch.delete(doc(db, 'submissions', r._id)));
+        await batch.commit();
+      }
       await loadLiveData();
     } catch (err){
       console.error('Delete failed:', err);

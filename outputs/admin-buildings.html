@@ -509,7 +509,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, collection, getDoc, getDocs, doc, setDoc, updateDoc, writeBatch, serverTimestamp, connectFirestoreEmulator
+  getFirestore, collection, getDoc, getDocs, doc, setDoc, updateDoc, writeBatch, runTransaction, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
@@ -669,14 +669,31 @@ function slugify(name){
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
-async function generateUniqueSlug(collectionName, name){
-  const base = slugify(name);
-  if (!base) return crypto.randomUUID();
-  const existing = await getDoc(doc(db, collectionName, base));
-  if (!existing.exists()) return base;
-  return `${base}-${crypto.randomUUID().slice(0, 6)}`;
+// Picks an unused slug AND creates the doc there in one transaction, rather than a separate
+// getDoc-then-setDoc check — that older check-then-write shape had a real (if narrow) race: two
+// admins creating a same-named building within the same instant could both pass the "not taken"
+// check before either write lands, and the second setDoc would silently overwrite the first
+// admin's just-created document under the same id, with no error and no merge. Retrying with a
+// random suffix on conflict closes that race instead of just narrowing it.
+async function generateUniqueSlugAndCreate(collectionName, name, data){
+  const base = slugify(name) || crypto.randomUUID();
+  for (let attempt = 0; attempt < 5; attempt++){
+    const candidate = attempt === 0 ? base : `${base}-${crypto.randomUUID().slice(0, 6)}`;
+    const ref = doc(db, collectionName, candidate);
+    try {
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (snap.exists()) throw new Error('slug-taken');
+        tx.set(ref, data);
+      });
+      return candidate;
+    } catch (err){
+      if (err && err.message === 'slug-taken') continue; // race lost to another create — retry with a suffix
+      throw err;
+    }
+  }
+  throw new Error('Could not find a unique id after several attempts.');
 }
-const generateBuildingSlug = (name) => generateUniqueSlug('buildings', name);
 
 // "Deleted" buildings/tenants are soft-deleted (active:false), not actually removed.
 async function loadAllActiveBuildings(){
@@ -871,6 +888,14 @@ function parseContactsFromRows(rows, tenants){
   const idIdx = header.indexOf('tenant id');
   const nameIdx = header.indexOf('tenant');
   const emailIdx = header.indexOf('email');
+  // If NONE of the expected columns are present, every row's rawId/rawName/rawEmail come back
+  // empty and every row gets silently skipped by the all-empty check below — the review panel
+  // would render with literally nothing in it (no matched, no unmatched), with no indication to
+  // the admin that the file's columns just don't match what's expected. Flag this explicitly so
+  // the caller can show a real error instead of an empty, unexplained review list.
+  if (idIdx === -1 && nameIdx === -1 && emailIdx === -1){
+    return { matched: [], unmatched: [], columnsNotFound: true };
+  }
   const byId = new Map(tenants.map(t => [t.id, t]));
   const byName = new Map(tenants.map(t => [t.name.trim().toLowerCase(), t]));
 
@@ -933,8 +958,7 @@ document.getElementById('addBuildingBtn').addEventListener('click', async () => 
   if (!name){ status.textContent = 'Enter a building name first.'; return; }
   status.textContent = 'Adding…';
   try {
-    const newBuildingId = await generateBuildingSlug(name);
-    await setDoc(doc(db, 'buildings', newBuildingId), { name });
+    const newBuildingId = await generateUniqueSlugAndCreate('buildings', name, { name });
     // Every building does Recycling by default, same as before programs existed — so a new
     // building is auto-enrolled here rather than requiring a manual step every single time.
     await setDoc(doc(db, 'enrollments', `recycling-sorting__${newBuildingId}`), {
@@ -1139,6 +1163,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
   if (confirmBtn){
     const row = confirmBtn.closest('.building-row');
     const buildingId = row.dataset.buildingId;
+    const b = buildingsCache.find(x => x.id === buildingId);
     const toImport = [...row.querySelectorAll('.import-check')]
       .filter(c => c.checked)
       .map(c => {
@@ -1149,16 +1174,39 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       })
       .filter(t => t.name && t.levels.length);
     if (toImport.length === 0){ alert('Nothing selected to import.'); return; }
+
+    // Cross-check against tenants that already exist in this building (case-insensitive) — a
+    // re-import of an already-imported/re-exported roster (e.g. a quarterly refresh) previously
+    // created full duplicates under fresh random ids with no warning at all. Unlike the contacts
+    // import below (which matches-and-updates), a duplicate here is skipped, since there's no
+    // "new" data to merge in — just a name and levels the tenant may already have.
+    const existingNames = new Set((b.tenants || []).map(t => t.name.trim().toLowerCase()));
+    const duplicates = toImport.filter(t => existingNames.has(t.name.toLowerCase()));
+    const fresh = toImport.filter(t => !existingNames.has(t.name.toLowerCase()));
+    if (duplicates.length > 0){
+      const proceed = confirm(`${duplicates.length} of ${toImport.length} selected tenant(s) already exist in this building by name and will be skipped:\n${duplicates.map(t => t.name).join(', ')}\n\nImport the remaining ${fresh.length}?`);
+      if (!proceed) return;
+    }
+    if (fresh.length === 0){ alert('Nothing left to import - every selected tenant already exists in this building.'); return; }
+
     confirmBtn.disabled = true;
     confirmBtn.textContent = 'Importing…';
     try {
-      for (const t of toImport){
-        await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: t.name, levels: t.levels });
+      // One atomic batch, not one setDoc per tenant (matches the contacts-import flow below) —
+      // a network hiccup mid-import can't leave some tenants added and others not, and the admin
+      // never has to manually diff the console log against Firestore to find where to resume.
+      const batch = writeBatch(db);
+      for (const t of fresh){
+        batch.set(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: t.name, levels: t.levels });
       }
+      await batch.commit();
       await loadMasterBuildings();
     } catch (err){
       console.error('Bulk import failed:', err);
-      alert('Import failed partway through - check the console for which tenants already got added before retrying.');
+      alert('Import failed - check the console for details. Nothing was partially added (this import is a single atomic batch).');
+    } finally {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Import selected →';
     }
     return;
   }
@@ -1205,9 +1253,18 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     try {
       // One atomic batch, not one setDoc per tenant — a network hiccup mid-import can't leave
       // some tenants updated and others not.
+      //
+      // updateDoc'ing only `emails`, NOT a full setDoc of {name, levels, emails} — this import's
+      // only job is contact emails, but `tenant.name`/`tenant.levels` here come from
+      // buildingsCache, which can be stale by the time this batch actually commits (the real
+      // gap between "export contacts template" and "re-import" is often long enough for another
+      // admin/tab to have renamed the tenant or changed its levels in the meantime). A full
+      // setDoc would silently revert those fields back to whatever this admin's stale local copy
+      // still remembered — a classic lost update, and for a field this flow was never even
+      // trying to touch.
       const batch = writeBatch(db);
-      for (const { tenantId, tenant, emails } of toWrite){
-        batch.set(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: tenant.name, levels: tenant.levels, emails });
+      for (const { tenantId, emails } of toWrite){
+        batch.update(doc(db, 'buildings', buildingId, 'tenants', tenantId), { emails });
       }
       await batch.commit();
       row.querySelector('.import-contacts-review').style.display = 'none';
@@ -1262,7 +1319,11 @@ document.getElementById('buildingsList').addEventListener('change', async (e) =>
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = xlsxUtils.sheet_to_json(sheet, { header: 1 });
       const parsed = parseContactsFromRows(rows, b.tenants);
-      renderContactsImportReview(row, parsed);
+      if (parsed.columnsNotFound){
+        alert("Couldn't find \"Tenant ID\", \"Tenant\", or \"Email\" columns in that file - make sure it's the exported contacts template (or has matching column headers) and try again.");
+      } else {
+        renderContactsImportReview(row, parsed);
+      }
     } catch (err){
       console.error('Failed to read Excel file:', err);
       alert("Could not read that file - make sure it's a valid .xlsx export.");

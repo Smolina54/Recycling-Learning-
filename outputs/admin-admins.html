@@ -571,6 +571,13 @@ function esc(str){
 // excluded from this list and can't be removed by mistake.
 const OWNER_EMAIL = 'esgtradeflex@gmail.com';
 
+// Same pattern as admin-buildings.html's isValidEmail() and functions/index.js's own copy — a
+// shared helper here instead of an inline regex literal, so the two copies can't silently drift
+// out of sync if one is ever tightened without the other being updated.
+function isValidEmail(str){
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(str || '').trim());
+}
+
 async function loadAdmins(){
   document.getElementById('ownerEmailNote').textContent = OWNER_EMAIL;
   try {
@@ -589,16 +596,23 @@ function renderAdminsList(admins){
     list.innerHTML = '<li class="block-sub">No additional admins yet - just you.</li>';
     return;
   }
-  list.innerHTML = admins.map(email => `
-    <li><span class="tenant-name">${esc(email)}</span><button class="btn secondary remove-admin-btn" data-email="${esc(email)}">Remove</button></li>
-  `).join('');
+  // The list only ever filters out OWNER_EMAIL, never the currently signed-in user - a
+  // non-owner admin's own row appears here unlabeled like any other, with nothing distinguishing
+  // "click Remove on someone else" from "click Remove on yourself" until the confirm dialog.
+  const myEmail = (auth.currentUser?.email || '').toLowerCase();
+  list.innerHTML = admins.map(email => {
+    const isSelf = email.toLowerCase() === myEmail;
+    return `
+    <li><span class="tenant-name">${esc(email)}${isSelf ? ' <span class="block-sub">(you)</span>' : ''}</span><button class="btn secondary remove-admin-btn" data-email="${esc(email)}" data-self="${isSelf}">Remove</button></li>
+  `;
+  }).join('');
 }
 
 document.getElementById('addAdminBtn').addEventListener('click', async () => {
   const input = document.getElementById('newAdminEmail');
   const status = document.getElementById('adminsStatus');
   const email = input.value.trim().toLowerCase();
-  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ status.textContent = 'Enter a valid email first.'; return; }
+  if (!email || !isValidEmail(email)){ status.textContent = 'Enter a valid email first.'; return; }
   if (email === OWNER_EMAIL){ status.textContent = `${OWNER_EMAIL} already always has access.`; return; }
   status.textContent = 'Adding…';
   try {
@@ -616,7 +630,11 @@ document.getElementById('adminsList').addEventListener('click', async (e) => {
   const removeBtn = e.target.closest('.remove-admin-btn');
   if (!removeBtn) return;
   const email = removeBtn.dataset.email;
-  if (!confirm(`Remove admin access for ${email}?`)) return;
+  const isSelf = removeBtn.dataset.self === 'true';
+  const confirmMsg = isSelf
+    ? `Remove YOUR OWN admin access (${email})?\n\nYou will likely be signed out of every admin page immediately, and won't be able to undo this yourself - someone else with admin access would need to re-add you.`
+    : `Remove admin access for ${email}?`;
+  if (!confirm(confirmMsg)) return;
   try {
     await deleteDoc(doc(db, 'admins', email));
     await loadAdmins();

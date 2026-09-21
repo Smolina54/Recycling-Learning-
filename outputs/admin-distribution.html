@@ -2936,8 +2936,12 @@ function renderDistributionLinksHtml(b){
   const activeLinksHtml = b.links.length
     ? b.links.map(l => {
         const linkUrl = `${pageBaseUrl()}${currentProgram.file}?l=${l.id}`;
+        // b.tenants is filtered to active tenants only — a tenant-scoped link whose tenant was
+        // later soft-deleted must not be mislabeled as "Whole building" (a different, wrong
+        // claim about what the link actually does; the link doc itself is still tenant-locked,
+        // only the display was wrong).
         const tenant = l.tenantId ? b.tenants.find(t => t.id === l.tenantId) : null;
-        const scopeText = tenant ? esc(tenant.name) : 'Whole building';
+        const scopeText = !l.tenantId ? 'Whole building' : (tenant ? esc(tenant.name) : 'Tenant removed (link still locked to it)');
         const expiryText = l.expiresAtMs ? `expires ${new Date(l.expiresAtMs).toLocaleDateString('en-GB')}` : 'no expiry';
         const emailsCsv = tenant?.emails?.length ? tenant.emails.join(';') : '';
         return `

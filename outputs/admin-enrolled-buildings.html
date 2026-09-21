@@ -693,6 +693,20 @@ const streamNames = {gw:'General Waste', mr:'Mixed Recycling', pc:'Paper & Cardb
   };
   // AUTO-GENERATED CATALOG END
 
+// `streams`/`streamNames` above are hand-maintained and live OUTSIDE the auto-generated block,
+// while `catalog` itself is regenerated from recycling-training.html's ALL_ITEMS by
+// tools/sync-catalog.js — if a future item ever used a stream code not in this list (a 6th
+// stream added to the real catalog but not mirrored here), it would silently fall into no
+// section of the editor at all (unrenderable, untoggleable) while still silently counting as an
+// eligible decoy for all 5 known streams. Fail loudly here instead, at load time, rather than
+// leaving that item invisibly broken.
+(function assertCatalogStreamsKnown(){
+  const unknown = [...new Set(Object.values(catalog).map(it => it.stream).filter(s => !streamNames[s]))];
+  if (unknown.length){
+    console.error(`admin-enrolled-buildings.html: catalog has item(s) using stream code(s) not in streamNames — the item-streams editor cannot render or toggle them: ${unknown.join(', ')}. Update the streams/streamNames constants above to match.`);
+  }
+})();
+
 // This page is program-scoped (unlike Buildings/Admins/Catalog, which are program-agnostic) —
 // it needs a real ?program= to know which induction's enrolled buildings to show. Missing or
 // unrecognized redirects to a fallback note rather than guessing a default (same "no silent
@@ -721,6 +735,16 @@ let allBuildingsCache = [];
 let editingItemsBuildingId = null;
 let draftItemOverrides = null; // {itemId: {stream}}, only while editingItemsBuildingId is set
 let itemsEditorError = '';
+
+// Reloading, closing the tab, or navigating away (including "← Back to reports") while an
+// item-streams edit is open used to discard it with zero warning — every other destructive
+// action on this page (remove enrollment, disable a tenant) gets a confirm(), this got none.
+window.addEventListener('beforeunload', (e) => {
+  if (draftItemOverrides !== null){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 // Real bug found in testing (before this page existed, in sorting-station-report.html):
 // renderEnrolledBuildingsList() fully replaces #enrolledBuildingsList's innerHTML on every
 // load — including right after the tenant-enable checklist's own save handler sets its status
@@ -1098,7 +1122,11 @@ async function saveItemStreamsEditor(){
     // map field instead of replacing it, so a removed item's old override would silently
     // survive in Firestore even though the draft no longer has it. updateDoc replaces the
     // whole itemOverrides map wholesale while leaving every other field untouched.
-    await updateDoc(doc(db, 'enrollments', `recycling-sorting__${editingItemsBuildingId}`), { itemOverrides: draftItemOverrides });
+    // currentProgram.id, not a hardcoded 'recycling-sorting' — the "Configure streams" button is
+    // gated to that one program today (see its own gate check), so this was latent, not
+    // reachable — but a hardcoded id here was a landmine for whenever that gate is relaxed for a
+    // second program, silently writing to (or missing) the wrong enrollment doc.
+    await updateDoc(doc(db, 'enrollments', `${currentProgram.id}__${editingItemsBuildingId}`), { itemOverrides: draftItemOverrides });
     editingItemsBuildingId = null;
     draftItemOverrides = null;
     itemsEditorError = '';
@@ -1124,6 +1152,15 @@ document.getElementById('enrolledBuildingsList').addEventListener('click', async
   const configureItemsBtn = e.target.closest('.configure-items-btn');
   if (configureItemsBtn){
     const buildingId = configureItemsBtn.closest('.enrolled-building-row').dataset.buildingId;
+    // Opening a DIFFERENT building's editor while one is already open used to silently discard
+    // whatever was being edited (draftItemOverrides just gets overwritten below) — no warning,
+    // and the original building's row quietly collapsed too, since its "expanded" state was only
+    // ever true via editingItemsBuildingId === b.id, not a real membership in
+    // expandedEnrolledBuildingIds.
+    if (editingItemsBuildingId && editingItemsBuildingId !== buildingId){
+      const proceed = confirm('You have an item-streams editor open for another building. Switching now will discard any unsaved changes there. Continue?');
+      if (!proceed) return;
+    }
     const building = enrolledBuildingsCache.find(b => b.id === buildingId);
     editingItemsBuildingId = buildingId;
     draftItemOverrides = JSON.parse(JSON.stringify((building && building.itemOverrides) || {}));

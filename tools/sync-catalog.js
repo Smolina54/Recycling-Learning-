@@ -35,6 +35,20 @@ const END_MARKER = '// AUTO-GENERATED CATALOG END';
 // at each field's own closing quote.
 const ITEM_PATTERN = /\{\s*id:'([^']+)',\s*name:'([^']+)',\s*stream:'([^']+)'([\s\S]*?)icon:`([\s\S]*?)`[\s\S]*?explain:"([^"]*)",\s*shortWhy:"([^"]*)"/g;
 
+// ITEM_PATTERN has no real per-item boundary anchor (it's one long non-greedy scan across
+// id/name/stream/flags/icon/explain/shortWhy) — today's catalog is verified free of the
+// characters that would break it (no embedded ' in id/name/stream, no embedded " in explain/
+// shortWhy, no stray "icon:" substring between stream and the icon field), but that's a
+// point-in-time fact about the DATA, not a structural guarantee from the regex itself. If a
+// future item ever violated one of those assumptions, the regex wouldn't error — it would just
+// resume scanning from wherever it gave up, silently dropping the broken item, or splicing
+// fields from two adjacent items into one merged record. A plain, independent count of item
+// boundaries (immune to everything ITEM_PATTERN itself is fragile to, since it only looks for
+// "{ id:'" and never has to cross an id/name/stream/explain/shortWhy value at all) catches that:
+// if the two counts disagree, something inside at least one item's fields broke the main
+// extraction, and this refuses to silently ship a corrupted/truncated catalog.
+const ITEM_BOUNDARY_PATTERN = /\{\s*id:'/g;
+
 function extractCatalog(gameHtml){
   const catalog = [];
   let match;
@@ -42,6 +56,16 @@ function extractCatalog(gameHtml){
     const [, id, name, stream, flags, icon, explain, shortWhy] = match;
     const active = !flags.includes('active:false');
     catalog.push({ id, name, stream, icon, active, explain, shortWhy });
+  }
+  const expectedCount = (gameHtml.match(ITEM_BOUNDARY_PATTERN) || []).length;
+  if (catalog.length !== expectedCount){
+    throw new Error(
+      `sync-catalog: extracted ${catalog.length} item(s) but recycling-training.html appears to ` +
+      `define ${expectedCount} — ITEM_PATTERN likely mis-parsed at least one item (a new ` +
+      `embedded ', ", or "icon:" substring inside one of its fields breaking the non-greedy ` +
+      `match). Refusing to sync a possibly corrupted/truncated catalog — check ALL_ITEMS by hand ` +
+      `before re-running.`
+    );
   }
   return catalog;
 }

@@ -516,7 +516,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, collection, getDoc, getDocs, doc, setDoc, updateDoc, serverTimestamp, connectFirestoreEmulator
+  getFirestore, collection, getDoc, getDocs, doc, setDoc, updateDoc, runTransaction, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
@@ -585,12 +585,30 @@ function slugify(name){
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
-async function generateUniqueSlug(collectionName, name){
-  const base = slugify(name);
-  if (!base) return crypto.randomUUID();
-  const existing = await getDoc(doc(db, collectionName, base));
-  if (!existing.exists()) return base;
-  return `${base}-${crypto.randomUUID().slice(0, 6)}`;
+// Picks an unused slug AND creates the doc there in one transaction, rather than a separate
+// getDoc-then-setDoc check — that older check-then-write shape had a real (if narrow) race: two
+// admins registering a same-named program within the same instant could both pass the "not
+// taken" check before either write lands, and the second setDoc would silently overwrite the
+// first admin's just-created document under the same id, with no error and no merge. Retrying
+// with a random suffix on conflict closes that race instead of just narrowing it.
+async function generateUniqueSlugAndCreate(collectionName, name, data){
+  const base = slugify(name) || crypto.randomUUID();
+  for (let attempt = 0; attempt < 5; attempt++){
+    const candidate = attempt === 0 ? base : `${base}-${crypto.randomUUID().slice(0, 6)}`;
+    const ref = doc(db, collectionName, candidate);
+    try {
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (snap.exists()) throw new Error('slug-taken');
+        tx.set(ref, data);
+      });
+      return candidate;
+    } catch (err){
+      if (err && err.message === 'slug-taken') continue; // race lost to another create — retry with a suffix
+      throw err;
+    }
+  }
+  throw new Error('Could not find a unique id after several attempts.');
 }
 
 // ---------------- Catalog: register/archive inductions ----------------
@@ -645,8 +663,7 @@ document.getElementById('addProgramBtn').addEventListener('click', async () => {
   if (!confirmed) return;
   status.textContent = 'Adding…';
   try {
-    const programId = await generateUniqueSlug('programs', name);
-    await setDoc(doc(db, 'programs', programId), {
+    const programId = await generateUniqueSlugAndCreate('programs', name, {
       name, description: descInput.value.trim(), file, kind: kindSelect.value, status: 'active',
       createdAt: serverTimestamp(),
     });

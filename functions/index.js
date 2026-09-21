@@ -238,7 +238,11 @@ exports.sendMyResultEmail = onCall(
     if (!submissionId || typeof submissionId !== 'string') {
       throw new HttpsError('invalid-argument', 'A submission id is required.');
     }
-    if (!isValidEmail(confirmedEmail)) {
+    // isValidEmail only checks shape, not length — this gets persisted permanently onto the
+    // submission doc below (an Admin SDK write, which bypasses firestore.rules' own 320-char
+    // bound entirely), so bound it here explicitly before it becomes a permanent record a
+    // reviewer trusts.
+    if (!isValidEmail(confirmedEmail) || confirmedEmail.length > 320) {
       throw new HttpsError('invalid-argument', 'A valid email address is required.');
     }
 
@@ -268,7 +272,20 @@ exports.sendMyResultEmail = onCall(
     });
 
     const { html, text } = buildResultEmailContent(data);
-    await sendViaSmtp({ to: confirmedEmail, subject: 'Your Recycling Sorting results', text, html });
+    try {
+      await sendViaSmtp({ to: confirmedEmail, subject: 'Your Recycling Sorting results', text, html });
+    } catch (err) {
+      // The increment above commits before the SMTP call is even attempted, so a transient
+      // failure (a mail-server blip, not the trainee's fault) would otherwise permanently burn
+      // one of their 5 sends with no way back — submissions.update is reviewer-only in
+      // firestore.rules, so nothing client-side could ever undo it. Give the attempt back before
+      // letting the original error propagate, so only a SUCCESSFUL send ever counts against the
+      // cap.
+      await ref.update({ sendCount: admin.firestore.FieldValue.increment(-1) }).catch((giveBackErr) => {
+        console.error('Failed to give back sendCount after a failed send:', giveBackErr && giveBackErr.message);
+      });
+      throw err;
+    }
     return { ok: true };
   }
 );

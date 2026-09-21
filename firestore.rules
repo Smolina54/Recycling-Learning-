@@ -49,7 +49,51 @@ service cloud.firestore {
         && data.name is string && data.name.size() > 0 && data.name.size() <= 200
         && data.email is string && data.email.size() > 0 && data.email.size() <= 320
         && data.email.matches('^[^@ ]+@[^@ ]+[.][^@ ]+$')
-        && data.programId is string && data.programId.size() > 0 && data.programId.size() <= 100;
+        && data.programId is string && data.programId.size() > 0 && data.programId.size() <= 100
+        // Every real client (all 3 induction pages) always sends these alongside the fields
+        // above — bounding them closes off buildingName/tenantName/level as an otherwise
+        // completely unvalidated free-text channel (they're rendered back in the admin Reports
+        // view and, for buildingName, interpolated into the result email).
+        && data.buildingName is string && data.buildingName.size() <= 300
+        && data.tenantName is string && data.tenantName.size() <= 300
+        && data.level is string && data.level.size() <= 200;
+    }
+
+    // A hard allowlist of every field any of the 3 real induction pages (recycling-training.html,
+    // organics-training.html, battery-training.html) actually sends — without this, a direct API
+    // write could attach ANY extra field to a brand-new submissions doc, including sendCount
+    // (normally set only server-side by sendMyResultEmail's transaction, functions/index.js).
+    // That field is what enforces the 5-send cap on the trainee-facing result-email function — a
+    // create write that pre-seeds a large negative sendCount would let the cap check keep passing
+    // for ~1,000,000+ calls before it ever actually bites.
+    function hasOnlyKnownSubmissionFields(data) {
+      return data.keys().hasOnly([
+        'buildingId', 'buildingName', 'tenantId', 'tenantName', 'level', 'name', 'email',
+        'programId', 'linkId', 'itemOverridesSnapshot', 'score', 'avoided', 'total',
+        'breakdown', 'items', 'correctCount', 'answers', 'duration_seconds', 'device_type',
+        'timestamp'
+      ]);
+    }
+
+    function hasOnlyKnownAttemptFields(data) {
+      return data.keys().hasOnly([
+        'buildingId', 'buildingName', 'tenantId', 'tenantName', 'level', 'name', 'email',
+        'programId', 'linkId', 'itemOverridesSnapshot', 'startedAt'
+      ]);
+    }
+
+    // Loose upper bounds on the map-shaped fields (items/breakdown/answers) and the one
+    // variable-length string (itemOverridesSnapshot) — none of these had ANY size check before,
+    // so a direct API write could attach an arbitrarily large map/string to a document that's
+    // later read back into the admin Reports view and (for items/breakdown) the trainee's own
+    // result email. Bounds are generous relative to the real catalog (~53 items across 5
+    // streams) so they never constrain a legitimate write.
+    function hasReasonableSizes(data) {
+      return (!('items' in data) || data.items.size() <= 200)
+        && (!('breakdown' in data) || data.breakdown.size() <= 20)
+        && (!('answers' in data) || data.answers.size() <= 200)
+        && (!('itemOverridesSnapshot' in data) ||
+            (data.itemOverridesSnapshot is string && data.itemOverridesSnapshot.size() <= 20000));
     }
 
     // A submission/attempt MAY carry a linkId (came in via ?l=, a tenant-scoped and/or
@@ -146,6 +190,8 @@ service cloud.firestore {
     match /submissions/{submissionId} {
       allow create: if isValidPersonFields(request.resource.data)
         && isValidLinkIfPresent(request.resource.data)
+        && hasOnlyKnownSubmissionFields(request.resource.data)
+        && hasReasonableSizes(request.resource.data)
         && request.resource.data.score is number
         && request.resource.data.score >= 0 && request.resource.data.score <= 100;
       // read: a global reviewer sees any submission; a scoped client (via /buildingAccess)
@@ -160,7 +206,10 @@ service cloud.firestore {
     // lets the report compute a completion rate (started vs. actually finished).
     // Same shape/rules as submissions, minus the score field this doesn't have.
     match /attempts/{attemptId} {
-      allow create: if isValidPersonFields(request.resource.data) && isValidLinkIfPresent(request.resource.data);
+      allow create: if isValidPersonFields(request.resource.data)
+        && isValidLinkIfPresent(request.resource.data)
+        && hasOnlyKnownAttemptFields(request.resource.data)
+        && hasReasonableSizes(request.resource.data);
       // Same scoping as submissions.read above — global reviewer sees all, scoped client
       // sees only their granted building(s).
       allow read: if canReviewBuilding(resource.data.buildingId);

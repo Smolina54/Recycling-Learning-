@@ -984,7 +984,14 @@ try {
     if (!buildingId){ showInvalidLink(); return; }
 
     try {
-      const buildingSnap = await getDoc(doc(db, 'buildings', buildingId));
+      // The enrollment doc's key only depends on buildingId (already known here), so it doesn't
+      // actually need to wait on the building doc first — fetching both in parallel saves a
+      // round-trip on every real trainee's very first screen, at the cost of one wasted parallel
+      // read on the (rarer) invalid-building error path.
+      const [buildingSnap, enrollmentSnap] = await Promise.all([
+        getDoc(doc(db, 'buildings', buildingId)),
+        getDoc(doc(db, 'enrollments', `${PROGRAM_ID}__${buildingId}`)),
+      ]);
       // active === false means the building was "deleted" from the admin panel — soft-deleted,
       // not actually removed, so its history stays intact, but its links must stop working,
       // same as a real delete would look like to a trainee.
@@ -994,7 +1001,6 @@ try {
       // building was never enrolled in Recycling (or was un-enrolled/soft-deleted), there's
       // nothing to show — a ?b= that happens to be valid for some OTHER program must not
       // silently work here too.
-      const enrollmentSnap = await getDoc(doc(db, 'enrollments', `${PROGRAM_ID}__${buildingId}`));
       if (!enrollmentSnap.exists() || enrollmentSnap.data().active === false){ showInvalidLink(); return; }
       const enrollment = enrollmentSnap.data();
 
@@ -1748,12 +1754,23 @@ try {
   // allResults starts out seeded ONLY with decoys (freshResults()) — a home item correctly
   // sorted during its own phase had no entry at all and no code path ever created one, so it
   // silently never appeared in the item-by-item review unless it also happened to be picked as
-  // some OTHER phase's decoy. Mirrors recordMiss's find-or-update shape, but also creates the
-  // entry when missing, so every item that's actually played ends up represented.
+  // some OTHER phase's decoy. This creates the entry when missing, so every item that's
+  // actually played ends up represented.
+  //
+  // Critically, it must NEVER overwrite an entry that already exists. A home-phase drop is
+  // always structurally guaranteed to be "correct" (item.stream === targetStream is trivially
+  // true in an item's own phase), so it carries no new information — but an existing entry means
+  // this item was already recorded via its OWN decoy-phase interaction in some other phase
+  // (correctly avoided, or wrongly dropped). Overwriting on every home-phase visit used to (a)
+  // silently erase real decoy mistakes back to avoided:true whenever the decoy phase happened to
+  // run before the home phase, inflating the score and hiding the mistake from the item-by-item
+  // review, and (b) relocate the entry's shownInPhase from its real decoy phase to the home
+  // phase even when nothing was wrong, corrupting the per-phase "Accuracy by stream" totals for
+  // every decoy-eligible item (the decoy phase silently lost one from its denominator, the home
+  // phase silently gained a phantom one it was never meant to have).
   function recordCorrect(item, actualStream){
-    const entry = allResults.find(r => r.itemId === item.id);
-    if (entry){ entry.avoided = true; entry.shownInPhase = actualStream; entry.wrongStream = null; }
-    else { allResults.push({itemId: item.id, shownInPhase: actualStream, avoided: true, wrongStream: null}); }
+    if (allResults.some(r => r.itemId === item.id)) return;
+    allResults.push({itemId: item.id, shownInPhase: actualStream, avoided: true, wrongStream: null});
   }
 
   function completePhase(){
@@ -1917,14 +1934,24 @@ try {
     if (phaseCorrectTarget === 0) completePhase();
   }
 
+  let resultsShown = false; // guards against a queued double-click double-submitting results
   nextPhaseBtn.addEventListener('click', () => {
     // The button is only ever hidden via style.display, not disabled — it still exists in the
     // DOM and still fires this listener if clicked programmatically before a phase is actually
     // cleared. Guard on phaseLocked (the same flag every drag/drop handler already checks) so
     // this can't be used to skip straight to a fabricated 100% result.
     if (!phaseLocked) return;
-    if (phaseIndex === streams.length - 1) showResults();
-    else startPhase(phaseIndex + 1);
+    if (phaseIndex === streams.length - 1){
+      // Unlike every earlier phase transition, showResults() never resets phaseLocked (there's
+      // no next phase to unlock) — a second click event already queued from a fast double-click
+      // would otherwise pass the phaseLocked check above a second time and call showResults()
+      // again, writing a duplicate Firestore submission for the same attempt.
+      if (resultsShown) return;
+      resultsShown = true;
+      showResults();
+    } else {
+      startPhase(phaseIndex + 1);
+    }
   });
 
   let gameStartTime = null;
@@ -2037,7 +2064,10 @@ try {
     breakdownData.forEach(b => {
       const row = document.createElement('div');
       row.className = 'breakdown-row';
-      row.innerHTML = `<span class="breakdown-label">${streamNames[b.stream]}</span><div class="breakdown-bar"><div class="breakdown-fill" style="width:${(b.avoided/b.total)*100}%; background:var(--${b.stream});"></div></div><span class="breakdown-value">${b.avoided}/${b.total}</span>`;
+      // b.total can be 0 under an unusual admin item-override config that leaves a stream with
+      // no decoys at all — (0/0)*100 is NaN, which would render as a broken-width bar.
+      const pct = b.total > 0 ? (b.avoided/b.total)*100 : 0;
+      row.innerHTML = `<span class="breakdown-label">${streamNames[b.stream]}</span><div class="breakdown-bar"><div class="breakdown-fill" style="width:${pct}%; background:var(--${b.stream});"></div></div><span class="breakdown-value">${b.avoided}/${b.total}</span>`;
       breakdownEl.appendChild(row);
     });
 
@@ -2123,6 +2153,7 @@ try {
 
   document.getElementById('retryBtn').addEventListener('click', () => {
     allResults = freshResults();
+    resultsShown = false;
     document.getElementById('results').classList.remove('active');
     document.getElementById('gameStage').style.display = 'block';
     startPhase(0);
@@ -2146,12 +2177,25 @@ try {
     const sendBtn = document.getElementById('emailResultSendBtn');
     const status = document.getElementById('emailResultStatus');
     panel.style.display = 'flex';
-    if (isPreviewMode || !lastSubmissionId){
+    // isPreviewMode and "no id yet" are different situations, not the one thing the old shared
+    // message implied — a real trainee whose save is still in flight (or failed after retries)
+    // was being told "This is a demo", which is simply false and actively misleading about why
+    // sending isn't available right now.
+    if (isPreviewMode){
       intro.style.display = 'none';
       input.style.display = 'none';
       sendBtn.style.display = 'none';
       status.className = 'email-result-status error';
       status.textContent = 'This is a demo - no real email is sent here.';
+      status.style.display = 'block';
+      return;
+    }
+    if (!lastSubmissionId){
+      intro.style.display = 'none';
+      input.style.display = 'none';
+      sendBtn.style.display = 'none';
+      status.className = 'email-result-status error';
+      status.textContent = 'Your results haven\'t finished saving yet - retry saving above, then try this again.';
       status.style.display = 'block';
       return;
     }

@@ -985,16 +985,20 @@ try {
     document.getElementById('gameSection').scrollIntoView({behavior:'smooth', block:'start'});
   }
 
+  let resultsShown = false; // guards against a queued double-click double-submitting results
   document.getElementById('submitQuizBtn').addEventListener('click', () => {
     if (Object.keys(answers).length < QUESTIONS.length){
       alert('Please answer every question before submitting.');
       return;
     }
+    if (resultsShown) return;
+    resultsShown = true;
     showResults();
   });
 
   document.getElementById('retryBtn').addEventListener('click', () => {
     answers = {};
+    resultsShown = false;
     document.getElementById('results').classList.remove('active');
     document.getElementById('gameStage').style.display = 'block';
     renderQuiz();

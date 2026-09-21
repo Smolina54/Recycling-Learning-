@@ -1167,13 +1167,22 @@ try {
     if (phaseCorrectTarget === 0) completePhase();
   }
 
+  let resultsShown = false; // guards against a queued double-click double-submitting results
   nextPhaseBtn.addEventListener('click', () => {
     // The button is only ever hidden via style.display, not disabled — guard on phaseLocked
     // (the same flag every drag/drop handler already checks) so it can't be clicked
     // programmatically to skip straight to a fabricated 100% result.
     if (!phaseLocked) return;
-    if (phaseIndex === streams.length - 1) showResults();
-    else startPhase(phaseIndex + 1);
+    if (phaseIndex === streams.length - 1){
+      // showResults() never resets phaseLocked (there's no next phase to unlock) — a second
+      // click event already queued from a fast double-click would otherwise pass the
+      // phaseLocked check above a second time and write a duplicate Firestore submission.
+      if (resultsShown) return;
+      resultsShown = true;
+      showResults();
+    } else {
+      startPhase(phaseIndex + 1);
+    }
   });
 
   let gameStartTime = null;
@@ -1350,6 +1359,7 @@ try {
 
   document.getElementById('retryBtn').addEventListener('click', () => {
     allResults = freshResults();
+    resultsShown = false;
     document.getElementById('results').classList.remove('active');
     document.getElementById('gameStage').style.display = 'block';
     startPhase(0);

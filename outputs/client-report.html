@@ -929,7 +929,15 @@ ${reportPageHtml}
 }
 
 document.getElementById('generateBtn').addEventListener('click', generateReport);
-document.getElementById('printReportBtn').addEventListener('click', () => {
+let printInProgress = false; // guards against a second activation before the first overlay/
+// iframe pair is cleaned up — both would contain an element with the same id ("cancelPrintBtn"),
+// and getElementById always resolves to the FIRST one in document order, so the second (visible,
+// topmost) overlay's Cancel button would silently have no listener at all.
+const printReportBtn = document.getElementById('printReportBtn');
+printReportBtn.addEventListener('click', () => {
+  if (printInProgress) return;
+  printInProgress = true;
+  printReportBtn.disabled = true;
   const overlay = document.createElement('div');
   overlay.className = 'print-overlay no-print';
   overlay.innerHTML = `
@@ -949,6 +957,8 @@ document.getElementById('printReportBtn').addEventListener('click', () => {
   function cleanup(){
     if (done) return;
     done = true;
+    printInProgress = false;
+    printReportBtn.disabled = false;
     iframe.remove();
     overlay.remove();
   }
