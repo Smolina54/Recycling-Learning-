@@ -199,7 +199,11 @@
     .wrap{ padding:0 !important; max-width:none; }
     *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
     header.top, .corner-settings, .upload-zone, #configSection, .report-actions, .no-print{display:none !important;}
-    body{background:#fff;}
+    /* A white physical-page margin around a cream content box reads as a screenshot pasted onto
+       paper, not a real printed document - carrying the same cream tone all the way to the
+       physical edge (the @page margin area included, not just the content inside it) is what
+       makes it read as one continuous designed page instead of a cutout. */
+    body{background:var(--paper);}
     .report-page{box-shadow:none; border:none;}
     /* Superseded by the real running @bottom-left footer above (present on every Paged.js page,
        not just the last one) - kept out of print entirely rather than shown once more on
