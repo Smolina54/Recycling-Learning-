@@ -15,3 +15,7 @@ firebase.local-test.json
 # Real client data dropped in uploads/ for reference (e.g. real building/tenant
 # exports) — never goes into git, even in a private repo.
 uploads/*.xlsx
+
+# Bintracker Data Sharing API test-environment credentials (Point 1 / Workstream 7) — reused
+# from Bin Tally's own existing test account, never real production credentials, never committed.
+tools/.bintracker-test-credentials.local

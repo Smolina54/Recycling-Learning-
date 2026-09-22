@@ -3,16 +3,12 @@
 // registration), so the admin panel's "Send via email" button sends for real instead of just
 // opening a mailto: draft.
 //
-// Not deployable yet: needs the Firebase project on the Blaze plan (required for any Cloud
-// Function to make outbound network calls, regardless of what it sends through), and the three
-// secrets below set via `firebase functions:secrets:set`. On the Microsoft 365 side, whoever
-// administers the tenant also needs to explicitly enable SMTP AUTH for the sending mailbox
-// (`Set-CASMailbox -Identity <mailbox> -SmtpClientAuthenticationDisabled $false`) — it's
-// disabled tenant-wide by default now, and Security Defaults/Conditional Access can block
-// legacy auth entirely regardless of that per-mailbox setting, which would need a separate
-// tenant-level exception. SMTP_SENDER_MAILBOX is kept as its own secret (not reused from
-// SMTP_USERNAME) so the same setup also covers a licensed user with "Send As" permission on a
-// shared mailbox, authenticating with their own credentials but sending as the shared address.
+// Deployed (2026-09-23): Blaze plan active, SMTP AUTH enabled on wastewise@tradeflex.com.au on
+// the Microsoft 365 side, and the three secrets below are set in Secret Manager via
+// `firebase functions:secrets:set`. SMTP_SENDER_MAILBOX is kept as its own secret (not reused
+// from SMTP_USERNAME) so the same setup also covers a licensed user with "Send As" permission on
+// a shared mailbox, authenticating with their own credentials but sending as the shared address —
+// not needed today (both are the same mailbox) but costs nothing to keep separate.
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
