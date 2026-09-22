@@ -3107,10 +3107,9 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  // Calls the sendInductionEmail Cloud Function (SMTP AUTH against Exchange Online — see the
-  // plan) — not deployable until Blaze + the mailbox's SMTP AUTH + its secrets are in place.
-  // "Copy addresses →" right next to this button is the manual fallback for meanwhile, or for
-  // whenever the automated send fails.
+  // Calls the sendInductionEmail Cloud Function (SMTP AUTH against Exchange Online — deployed
+  // and live as of 2026-09-22). "Copy addresses →" right next to this button stays as the manual
+  // fallback for whenever the automated send fails (network issue, SMTP rejection, etc.).
   const sendEmailBtn = e.target.closest('.send-email-btn');
   if (sendEmailBtn){
     const original = sendEmailBtn.textContent;
