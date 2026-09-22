@@ -38,7 +38,7 @@ async function seedTestBuilding(){
   const northwindId = 'northwind-' + Date.now();
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
-    await setDoc(doc(db, 'buildings', buildingId), { name: buildingName });
+    await setDoc(doc(db, 'buildings', buildingId), { name: buildingName, managerEmails: ['manager1@example.com', 'manager2@example.com'] });
     await setDoc(doc(db, 'buildings', buildingId, 'tenants', widgetcoId), {
       name: 'Widgetco', levels: ['Level 3'], emails: ['widgetco-contact@example.com'],
     });
@@ -243,6 +243,22 @@ async function runFlow(page){
   const wholeBuildingRowText = await page.$eval(`${distributionSelector} .building-link-row`, el => el.textContent);
   check('the whole-building link row (no single tenant to address) never shows "Send via email"',
     !wholeBuildingRowText.includes('Send via email'), wholeBuildingRowText);
+
+  // --- A GENERATED whole-building link (via "Generate a distribution link", no tenant lock) is
+  // a different code path from .building-link-row above — it now uses the building's own
+  // "Building managers" contacts (set in admin-buildings.html) instead of any one tenant's email,
+  // since there's no single tenant to address a whole-building link to. ---
+  await generateTenantLink(''); // "" = the "Whole building (no tenant lock)" option's value
+  const wholeBuildingLinkLi = await page.evaluateHandle((sel) => {
+    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Whole building'));
+  }, distributionSelector).then(h => h.asElement());
+  const wholeBuildingCopyBtns = await wholeBuildingLinkLi.$$('.copy-link-btn');
+  check('a GENERATED whole-building link shows "Send via email" using the building\'s own manager contacts',
+    Boolean(await wholeBuildingLinkLi.$('.send-email-btn')) && wholeBuildingCopyBtns.length === 2,
+    await wholeBuildingLinkLi.evaluate(el => el.textContent));
+  const wholeBuildingEmails = await (await wholeBuildingLinkLi.$('.send-email-btn')).evaluate(el => el.dataset.emails);
+  check('...and targets BOTH saved manager emails, not just one',
+    wholeBuildingEmails.includes('manager1@example.com') && wholeBuildingEmails.includes('manager2@example.com'), wholeBuildingEmails);
 
   // --- "Send via email" fails gracefully (Cloud Function not deployed — needs Blaze + Entra ID) ---
   const alertCountBeforeSend = await page.evaluate(() => window.__alertCalls.length);

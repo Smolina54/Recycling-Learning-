@@ -411,7 +411,29 @@ async function runFlow(page, consoleErrors){
   check('the coverage counter reports exactly 1 of 6 tenants has a contact email',
     coverageText.includes('1 of 6'), coverageText);
 
-  const buildingsTenantIds = await buildingsRowForCoverage.$$eval('.tenant-list li[data-tenant-id]', els =>
+  // --- Building managers: a building-level contact list (not tied to any one tenant), used to
+  // send a whole-building distribution link via email (see admin-distribution.html) ---
+  const managersBlockBefore = await buildingsRowForCoverage.$eval('.building-managers-block .block-sub', el => el.textContent);
+  check('no building managers set initially', managersBlockBefore.includes('No building managers set yet.'), managersBlockBefore);
+
+  await buildingsRowForCoverage.$eval('.edit-managers-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 200));
+  const managersEditor = await page.$('.building-managers-emails-editor');
+  await fillEmailsEditor(managersEditor, ['manager1@example.com', 'manager2@example.com']);
+  await page.$eval('.save-managers-btn', el => el.click());
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('.building-managers-block .block-sub');
+      return Boolean(el) && el.textContent.includes('manager1@example.com') && el.textContent.includes('manager2@example.com');
+    },
+    { timeout: 8000 }
+  );
+  const managersRowAfter = await findRowByName(page, '.building-row', buildingName);
+  const managersBlockAfter = await managersRowAfter.$eval('.building-managers-block .block-sub', el => el.textContent);
+  check('both building manager emails saved and shown',
+    managersBlockAfter.includes('manager1@example.com') && managersBlockAfter.includes('manager2@example.com'), managersBlockAfter);
+
+  const buildingsTenantIds = await managersRowAfter.$$eval('.tenant-list li[data-tenant-id]', els =>
     els.map(el => ({ id: el.dataset.tenantId, name: el.querySelector('.tenant-name').textContent })));
   const acmeLegalId = buildingsTenantIds.find(t => t.name === 'Acme Legal').id;
 
@@ -434,7 +456,7 @@ async function runFlow(page, consoleErrors){
       return origCreateObjectURL(blob);
     };
   });
-  await buildingsRowForCoverage.$eval('.export-contacts-btn', el => el.click());
+  await managersRowAfter.$eval('.export-contacts-btn', el => el.click());
   await page.waitForFunction(() => window.__exportedXlsxBase64 !== null, { timeout: 8000 });
   check('"Export contacts template" click does not throw', consoleErrors.length === errorsBeforeExport);
 
@@ -460,17 +482,17 @@ async function runFlow(page, consoleErrors){
   ]), 'Contacts');
   xlsxLib.writeFile(contactsWb, contactsFixturePath);
 
-  const contactsFileInput = await buildingsRowForCoverage.$('.import-contacts-input');
+  const contactsFileInput = await managersRowAfter.$('.import-contacts-input');
   await contactsFileInput.uploadFile(contactsFixturePath);
   // Same as the tenant-import upload above — the change handler awaits file.arrayBuffer()
   // before rendering the review rows.
   await page.waitForFunction(
     (row) => row.querySelectorAll('.import-contacts-review .import-row').length > 0,
-    { timeout: 8000 }, buildingsRowForCoverage
+    { timeout: 8000 }, managersRowAfter
   );
   fs.unlinkSync(contactsFixturePath);
 
-  const contactsReview = await buildingsRowForCoverage.$$eval('.import-contacts-review .import-row', rows =>
+  const contactsReview = await managersRowAfter.$$eval('.import-contacts-review .import-row', rows =>
     rows.map(r => ({ unmatched: r.classList.contains('import-row-unmatched'), text: r.textContent })));
   check('the import review unions both rows for Acme Legal into a single matched entry with both emails',
     contactsReview.some(r => !r.unmatched && r.text.includes('Acme Legal') && r.text.includes('acme-one@example.com') && r.text.includes('acme-two@example.com')),
@@ -479,7 +501,7 @@ async function runFlow(page, consoleErrors){
     contactsReview.some(r => r.unmatched && r.text.includes('Nonexistent Co')),
     JSON.stringify(contactsReview));
 
-  await buildingsRowForCoverage.$eval('.import-contacts-confirm-btn', el => el.click());
+  await managersRowAfter.$eval('.import-contacts-confirm-btn', el => el.click());
   // import-contacts-confirm-btn's handler is async (a batch commit + await
   // loadMasterBuildings()) — wait for Acme Legal's merged emails to actually land.
   await page.waitForFunction(

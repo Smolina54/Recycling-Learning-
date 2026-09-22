@@ -19,3 +19,8 @@ uploads/*.xlsx
 # Bintracker Data Sharing API test-environment credentials (Point 1 / Workstream 7) — reused
 # from Bin Tally's own existing test account, never real production credentials, never committed.
 tools/.bintracker-test-credentials.local
+
+# Temporary, one-off copy of the real SMTP credentials (matching what's in Secret Manager) used
+# only to test the login directly against smtp.office365.com outside a full deploy — delete this
+# file once the test is done, never committed.
+functions/.smtp-test-credentials.local

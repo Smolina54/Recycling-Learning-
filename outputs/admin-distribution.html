@@ -2911,6 +2911,7 @@ async function loadDistributionData(){
       tenants: tenantsSnap.docs
         .filter(t => t.data().active !== false)
         .map(t => ({ id: t.id, name: t.data().name || '', emails: t.data().emails || [] })),
+      managerEmails: d.data().managerEmails || [],
       links: linksByBuilding[d.id] || [],
     };
   }));
@@ -2943,13 +2944,17 @@ function renderDistributionLinksHtml(b){
         const tenant = l.tenantId ? b.tenants.find(t => t.id === l.tenantId) : null;
         const scopeText = !l.tenantId ? 'Whole building' : (tenant ? esc(tenant.name) : 'Tenant removed (link still locked to it)');
         const expiryText = l.expiresAtMs ? `expires ${new Date(l.expiresAtMs).toLocaleDateString('en-GB')}` : 'no expiry';
-        const emailsCsv = tenant?.emails?.length ? tenant.emails.join(';') : '';
+        // A whole-building link has no single tenant to send to - use the building's own
+        // manager contacts instead (see admin-buildings.html's "Building managers" editor).
+        // A tenant-scoped link keeps using that tenant's own saved contact emails, as before.
+        const contactEmails = l.tenantId ? (tenant?.emails || []) : (b.managerEmails || []);
+        const emailsCsv = contactEmails.length ? contactEmails.join(';') : '';
         return `
           <li data-link-id="${esc(l.id)}">
             <span class="tenant-name">${scopeText} - <span class="block-sub">${expiryText}</span></span>
             <button class="btn secondary copy-link-btn" data-link="${linkUrl}">Copy link →</button>
             ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-subject="${esc(`${currentProgram.name} - ${b.name}`)}" data-body="${esc(`Hi,\n\nHere's the induction link for ${b.name}:\n${linkUrl}\n\nThanks.`)}">Send via email →</button>
-            <button class="btn secondary copy-link-btn" data-link="${esc(tenant.emails.join('; '))}">Copy addresses →</button>` : ''}
+            <button class="btn secondary copy-link-btn" data-link="${esc(contactEmails.join('; '))}">Copy addresses →</button>` : ''}
             <button class="btn secondary revoke-link-btn danger-btn">Revoke</button>
           </li>`;
       }).join('')
