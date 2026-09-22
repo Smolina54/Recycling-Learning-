@@ -155,6 +155,7 @@
   }
   .building-header-actions{display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;}
   .building-managers-block{margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--line);}
+  .building-managers-block .btn{padding:6px 14px; font-size:12.5px;}
   .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
   .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
   .building-edit-row input{flex:1; min-width:160px;}
@@ -507,7 +508,6 @@ async function loadAllActiveBuildings(){
 let buildingsCache = [];
 let editingBuildingId = null;
 let editingTenant = null; // {buildingId, tenantId}
-let editingManagersForBuildingId = null; // building-level contacts, not tied to any one tenant
 let buildingSearchTerm = '';
 const expandedBuildingIds = new Set();
 
@@ -540,32 +540,21 @@ async function loadMasterBuildings(){
 }
 
 function isBuildingExpanded(b){
-  return expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id) || editingManagersForBuildingId === b.id;
+  return expandedBuildingIds.has(b.id) || (editingTenant && editingTenant.buildingId === b.id);
 }
 
 // Contacts for the building itself, not tied to any one tenant - used when sending a
 // whole-building (no tenant lock) induction link via email in admin-distribution.html, which
 // otherwise has no single obvious contact to send that kind of link to.
 function renderBuildingManagersHtml(b){
-  if (editingManagersForBuildingId === b.id){
-    return `
+  return `
     <div class="building-managers-block">
       <p class="generate-link-title"><strong>Building managers</strong></p>
       <p class="block-sub">Contacts for this building itself, not tied to any one tenant - used when sending a whole-building induction link via email.</p>
       ${renderEmailsEditorHtml(b.managerEmails, 'building-managers-emails-editor')}
       <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
         <button class="btn save-managers-btn">Save</button>
-        <button class="btn secondary cancel-managers-btn">Cancel</button>
       </div>
-    </div>`;
-  }
-  return `
-    <div class="building-managers-block">
-      <div class="building-header-row" style="margin-bottom:6px;">
-        <h4 style="margin:0;">Building managers</h4>
-        <button class="btn secondary edit-managers-btn" style="margin-left:auto;">Edit</button>
-      </div>
-      <p class="block-sub">${b.managerEmails.length ? esc(b.managerEmails.join(', ')) : 'No building managers set yet.'}</p>
     </div>`;
 }
 
@@ -903,20 +892,6 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     return;
   }
 
-  const editManagersBtn = e.target.closest('.edit-managers-btn');
-  if (editManagersBtn){
-    editingManagersForBuildingId = editManagersBtn.closest('.building-row').dataset.buildingId;
-    refreshBuildingsView();
-    return;
-  }
-
-  const cancelManagersBtn = e.target.closest('.cancel-managers-btn');
-  if (cancelManagersBtn){
-    editingManagersForBuildingId = null;
-    refreshBuildingsView();
-    return;
-  }
-
   const saveManagersBtn = e.target.closest('.save-managers-btn');
   if (saveManagersBtn){
     const buildingId = saveManagersBtn.closest('.building-row').dataset.buildingId;
@@ -926,7 +901,6 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     if (badEmail){ alert(`"${badEmail}" doesn't look like a valid email address.`); return; }
     try {
       await updateDoc(doc(db, 'buildings', buildingId), { managerEmails: newEmails });
-      editingManagersForBuildingId = null;
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to save building managers:', err);

@@ -412,26 +412,26 @@ async function runFlow(page, consoleErrors){
     coverageText.includes('1 of 6'), coverageText);
 
   // --- Building managers: a building-level contact list (not tied to any one tenant), used to
-  // send a whole-building distribution link via email (see admin-distribution.html) ---
-  const managersBlockBefore = await buildingsRowForCoverage.$eval('.building-managers-block .block-sub', el => el.textContent);
-  check('no building managers set initially', managersBlockBefore.includes('No building managers set yet.'), managersBlockBefore);
+  // send a whole-building distribution link via email (see admin-distribution.html). The editor
+  // is always shown directly (no Edit toggle) — just an emails-editor with a Save button. ---
+  const managersEditorBefore = await buildingsRowForCoverage.$('.building-managers-emails-editor');
+  const managersValuesBefore = await managersEditorBefore.$$eval('.email-input', els => els.map(el => el.value));
+  check('no building managers set initially',
+    managersValuesBefore.length === 1 && managersValuesBefore[0] === '', JSON.stringify(managersValuesBefore));
 
-  await buildingsRowForCoverage.$eval('.edit-managers-btn', el => el.click());
-  await new Promise(r => setTimeout(r, 200));
-  const managersEditor = await page.$('.building-managers-emails-editor');
-  await fillEmailsEditor(managersEditor, ['manager1@example.com', 'manager2@example.com']);
-  await page.$eval('.save-managers-btn', el => el.click());
+  await fillEmailsEditor(managersEditorBefore, ['manager1@example.com', 'manager2@example.com']);
+  await buildingsRowForCoverage.$eval('.save-managers-btn', el => el.click());
   await page.waitForFunction(
     () => {
-      const el = document.querySelector('.building-managers-block .block-sub');
-      return Boolean(el) && el.textContent.includes('manager1@example.com') && el.textContent.includes('manager2@example.com');
+      const values = [...document.querySelectorAll('.building-managers-emails-editor .email-input')].map(el => el.value);
+      return values.includes('manager1@example.com') && values.includes('manager2@example.com');
     },
     { timeout: 8000 }
   );
   const managersRowAfter = await findRowByName(page, '.building-row', buildingName);
-  const managersBlockAfter = await managersRowAfter.$eval('.building-managers-block .block-sub', el => el.textContent);
+  const managersValuesAfter = await managersRowAfter.$$eval('.building-managers-emails-editor .email-input', els => els.map(el => el.value));
   check('both building manager emails saved and shown',
-    managersBlockAfter.includes('manager1@example.com') && managersBlockAfter.includes('manager2@example.com'), managersBlockAfter);
+    managersValuesAfter.includes('manager1@example.com') && managersValuesAfter.includes('manager2@example.com'), JSON.stringify(managersValuesAfter));
 
   const buildingsTenantIds = await managersRowAfter.$$eval('.tenant-list li[data-tenant-id]', els =>
     els.map(el => ({ id: el.dataset.tenantId, name: el.querySelector('.tenant-name').textContent })));
@@ -456,7 +456,14 @@ async function runFlow(page, consoleErrors){
       return origCreateObjectURL(blob);
     };
   });
-  await managersRowAfter.$eval('.export-contacts-btn', el => el.click());
+  // Re-fetch a fresh row handle immediately before each real DOM interaction from here on — the
+  // building-managers editor now stays in the DOM permanently (no more collapsing back to a
+  // one-line summary after save), and a row handle captured earlier can go stale by the time we
+  // reach this point even with no further loadMasterBuildings()/refreshBuildingsView() call in
+  // between (confirmed via instrumentation - not fully root-caused, but reliably worked around
+  // by never holding a row handle across more than one interaction).
+  let exportRow = await findRowByName(page, '.building-row', buildingName);
+  await exportRow.$eval('.export-contacts-btn', el => el.click());
   await page.waitForFunction(() => window.__exportedXlsxBase64 !== null, { timeout: 8000 });
   check('"Export contacts template" click does not throw', consoleErrors.length === errorsBeforeExport);
 
@@ -482,17 +489,18 @@ async function runFlow(page, consoleErrors){
   ]), 'Contacts');
   xlsxLib.writeFile(contactsWb, contactsFixturePath);
 
-  const contactsFileInput = await managersRowAfter.$('.import-contacts-input');
+  const importRow = await findRowByName(page, '.building-row', buildingName);
+  const contactsFileInput = await importRow.$('.import-contacts-input');
   await contactsFileInput.uploadFile(contactsFixturePath);
   // Same as the tenant-import upload above — the change handler awaits file.arrayBuffer()
   // before rendering the review rows.
   await page.waitForFunction(
     (row) => row.querySelectorAll('.import-contacts-review .import-row').length > 0,
-    { timeout: 8000 }, managersRowAfter
+    { timeout: 8000 }, importRow
   );
   fs.unlinkSync(contactsFixturePath);
 
-  const contactsReview = await managersRowAfter.$$eval('.import-contacts-review .import-row', rows =>
+  const contactsReview = await importRow.$$eval('.import-contacts-review .import-row', rows =>
     rows.map(r => ({ unmatched: r.classList.contains('import-row-unmatched'), text: r.textContent })));
   check('the import review unions both rows for Acme Legal into a single matched entry with both emails',
     contactsReview.some(r => !r.unmatched && r.text.includes('Acme Legal') && r.text.includes('acme-one@example.com') && r.text.includes('acme-two@example.com')),
@@ -501,7 +509,8 @@ async function runFlow(page, consoleErrors){
     contactsReview.some(r => r.unmatched && r.text.includes('Nonexistent Co')),
     JSON.stringify(contactsReview));
 
-  await managersRowAfter.$eval('.import-contacts-confirm-btn', el => el.click());
+  const confirmRow = await findRowByName(page, '.building-row', buildingName);
+  await confirmRow.$eval('.import-contacts-confirm-btn', el => el.click());
   // import-contacts-confirm-btn's handler is async (a batch commit + await
   // loadMasterBuildings()) — wait for Acme Legal's merged emails to actually land.
   await page.waitForFunction(
