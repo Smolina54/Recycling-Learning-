@@ -65,6 +65,12 @@ async function fillEmailsEditor(editorHandle, emails){
 
 async function main(){
   const browser = await puppeteer.launch({ executablePath: EDGE_PATH, headless: true });
+  // This test's "Export contacts template" click triggers a real <a download> — the exported
+  // content is verified by intercepting the Blob bytes in-page (see the URL.createObjectURL
+  // override below), never by reading a downloaded file, so denying the download outright is
+  // safe and keeps a throwaway test run from dropping a real .xlsx into the developer's actual
+  // Downloads folder every time this suite runs.
+  await browser.defaultBrowserContext().setDownloadBehavior({ policy: 'deny' });
   const page = await browser.newPage();
   const consoleErrors = [];
   page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
