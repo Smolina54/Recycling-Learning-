@@ -156,6 +156,7 @@
   .building-header-actions{display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;}
   .building-managers-block{margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--line);}
   .building-managers-block .btn{padding:6px 14px; font-size:12.5px;}
+  .managers-saved-note{color:var(--forest-dark); font-size:12.5px; font-weight:500;}
   .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
   .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
   .building-edit-row input{flex:1; min-width:160px;}
@@ -508,6 +509,10 @@ async function loadAllActiveBuildings(){
 let buildingsCache = [];
 let editingBuildingId = null;
 let editingTenant = null; // {buildingId, tenantId}
+// The managers editor has no edit/view-mode toggle to signal a successful save (unlike tenant
+// edits, where the form disappearing back into a read-only row IS the confirmation) - this tracks
+// which building's Save was just clicked so a brief "Saved" note can show next to its button.
+let justSavedManagersForBuildingId = null;
 let buildingSearchTerm = '';
 const expandedBuildingIds = new Set();
 
@@ -552,8 +557,9 @@ function renderBuildingManagersHtml(b){
       <p class="generate-link-title"><strong>Building managers</strong></p>
       <p class="block-sub">Contacts for this building itself, not tied to any one tenant - used when sending a whole-building induction link via email.</p>
       ${renderEmailsEditorHtml(b.managerEmails, 'building-managers-emails-editor')}
-      <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+      <div class="print-row" style="justify-content:flex-start; align-items:center; margin-top:10px;">
         <button class="btn save-managers-btn">Save</button>
+        ${justSavedManagersForBuildingId === b.id ? '<span class="managers-saved-note">Saved ✓</span>' : ''}
       </div>
     </div>`;
 }
@@ -901,7 +907,14 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     if (badEmail){ alert(`"${badEmail}" doesn't look like a valid email address.`); return; }
     try {
       await updateDoc(doc(db, 'buildings', buildingId), { managerEmails: newEmails });
+      justSavedManagersForBuildingId = buildingId;
       await loadMasterBuildings();
+      setTimeout(() => {
+        if (justSavedManagersForBuildingId === buildingId){
+          justSavedManagersForBuildingId = null;
+          refreshBuildingsView();
+        }
+      }, 2500);
     } catch (err){
       console.error('Failed to save building managers:', err);
       alert('Failed to save - check the console for details.');

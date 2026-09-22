@@ -433,7 +433,22 @@ async function runFlow(page, consoleErrors){
   check('both building manager emails saved and shown',
     managersValuesAfter.includes('manager1@example.com') && managersValuesAfter.includes('manager2@example.com'), JSON.stringify(managersValuesAfter));
 
-  const buildingsTenantIds = await managersRowAfter.$$eval('.tenant-list li[data-tenant-id]', els =>
+  // Poll for the note rather than checking immediately — it renders in the same pass as the
+  // saved email values above, but this suite has shown real (if not fully root-caused) delays
+  // between a DOM update landing and a freshly-fetched handle/query actually seeing it.
+  await page.waitForFunction(() => document.querySelector('.managers-saved-note'), { timeout: 8000 });
+  const savedNoteText = await page.$eval('.managers-saved-note', el => el.textContent);
+  check('a "Saved" confirmation shows next to the Save button right after saving',
+    savedNoteText === 'Saved ✓', savedNoteText);
+  // The note auto-clears a couple seconds later — confirm it actually goes away rather than
+  // sticking around forever (which would misleadingly claim "just saved" indefinitely).
+  await page.waitForFunction(
+    () => !document.querySelector('.managers-saved-note'),
+    { timeout: 8000 }
+  );
+  check('the "Saved" note clears itself again after a few seconds', true);
+
+  const buildingsTenantIds = await page.$$eval('.building-row .tenant-list li[data-tenant-id]', els =>
     els.map(el => ({ id: el.dataset.tenantId, name: el.querySelector('.tenant-name').textContent })));
   const acmeLegalId = buildingsTenantIds.find(t => t.name === 'Acme Legal').id;
 
