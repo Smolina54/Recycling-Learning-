@@ -13,13 +13,17 @@ const fs = require('fs');
 const path = require('path');
 
 const GAME_PATH = path.join(__dirname, '..', 'outputs', 'recycling-training.html');
-// Every page with its own AUTO-GENERATED CATALOG block — add a new path here if a future page
-// ever needs its own copy too.
+// Every page with its own AUTO-GENERATED CATALOG block — add a new entry here if a future page
+// ever needs its own copy too. `includeIcon:false` drops the (often large, base64/SVG) icon
+// field entirely for a target that never reads it — today only functions/catalog.js, whose sole
+// consumer (sendMyResultEmail, functions/index.js) only ever reads .name/.explain, but was
+// carrying every item's full icon data (~1.85MB) into every Cloud Function cold start for
+// nothing.
 const TARGET_PATHS = [
-  path.join(__dirname, '..', 'outputs', 'sorting-station-report.html'),
-  path.join(__dirname, '..', 'outputs', 'admin-enrolled-buildings.html'),
-  path.join(__dirname, '..', 'outputs', 'client-report.html'),
-  path.join(__dirname, '..', 'functions', 'catalog.js'),
+  { path: path.join(__dirname, '..', 'outputs', 'sorting-station-report.html'), includeIcon: true },
+  { path: path.join(__dirname, '..', 'outputs', 'admin-enrolled-buildings.html'), includeIcon: true },
+  { path: path.join(__dirname, '..', 'outputs', 'client-report.html'), includeIcon: true },
+  { path: path.join(__dirname, '..', 'functions', 'catalog.js'), includeIcon: false },
 ];
 const START_MARKER = '// AUTO-GENERATED CATALOG START';
 const END_MARKER = '// AUTO-GENERATED CATALOG END';
@@ -70,20 +74,21 @@ function extractCatalog(gameHtml){
   return catalog;
 }
 
-function buildCatalogBlock(catalog){
+function buildCatalogBlock(catalog, includeIcon){
   const lines = catalog.map((item, i) => {
     const comma = i < catalog.length - 1 ? ',' : '';
     const activePart = item.active ? '' : ', active:false';
+    const iconPart = includeIcon ? `, icon:\`${item.icon}\`` : '';
     // JSON.stringify (not hand-rolled quoting) for explain/shortWhy - safe if either ever grows
     // an embedded quote or backslash later, unlike the fixed-format id/name/stream/icon fields.
-    return `    '${item.id}': {name:'${item.name}', stream:'${item.stream}', icon:\`${item.icon}\`${activePart}, explain:${JSON.stringify(item.explain)}, shortWhy:${JSON.stringify(item.shortWhy)}}${comma}`;
+    return `    '${item.id}': {name:'${item.name}', stream:'${item.stream}'${iconPart}${activePart}, explain:${JSON.stringify(item.explain)}, shortWhy:${JSON.stringify(item.shortWhy)}}${comma}`;
   });
   return `${START_MARKER} — do not edit by hand, run \`npm run sync-catalog\` after\n  // changing the \`ALL_ITEMS\` array in recycling-training.html (see tools/sync-catalog.js).\n  const catalog = {\n${lines.join('\n')}\n  };\n  ${END_MARKER}`;
 }
 
 // Computes the updated content for one target file. Returns null if that file has no
 // AUTO-GENERATED CATALOG markers at all (not every page needs one).
-function computeUpdatedFile(targetPath, catalog){
+function computeUpdatedFile(targetPath, catalog, includeIcon){
   if (!fs.existsSync(targetPath)) return null;
   const targetHtml = fs.readFileSync(targetPath, 'utf8');
   const startIdx = targetHtml.indexOf(START_MARKER);
@@ -103,7 +108,7 @@ function computeUpdatedFile(targetPath, catalog){
   // \r\r\n (only the icon-internal newlines; a plain \n between items converted correctly).
   // Collapsing to \n first, unconditionally, makes the CRLF conversion below idempotent
   // regardless of which line-ending convention recycling-training.html happens to use.
-  const rawBlock = buildCatalogBlock(catalog).replace(/\r\n/g, '\n');
+  const rawBlock = buildCatalogBlock(catalog, includeIcon).replace(/\r\n/g, '\n');
   const usesCRLF = before.includes('\r\n');
   const catalogBlock = usesCRLF ? rawBlock.replace(/\n/g, '\r\n') : rawBlock;
   return { targetHtml, updated: before + catalogBlock + after };
@@ -117,8 +122,8 @@ function computeAllUpdates(){
   if (catalog.length === 0){
     throw new Error('No items extracted from recycling-training.html — refusing to overwrite any catalog with an empty one.');
   }
-  const results = TARGET_PATHS.map((targetPath) => {
-    const result = computeUpdatedFile(targetPath, catalog);
+  const results = TARGET_PATHS.map(({ path: targetPath, includeIcon }) => {
+    const result = computeUpdatedFile(targetPath, catalog, includeIcon);
     return result ? { targetPath, ...result } : { targetPath, missing: true };
   });
   const missing = results.filter(r => r.missing);

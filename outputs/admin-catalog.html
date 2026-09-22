@@ -32,22 +32,6 @@
     --ew: #5B4B8A;
     --ew-tint: #E4E0EF;
 
-    /* Warning/notice color, distinct from every stream color above (gw/mr/pc/og/ew) so it never
-       reads as "this relates to a specific stream" — used by .custom-config-badge, which
-       referenced these three variables without them ever being defined (silently invisible). */
-    --amber-ink: #8A5A12;
-    --amber-bg: #FBEEDA;
-    --amber-line: #D9A441;
-
-    /* Neutral gray-blue "this is system configuration, not induction data" family — deliberately
-       not a stream color and not --forest (the "Viewing: X" badge's green), so the ⚙ Buildings/
-       Admins/Catalog screens read as a different zone of the app on sight, not as another
-       induction. See body.settings-mode below. */
-    --settings-bg: #E4E6E7;
-    --settings-ink: #4B5860;
-    --settings-tint: #E1E5E7;
-    --settings-line: #8FA0A8;
-
     --radius: 4px;
     --display: 'Gilroy', 'Oswald', sans-serif;
     --body: 'Gilroy', 'Inter', sans-serif;
@@ -88,7 +72,6 @@
   .upload-zone p{color:var(--ink-soft); font-size:14.5px; margin:0 0 18px;}
   .upload-actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap;}
 
-  .admin-tabs{display:flex; gap:4px; align-items:flex-start; border-bottom:1.5px solid var(--line); margin-bottom:28px;}
   .tab-btn{
     font-family:var(--body); font-weight:600; font-size:14.5px; color:var(--ink-soft);
     background:none; border:none; border-bottom:2.5px solid transparent; padding:10px 4px; margin-bottom:-1.5px;
@@ -108,18 +91,13 @@
      transparent background lets that content show through. Giving just these an opaque
      background fixes it without changing the outline style anywhere it isn't a problem. */
   .corner-btn{font-size:13px; padding:8px 14px; background:var(--panel);}
-  .viewing-badge{
-    font-family:var(--mono); font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;
-    color:var(--forest-dark); background:var(--og-tint, #E5EAD8); border:1px solid var(--forest);
-    padding:6px 12px; border-radius:var(--radius);
-  }
-  .settings-btn{font-size:16px; padding:6px 12px; line-height:1;}
 
   /* Full-bleed sidebar for the program-agnostic ⚙ screens (Buildings/Admins/Catalog) — a
      deliberate structural break from .wrap's centered 960px column used everywhere else, so
      this reads as a distinct "mode" rather than a flatter variant of the same page. Hidden by
-     default; .page-shell.sidebar-mode (toggled in showTab() for every un-scoped tab) reveals it
-     and narrows .wrap to sit beside it instead of self-centering. */
+     default; the page-shell element below always carries sidebar-mode statically in its markup
+     (this is a real standalone page now, not a JS-toggled tab of a shared shell), which reveals
+     it and narrows .wrap to sit beside it instead of self-centering. */
   .page-shell{display:flex;}
   .settings-sidebar{
     display:none; width:220px; flex-shrink:0; background:var(--ink); color:var(--paper);
@@ -173,50 +151,6 @@
     background:var(--line); padding:3px 9px; border-radius:20px; flex-shrink:0;
   }
   .building-header-actions{display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;}
-  .custom-config-badge{
-    font-family:var(--mono); font-size:10.5px; letter-spacing:0.03em; text-transform:uppercase;
-    background:var(--amber-bg); color:var(--amber-ink); border:1px solid var(--amber-line);
-    padding:3px 8px; border-radius:20px; flex-shrink:0;
-  }
-  .items-editor{margin:18px 0; padding:18px; background:var(--paper); border:1px solid var(--line); border-radius:var(--radius);}
-  .items-editor-summary{font-size:13px; color:var(--ink-soft); margin-bottom:14px;}
-  .quick-merge-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--line);}
-  .quick-merge-row select{
-    font-family:var(--body); font-size:13px; padding:6px 8px; border:1.5px solid var(--line);
-    background:var(--panel); border-radius:var(--radius); color:var(--ink);
-  }
-  .items-stream-section{margin-bottom:22px;}
-  .items-stream-section:last-child{margin-bottom:0;}
-  .items-stream-head{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
-  .items-stream-swatch{width:10px; height:22px; flex-shrink:0;}
-  .items-stream-head h4{margin:0; font-size:14px; text-transform:uppercase; letter-spacing:0.02em;}
-  .items-card-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:10px;}
-  .items-card{
-    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
-    padding:10px 10px 8px; display:flex; flex-direction:column; gap:6px; font-size:12.5px;
-  }
-  .items-card-head{display:flex; align-items:center; gap:6px;}
-  .items-card-icon{width:20px; height:20px; flex-shrink:0; display:inline-flex;}
-  .items-card-icon svg, .items-card-icon img{width:20px; height:20px; object-fit:contain;}
-  .items-card-name{font-weight:600; line-height:1.25; flex:1;}
-  .items-card-inactive .items-card-icon, .items-card-inactive .items-card-name{opacity:0.45;}
-  .item-toggle{position:relative; display:inline-block; width:34px; height:20px; flex-shrink:0; cursor:pointer;}
-  .item-toggle input{position:absolute; inset:0; opacity:0; margin:0; cursor:pointer;}
-  .item-toggle-track{position:absolute; inset:0; background:var(--ink-soft); border-radius:20px; transition:background .15s ease;}
-  .item-toggle-thumb{position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; transition:transform .15s ease;}
-  .item-toggle input:checked + .item-toggle-track{background:#2ECC5F;}
-  .item-toggle input:checked + .item-toggle-track .item-toggle-thumb{transform:translateX(14px);}
-  .item-toggle input:focus-visible + .item-toggle-track{outline:2px solid var(--ink); outline-offset:2px;}
-  .items-card select{
-    font-family:var(--body); font-size:12px; padding:5px 6px; border:1.5px solid var(--line);
-    background:var(--paper); border-radius:var(--radius); color:var(--ink);
-  }
-  .acceptable-details{font-size:11.5px;}
-  .acceptable-details summary{color:var(--ink-soft); cursor:pointer; user-select:none;}
-  .acceptable-checkbox-group{display:flex; flex-direction:column; gap:3px; margin-top:6px;}
-  .acceptable-checkbox-label{display:flex; align-items:center; gap:5px; font-weight:400; cursor:pointer;}
-  .items-editor-actions{display:flex; gap:8px; margin-top:20px;}
-  .items-editor-error{color:var(--gw); font-size:13px; margin:10px 0 0;}
   .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
   .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
   .building-edit-row input{flex:1; min-width:160px;}
@@ -275,95 +209,18 @@
   input[type=file]{display:none;}
   .file-name{font-family:var(--mono); font-size:12px; color:var(--ink-soft); margin-top:14px;}
 
-  #reportSection{display:none;}
-
   .report-header-row{display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px; margin:36px 0 20px;}
   .report-header-row h2{font-family:var(--display); text-transform:uppercase; font-size:24px; margin:0;}
-  .source-note{font-family:var(--mono); font-size:11.5px; color:var(--ink-soft);}
-
-  /* Print-only document header (see the @media print rule further down for why it's hidden on
-     screen) — the induction name, its short description, and the building/period this specific
-     report covers, so the PDF opens with real cover context instead of launching into charts. */
-  .print-header{display:none;}
-
-  .kpi-row{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:2px; background:var(--line); border:1px solid var(--line); margin-bottom:36px;}
-  .kpi-tile{background:var(--panel); padding:20px 18px;}
-  .kpi-label{font-family:var(--mono); font-size:10.5px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft); margin-bottom:8px;}
-  .kpi-value{font-family:var(--display); font-size:32px; color:var(--ink);}
-  .kpi-value.good{color:var(--forest-dark);}
-  .kpi-value.bad{color:var(--gw);}
 
   .report-block{background:var(--panel); border:1px solid var(--line); padding:28px 30px; margin-bottom:24px;}
   .report-block h3{font-family:var(--display); text-transform:uppercase; font-size:17px; margin:0 0 6px;}
   .block-sub{font-size:13.5px; color:var(--ink-soft); margin:0 0 20px;}
 
-  .stream-bar-row{display:grid; grid-template-columns:150px 1fr 60px; align-items:center; gap:12px; margin-bottom:12px;}
-  .stream-bar-row:last-child{margin-bottom:0;}
-  .stream-bar-label{font-family:var(--mono); font-size:12px; text-transform:uppercase; letter-spacing:0.03em;}
-  .stream-bar-track{height:16px; background:var(--paper); border:1px solid var(--ink); overflow:hidden;}
-  .stream-bar-fill{height:100%; transition:width .5s ease;}
-  .stream-bar-value{font-family:var(--mono); font-size:12.5px; text-align:right;}
-
-  .missed-list{display:flex; flex-direction:column; gap:10px;}
-  .missed-row{display:grid; grid-template-columns:22px 1fr 90px 50px; align-items:center; gap:12px; padding:10px 14px; background:var(--paper); border:1px solid var(--line);}
-  .missed-rank{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
-  .missed-name{font-size:14px; font-weight:600;}
-  .missed-name .stream-tag{font-family:var(--mono); font-size:10.5px; font-weight:400; color:var(--ink-soft); text-transform:uppercase; margin-left:6px;}
-  .missed-bar-track{height:10px; background:var(--line); overflow:hidden;}
-  .missed-bar-fill{height:100%; background:var(--gw);}
-  .missed-pct{font-family:var(--mono); font-size:12.5px; text-align:right; color:var(--gw); font-weight:700;}
-
-  /* Plain-language summary generated from the same aggregates the charts/tables below already
-     compute (streamAgg, groupRows, KPI values) — see generateKeyInsights(). Management-report
-     tone: the number up front, the takeaway right after, no filler. */
-  .key-insights-list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px;}
-  .key-insights-list li{
-    padding:12px 16px; background:var(--paper); border-left:3px solid var(--forest);
-    font-size:14px; line-height:1.5;
-  }
-  .key-insights-list li.concern{border-left-color:var(--gw);}
-
-  table.group-table{width:100%; border-collapse:collapse; font-size:13.5px;}
-  table.group-table th{
-    font-family:var(--mono); font-size:10.5px; letter-spacing:0.05em; text-transform:uppercase; color:var(--ink-soft);
-    text-align:left; padding:8px 10px; border-bottom:1.5px solid var(--ink);
-  }
-  table.group-table td{padding:9px 10px; border-bottom:1px solid var(--line);}
-  table.group-table tr:last-child td{border-bottom:none;}
-  .pass-pill{font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:2px; display:inline-block;}
-  .pass-pill.pass{background:var(--og-tint); color:var(--forest-dark);}
-  .pass-pill.fail{background:var(--gw-tint); color:var(--gw);}
-
-  /* Completed/Pending rosters — one row per person, and a real induction can run into the
-     hundreds, so collapsed-by-default with an explicit count is the only thing that scales on
-     screen (and stays collapsed in print — see the @media print rule above). */
-  .roster-details{margin-top:4px;}
-  .roster-details summary{
-    font-family:var(--body); font-weight:600; font-size:14px; cursor:pointer;
-    color:var(--forest-dark); list-style:none; display:inline-flex; align-items:center; gap:6px;
-  }
-  .roster-details summary::-webkit-details-marker{display:none;}
-  .roster-details summary::before{content:'▸'; font-size:11px;}
-  .roster-details[open] summary::before{content:'▾';}
-  .roster-details summary:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
-  .roster-details > div{margin-top:14px;}
-
   .print-row{display:flex; justify-content:flex-end; gap:12px; margin-top:8px; flex-wrap:wrap;}
 
   .filter-row{display:flex; gap:16px; flex-wrap:wrap;}
   .filter-field{display:flex; flex-direction:column; gap:6px; min-width:180px; flex:1;}
-  /* Native date inputs don't stretch gracefully — filling the flex row's leftover space (like
-     the <select> fields do) just leaves visible dead space around the small date control. Cap
-     their growth instead of letting them inherit .filter-field's flex:1. */
-  .filter-field-date{flex:0 1 170px; min-width:150px;}
   .filter-field span{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft);}
-  #trendChart{position:relative;}
-  .trend-svg{width:100%; height:220px; display:block; cursor:crosshair;}
-  .trend-tooltip{
-    position:absolute; top:4px; transform:translateX(-50%);
-    background:var(--ink); color:var(--paper); font-family:var(--mono); font-size:11px;
-    padding:4px 8px; border-radius:var(--radius); white-space:nowrap; pointer-events:none;
-  }
 
   .filter-field select, .filter-field input[type=date]{
     font-family:var(--body); font-size:14px; padding:9px 12px; border:1.5px solid var(--line);
@@ -373,61 +230,6 @@
     outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);
   }
 
-  @media (max-width:640px){
-    .stream-bar-row{grid-template-columns:100px 1fr 46px;}
-    .missed-row{grid-template-columns:18px 1fr 60px;}
-    .missed-bar-track{display:none;}
-    table.group-table{font-size:12px;}
-  }
-
-  /* The client-facing PDF ("Print / Save as PDF") is this same Reports screen printed, not a
-     separate template — but it must never look like a screenshot of an internal admin tool.
-     Anything interactive/admin-only (buttons, nav tabs, filter controls, the ⚙ bar) is hidden;
-     every actual data element (KPIs, charts, tables) stays exactly as on screen. */
-  @media print{
-    /* Chrome/Edge reserve a margin band to print their OWN header/footer (page title, the
-       file:// URL, date/time, page number) — a browser default, not this page's doing, but it's
-       exactly the kind of thing that makes a printed report look like a raw file instead of a
-       deliverable. Zeroing the @page margin removes the space those get printed into (Chromium
-       skips them when there's no margin to put them in); .wrap's own padding below restores a
-       normal-looking page margin under our control instead. */
-    @page{ margin:0; }
-    .wrap{ padding:0.6in 0.7in !important; }
-
-    /* Browsers drop background colors/images by default when printing, to save ink — this page
-       actually carries real information in backgrounds (the stream accuracy bars, the missed-
-       items bars, KPI tiles, pass/fail pills, the Key Insights accent), not just decoration, so
-       stripping them would silently lose data from the delivered report, not just look plainer.
-       Forces the browser to print exactly what's on screen instead. */
-    *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
-
-    /* header.top (the generic app title/eyebrow/sub) and #programSelectorRow (the induction
-       <select> plus its "Viewing: X" badge) are hidden wholesale rather than picked apart child
-       by child — .print-header below covers the same ground (induction name + description +
-       building/period) once, prominently, as an actual document title instead of leaving the
-       generic app chrome duplicating it above. Same reasoning for #filterBlock: once it's
-       filtered, "Focused on: ..." wasn't going to survive alongside the print-header's own
-       building/period line either — hiding the whole block avoids the alternative of an empty
-       bordered box left behind once its h3/description/controls are stripped out of it. */
-    .upload-zone, .print-row, header.top, #programSelectorRow, #filterBlock{display:none !important;}
-    .corner-settings, .admin-tabs, .report-header-row .btn, #demoQrBlock{display:none !important;}
-    /* Completed/Pending print exactly as collapsed as they are on screen (never force-expand a
-       roster of what could be hundreds of names into the delivered document) — see
-       .roster-details below, used by both. */
-    .roster-details > div{display:none !important;}
-    body{background:#fff;}
-    .report-block, .kpi-tile{break-inside:avoid;}
-
-    .print-header{
-      display:block; margin-bottom:28px; padding-bottom:18px; border-bottom:2px solid var(--ink);
-    }
-    .print-header-induction{font-family:var(--display); text-transform:uppercase; font-size:26px;}
-    .print-header-desc{color:var(--ink-soft); font-size:13.5px; margin:6px 0 0; max-width:640px;}
-    .print-header-meta{
-      font-family:var(--mono); font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;
-      color:var(--ink-soft); margin:12px 0 0;
-    }
-  }
   /* .tab-btn is a <button> everywhere else in this app — here in the settings sidebar it's a
      real <a> (this page is a real separate page now, not a JS-toggled tab), which needs the
      underline reset a <button> never did. */
