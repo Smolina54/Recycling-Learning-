@@ -45,7 +45,7 @@ async function makeClient(name, email, password) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
   const db = getFirestore(app);
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
-  const functions = getFunctions(app);
+  const functions = getFunctions(app, 'australia-southeast2');
   connectFunctionsEmulator(functions, '127.0.0.1', FUNCTIONS_PORT);
   if (email) {
     try {

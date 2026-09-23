@@ -516,7 +516,7 @@ try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
   auth = getAuth(firebaseApp);
-  functions = getFunctions(firebaseApp);
+  functions = getFunctions(firebaseApp, 'australia-southeast2');
   if (RECAPTCHA_SITE_KEY && !isEmulatorMode && window.location.protocol !== 'file:'){
     initializeAppCheck(firebaseApp, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
   }

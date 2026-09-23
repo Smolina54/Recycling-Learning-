@@ -791,7 +791,7 @@ let db = null, functionsInstance = null;
 try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
-  functionsInstance = getFunctions(firebaseApp);
+  functionsInstance = getFunctions(firebaseApp, 'australia-southeast2');
   const isEmulatorMode = new URLSearchParams(window.location.search).get('emulator') === '1';
   // App Check's reCAPTCHA Enterprise call needs a real round-trip to Google's servers from
   // one of the key's registered domains (the real esg-1-98f35.web.app/.firebaseapp.com) — it

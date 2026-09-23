@@ -70,7 +70,7 @@ async function callSendMyResultEmail(functions, payload) {
 
 async function main() {
   const app = initializeApp(firebaseConfig);
-  const functions = getFunctions(app);
+  const functions = getFunctions(app, 'australia-southeast2');
   connectFunctionsEmulator(functions, '127.0.0.1', FUNCTIONS_PORT);
 
   const missingIdResult = await callSendMyResultEmail(functions, { confirmedEmail: 'a@example.com' });

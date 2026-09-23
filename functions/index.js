@@ -10,10 +10,41 @@
 // a shared mailbox, authenticating with their own credentials but sending as the shared address —
 // not needed today (both are the same mailbox) but costs nothing to keep separate.
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { setGlobalOptions } = require('firebase-functions/v2');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const nodemailer = require('nodemailer');
+const path = require('path');
 const { catalog } = require('./catalog');
+
+// Co-located with Firestore, which already lives in australia-southeast2 (Melbourne) — moved
+// here from the platform's us-central1 default on 2026-09-23 for data residency (Tradeflex is
+// an Australian company) and to avoid every Firestore call in these functions hopping across
+// the Pacific. Every getFunctions(firebaseApp, ...) call site in outputs/*.html must pass this
+// same region string or client calls will try to reach the old (deleted) us-central1 endpoint.
+setGlobalOptions({ region: 'australia-southeast2' });
+
+// Logos for the branded result email, embedded as CID attachments (not a remote <img src=...>)
+// so they don't depend on an external server being reachable and render without the "click to
+// download images" prompt in most clients. Copied from outputs/branding/ — that folder isn't
+// part of the Cloud Functions deployment package, so these need their own copy here, same
+// reasoning as catalog.js being a synced copy rather than a shared import.
+const TRADEFLEX_LOGO_CID = 'tradeflex-logo';
+const FUTUREGREEN_LOGO_CID = 'futuregreen-logo';
+const RESULT_EMAIL_LOGO_ATTACHMENTS = [
+  {
+    filename: 'tradeflex-logo.png',
+    path: path.join(__dirname, 'branding', 'tradeflex-logo-white.png'),
+    cid: TRADEFLEX_LOGO_CID,
+    contentDisposition: 'inline',
+  },
+  {
+    filename: 'futuregreen-logo.png',
+    path: path.join(__dirname, 'branding', 'futuregreen-logo-white.png'),
+    cid: FUTUREGREEN_LOGO_CID,
+    contentDisposition: 'inline',
+  },
+];
 
 admin.initializeApp();
 
@@ -115,10 +146,10 @@ function buildTransporter() {
   });
 }
 
-async function sendViaSmtp({ to, subject, text, html }) {
+async function sendViaSmtp({ to, subject, text, html, attachments }) {
   const transporter = buildTransporter();
   try {
-    await transporter.sendMail({ from: SMTP_SENDER_MAILBOX.value(), to, subject, text, html });
+    await transporter.sendMail({ from: SMTP_SENDER_MAILBOX.value(), to, subject, text, html, attachments });
   } catch (err) {
     console.error('SMTP send failed:', err && err.message);
     throw new HttpsError('internal', 'The mail server rejected the send.');
@@ -181,14 +212,37 @@ function buildResultEmailContent(data) {
     .map(([id]) => catalog[id])
     .filter(Boolean);
 
+  // border-top on each row after the first — same technique as the footer's divider above
+  // "Tradeflex · Integrated facilities services" below, which rendered correctly as a thin line
+  // in a real send (2026-09-23). A separate 1px-tall spacer <tr> was tried instead and rendered
+  // as a tall solid block in the recipient's real client — border-top is the one that actually
+  // works here, so this sticks with it rather than the fancier-looking alternative.
   const streamHtml = streamRows
-    .map((s) => `<tr><td style="padding:6px 0;">${esc(s.name)}</td><td style="padding:6px 0; text-align:right;">${s.pct}%</td></tr>`)
-    .join('');
+    .map((s, i) => `
+      <tr>
+        <td style="padding:10px 0; font-size:14px; color:#1E2A22;${i > 0 ? ' border-top:1px solid #DEDACB;' : ''}">${esc(s.name)}</td>
+        <td style="padding:10px 0; font-size:14px; font-weight:bold; color:#2F6F4E; text-align:right;${i > 0 ? ' border-top:1px solid #DEDACB;' : ''}">${s.pct}%</td>
+      </tr>
+    `).join('');
   const streamText = streamRows.map((s) => `${s.name}: ${s.pct}%`).join('\n');
 
+  // No card background — just a green rule on the left of each item, sitting directly on the
+  // cream card behind it (a solid white box per item read as too stark). Each item is its own
+  // row in ONE outer table, with the gap between items as padding-bottom on the wrapping <td>
+  // rather than margin-bottom on each item's own inner table — Outlook ignores margin on tables
+  // (confirmed via a real send, 2026-09-23: items rendered with no gap and one continuous left
+  // border instead of one per item), but padding on a <td> is well supported.
   const missedHtml = missed.length
-    ? missed.map((it) => `<li style="margin-bottom:10px;"><strong>${esc(it.name)}</strong> — ${esc(it.explain)}</li>`).join('')
-    : '<li>Nothing missed — every item was sorted correctly.</li>';
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">${
+        missed.map((it, i) => `
+          <tr><td style="border-left:3px solid #2F6F4E; padding-left:16px;">
+            <p style="margin:0 0 4px; font-size:14px; font-weight:bold; color:#1E2A22;">${esc(it.name)}</p>
+            <p style="margin:0; font-size:13px; color:#4A5850; line-height:1.4;">${esc(it.explain)}</p>
+          </td></tr>
+          ${i < missed.length - 1 ? '<tr><td style="height:14px; line-height:14px; font-size:0;">&nbsp;</td></tr>' : ''}
+        `).join('')
+      }</table>`
+    : '<p style="margin:0; font-size:14px; color:#4A5850;">Nothing missed — every item was sorted correctly.</p>';
   const missedText = missed.length
     ? missed.map((it) => `- ${it.name}: ${it.explain}`).join('\n')
     : 'Nothing missed - every item was sorted correctly.';
@@ -196,18 +250,52 @@ function buildResultEmailContent(data) {
   const buildingLine = data.buildingName ? ` at ${esc(data.buildingName)}` : '';
   const buildingLineText = data.buildingName ? ` at ${data.buildingName}` : '';
 
+  // Table-based layout with inline styles AND matching bgcolor attributes throughout (no
+  // flexbox/grid, no outer <div> background) — Outlook's Word-based renderer ignores a plain
+  // <div style="background:...">, and (confirmed via a real send, 2026-09-23) doesn't reliably
+  // size an empty width:1px <td> either, so both the page background and the logo divider need
+  // the more old-fashioned, more compatible approach below. The two logos are referenced via
+  // cid: (see RESULT_EMAIL_LOGO_ATTACHMENTS) rather than a remote <img src>, so they don't
+  // depend on an external server being reachable when the recipient opens this. Colors/type
+  // scale reuse this app's own tokens (recycling-training.html :root) rather than inventing new
+  // ones — the card itself uses --paper (cream), not white, to match the rest of the app never
+  // using pure white as a primary surface.
   const html = `
-    <div style="font-family:Arial,Helvetica,sans-serif; color:#1E2A22; max-width:560px;">
-      <p>Hi ${esc(name)},</p>
-      <p>Thanks for completing the Recycling Sorting induction${buildingLine}.</p>
-      <h2 style="margin:20px 0 4px;">${score}%</h2>
-      <p style="margin:0 0 20px; font-weight:bold;">${esc(verdict)}</p>
-      <h3 style="margin-bottom:6px;">Accuracy by stream</h3>
-      <table style="width:100%; border-collapse:collapse;">${streamHtml}</table>
-      <h3 style="margin:20px 0 6px;">Items to review</h3>
-      <ul style="padding-left:18px; margin:0;">${missedHtml}</ul>
-      <p style="margin-top:24px;">Thanks again for taking the time to complete this induction.</p>
-    </div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#F7F5EE" style="background:#F7F5EE; font-family:'Helvetica Neue',Arial,sans-serif;">
+      <tr><td align="center" style="padding:24px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#EEEBE1" style="max-width:560px; background:#EEEBE1; border-collapse:collapse;">
+          <tr>
+            <td bgcolor="#1F4A34" style="background:#1F4A34; padding:26px 32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+                <td style="padding-right:20px;"><img src="cid:${TRADEFLEX_LOGO_CID}" width="122" height="40" alt="Tradeflex" style="display:block; border:0;"></td>
+                <td><img src="cid:${FUTUREGREEN_LOGO_CID}" width="134" height="40" alt="FutureGreen - Tradeflex Sustainability Program" style="display:block; border:0;"></td>
+              </tr></table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 8px; font-size:15px; letter-spacing:0.4px; text-transform:uppercase; color:#2F6F4E; font-weight:bold;">Recycling Training &middot; Your Results</p>
+              <p style="margin:0 0 20px; font-size:15px; color:#1E2A22;">Hi ${esc(name)},</p>
+              <p style="margin:0 0 26px; font-size:15px; color:#1E2A22; line-height:1.5;">Thanks for completing the Recycling Sorting induction${buildingLine}.</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                <tr><td style="font-size:44px; font-weight:bold; color:#2F6F4E; line-height:1;">${score}%</td></tr>
+                <tr><td style="font-size:14px; font-weight:bold; color:#1E2A22; padding-top:6px;">${esc(verdict)}</td></tr>
+              </table>
+              <p style="margin:0 0 10px; font-size:13px; font-weight:bold; text-transform:uppercase; letter-spacing:0.6px; color:#1E2A22;">Accuracy by stream</p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px; border-collapse:collapse;">${streamHtml}</table>
+              <p style="margin:0 0 12px; font-size:13px; font-weight:bold; text-transform:uppercase; letter-spacing:0.6px; color:#1E2A22;">Items to review</p>
+              ${missedHtml}
+              <p style="margin:26px 0 0; font-size:14px; color:#4A5850; line-height:1.5;">Thanks again for taking the time to complete this induction.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 32px; border-top:1px solid #DEDACB;">
+              <p style="margin:0; font-size:11px; color:#4A5850;">Tradeflex &middot; Integrated facilities services</p>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
   `;
   const text = [
     `Hi ${name},`,
@@ -269,7 +357,13 @@ exports.sendMyResultEmail = onCall(
 
     const { html, text } = buildResultEmailContent(data);
     try {
-      await sendViaSmtp({ to: confirmedEmail, subject: 'Your Recycling Sorting results', text, html });
+      await sendViaSmtp({
+        to: confirmedEmail,
+        subject: 'Your Recycling Sorting results',
+        text,
+        html,
+        attachments: RESULT_EMAIL_LOGO_ATTACHMENTS,
+      });
     } catch (err) {
       // The increment above commits before the SMTP call is even attempted, so a transient
       // failure (a mail-server blip, not the trainee's fault) would otherwise permanently burn

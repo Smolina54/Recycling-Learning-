@@ -2953,7 +2953,7 @@ try {
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
   auth = getAuth(firebaseApp);
-  functions = getFunctions(firebaseApp);
+  functions = getFunctions(firebaseApp, 'australia-southeast2');
   // Same reasoning as recycling-training.html: App Check's reCAPTCHA Enterprise call needs a
   // real round-trip from one of the key's registered domains, which file:// (what every
   // automated test loads, with or without ?emulator=1 — e.g. report-ui.test.js never sets it)
