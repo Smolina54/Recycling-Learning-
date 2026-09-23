@@ -217,11 +217,18 @@ function buildResultEmailContent(data) {
   // in a real send (2026-09-23). A separate 1px-tall spacer <tr> was tried instead and rendered
   // as a tall solid block in the recipient's real client — border-top is the one that actually
   // works here, so this sticks with it rather than the fancier-looking alternative.
+  //
+  // Every bit of text sitting bare inside a <td> (no enclosing <p>) gets auto-wrapped by
+  // Outlook desktop's own Word rendering engine into a <p class=MsoNormal> carrying WORD'S
+  // default paragraph spacing (a real ~21pt/28px bottom margin nobody asked for) — confirmed by
+  // reading the actual .htm Outlook saved after a real send (2026-09-23). The "Items to review"
+  // cards below never had this problem because they already wrap their text in an explicit
+  // <p style="margin:...">; every <td> here now does the same, with margin explicitly zeroed.
   const streamHtml = streamRows
     .map((s, i) => `
       <tr>
-        <td style="padding:10px 0; font-size:14px; color:#1E2A22;${i > 0 ? ' border-top:1px solid #DEDACB;' : ''}">${esc(s.name)}</td>
-        <td style="padding:10px 0; font-size:14px; font-weight:bold; color:#2F6F4E; text-align:right;${i > 0 ? ' border-top:1px solid #DEDACB;' : ''}">${s.pct}%</td>
+        <td style="padding:10px 0; font-size:14px; color:#1E2A22;${i > 0 ? ' border-top:1px solid #DEDACB;' : ''}"><p style="margin:0;">${esc(s.name)}</p></td>
+        <td style="padding:10px 0; font-size:14px; font-weight:bold; color:#2F6F4E; text-align:right;${i > 0 ? ' border-top:1px solid #DEDACB;' : ''}"><p style="margin:0;">${s.pct}%</p></td>
       </tr>
     `).join('');
   const streamText = streamRows.map((s) => `${s.name}: ${s.pct}%`).join('\n');
@@ -278,8 +285,8 @@ function buildResultEmailContent(data) {
               <p style="margin:0 0 20px; font-size:15px; color:#1E2A22;">Hi ${esc(name)},</p>
               <p style="margin:0 0 26px; font-size:15px; color:#1E2A22; line-height:1.5;">Thanks for completing the Recycling Sorting induction${buildingLine}.</p>
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-                <tr><td style="font-size:44px; font-weight:bold; color:#2F6F4E; line-height:1;">${score}%</td></tr>
-                <tr><td style="font-size:14px; font-weight:bold; color:#1E2A22; padding-top:6px;">${esc(verdict)}</td></tr>
+                <tr><td style="font-size:44px; font-weight:bold; color:#2F6F4E; line-height:1;"><p style="margin:0;">${score}%</p></td></tr>
+                <tr><td style="font-size:14px; font-weight:bold; color:#1E2A22; padding-top:6px;"><p style="margin:0;">${esc(verdict)}</p></td></tr>
               </table>
               <p style="margin:0 0 10px; font-size:13px; font-weight:bold; text-transform:uppercase; letter-spacing:0.6px; color:#1E2A22;">Accuracy by stream</p>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px; border-collapse:collapse;">${streamHtml}</table>
