@@ -68,7 +68,12 @@ async function callSendInductionEmail(functions, payload) {
   }
 }
 
-const VALID_PAYLOAD = { to: ['tenant@example.com'], subject: 'Induction link', text: 'Here is your link.' };
+const VALID_PAYLOAD = {
+  to: ['tenant@example.com'],
+  buildingName: 'Test Tower',
+  programName: 'Recycling Sorting',
+  link: 'https://esg-1-98f35.web.app/recycling-training.html?l=abc123',
+};
 
 // Seeds an emailRateLimits/{email} counter directly, bypassing firestore.rules (which deny
 // this collection to every client, admins included) — the only way to put an admin "already
@@ -100,22 +105,22 @@ async function main() {
 
   const otherAdmin = await makeClient('otherAdmin', OTHER_ADMIN_EMAIL, PASSWORD);
 
-  const emptyToResult = await callSendInductionEmail(otherAdmin.functions, { to: [], subject: 'x', text: 'y' });
+  const emptyToResult = await callSendInductionEmail(otherAdmin.functions, { ...VALID_PAYLOAD, to: [] });
   check('empty recipient list is rejected', !emptyToResult.ok && emptyToResult.code === 'functions/invalid-argument', JSON.stringify(emptyToResult));
 
   const tooManyResult = await callSendInductionEmail(otherAdmin.functions, {
-    to: Array.from({ length: 21 }, (_, i) => `person${i}@example.com`), subject: 'x', text: 'y',
+    ...VALID_PAYLOAD, to: Array.from({ length: 21 }, (_, i) => `person${i}@example.com`),
   });
   check('21 recipients (over the cap of 20) is rejected', !tooManyResult.ok && tooManyResult.code === 'functions/invalid-argument', JSON.stringify(tooManyResult));
 
-  const badEmailResult = await callSendInductionEmail(otherAdmin.functions, { to: ['not-an-email'], subject: 'x', text: 'y' });
+  const badEmailResult = await callSendInductionEmail(otherAdmin.functions, { ...VALID_PAYLOAD, to: ['not-an-email'] });
   check('malformed recipient address is rejected', !badEmailResult.ok && badEmailResult.code === 'functions/invalid-argument', JSON.stringify(badEmailResult));
 
-  const missingSubjectResult = await callSendInductionEmail(otherAdmin.functions, { to: ['ok@example.com'], subject: '', text: 'y' });
-  check('missing subject is rejected', !missingSubjectResult.ok && missingSubjectResult.code === 'functions/invalid-argument', JSON.stringify(missingSubjectResult));
+  const missingBuildingNameResult = await callSendInductionEmail(otherAdmin.functions, { ...VALID_PAYLOAD, buildingName: '' });
+  check('missing building name is rejected', !missingBuildingNameResult.ok && missingBuildingNameResult.code === 'functions/invalid-argument', JSON.stringify(missingBuildingNameResult));
 
-  const missingTextResult = await callSendInductionEmail(otherAdmin.functions, { to: ['ok@example.com'], subject: 'x', text: '' });
-  check('missing body text is rejected', !missingTextResult.ok && missingTextResult.code === 'functions/invalid-argument', JSON.stringify(missingTextResult));
+  const missingLinkResult = await callSendInductionEmail(otherAdmin.functions, { ...VALID_PAYLOAD, link: '' });
+  check('missing link is rejected', !missingLinkResult.ok && missingLinkResult.code === 'functions/invalid-argument', JSON.stringify(missingLinkResult));
 
   // ---- Rate limit ----
   // A fresh admin (not otherAdmin above, to keep this counter isolated from the calls those

@@ -2953,7 +2953,7 @@ function renderDistributionLinksHtml(b){
           <li data-link-id="${esc(l.id)}">
             <span class="tenant-name">${scopeText} - <span class="block-sub">${expiryText}</span></span>
             <button class="btn secondary copy-link-btn" data-link="${linkUrl}">Copy link →</button>
-            ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-subject="${esc(`${currentProgram.name} - ${b.name}`)}" data-body="${esc(`Hi,\n\nHere's the induction link for ${b.name}:\n${linkUrl}\n\nThanks.`)}">Send via email →</button>
+            ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-building-name="${esc(b.name)}" data-program-name="${esc(currentProgram.name)}" data-link="${esc(linkUrl)}">Send via email →</button>
             <button class="btn secondary copy-link-btn" data-link="${esc(contactEmails.join('; '))}">Copy addresses →</button>` : ''}
             <button class="btn secondary revoke-link-btn danger-btn">Revoke</button>
           </li>`;
@@ -3123,7 +3123,12 @@ document.addEventListener('click', async (e) => {
     try {
       const to = sendEmailBtn.dataset.emails.split(';').filter(Boolean);
       const sendInductionEmail = httpsCallable(functions, 'sendInductionEmail');
-      await sendInductionEmail({ to, subject: sendEmailBtn.dataset.subject, text: sendEmailBtn.dataset.body });
+      await sendInductionEmail({
+        to,
+        buildingName: sendEmailBtn.dataset.buildingName,
+        programName: sendEmailBtn.dataset.programName,
+        link: sendEmailBtn.dataset.link,
+      });
       sendEmailBtn.textContent = 'Sent ✓';
       setTimeout(() => { sendEmailBtn.textContent = original; sendEmailBtn.disabled = false; }, 2500);
     } catch (err){

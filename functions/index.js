@@ -24,14 +24,15 @@ const { catalog } = require('./catalog');
 // same region string or client calls will try to reach the old (deleted) us-central1 endpoint.
 setGlobalOptions({ region: 'australia-southeast2' });
 
-// Logos for the branded result email, embedded as CID attachments (not a remote <img src=...>)
-// so they don't depend on an external server being reachable and render without the "click to
-// download images" prompt in most clients. Copied from outputs/branding/ — that folder isn't
-// part of the Cloud Functions deployment package, so these need their own copy here, same
-// reasoning as catalog.js being a synced copy rather than a shared import.
+// Logos shared by both branded emails (the induction link and the trainee result), embedded as
+// CID attachments (not a remote <img src=...>) so they don't depend on an external server being
+// reachable and render without the "click to download images" prompt in most clients. Copied
+// from outputs/branding/ — that folder isn't part of the Cloud Functions deployment package, so
+// these need their own copy here, same reasoning as catalog.js being a synced copy rather than a
+// shared import.
 const TRADEFLEX_LOGO_CID = 'tradeflex-logo';
 const FUTUREGREEN_LOGO_CID = 'futuregreen-logo';
-const RESULT_EMAIL_LOGO_ATTACHMENTS = [
+const EMAIL_LOGO_ATTACHMENTS = [
   {
     filename: 'tradeflex-logo.png',
     path: path.join(__dirname, 'branding', 'tradeflex-logo-white.png'),
@@ -58,8 +59,8 @@ const SMTP_SENDER_MAILBOX = defineSecret('SMTP_SENDER_MAILBOX');
 const OWNER_EMAIL = 'esgtradeflex@gmail.com';
 
 const MAX_RECIPIENTS = 20;
-const MAX_SUBJECT_LENGTH = 300;
-const MAX_TEXT_LENGTH = 20000;
+const MAX_NAME_LENGTH = 300;
+const MAX_LINK_LENGTH = 500;
 
 // Per-admin rate limit: the auth check above stops an anonymous caller, but not a compromised/
 // careless admin account or a runaway client-side retry loop from blasting real emails through
@@ -83,24 +84,32 @@ async function assertIsAdmin(auth) {
   if (!adminDoc.exists) throw new HttpsError('permission-denied', 'Not an admin.');
 }
 
+// The client used to pre-render its own subject/text and just hand them over — now it sends the
+// raw building/program name and link instead, and the server builds the actual branded email
+// content (buildInductionEmailContent below), same reasoning as sendMyResultEmail building its
+// own content server-side: one place owns the design instead of duplicating a template in
+// client-side JS. buildingName/programName/link are all values this app itself generated
+// (a building name typed once into admin-buildings.html, a program name from the programs
+// catalog, an internally-built ?l=/?b= URL) — not arbitrary free text from an anonymous caller —
+// but still bounded defensively, same as everywhere else in this file.
 function validatePayload(data) {
-  const { to, subject, text } = data || {};
+  const { to, buildingName, programName, link } = data || {};
   if (!Array.isArray(to) || to.length === 0 || to.length > MAX_RECIPIENTS) {
     throw new HttpsError('invalid-argument', `Provide 1-${MAX_RECIPIENTS} recipient addresses.`);
   }
   if (!to.every(isValidEmail)) {
     throw new HttpsError('invalid-argument', 'One or more recipient addresses are invalid.');
   }
-  if (!subject || !text) {
-    throw new HttpsError('invalid-argument', 'A subject and message body are required.');
+  if (!buildingName || !programName || !link) {
+    throw new HttpsError('invalid-argument', 'A building name, program name, and link are required.');
   }
-  if (String(subject).length > MAX_SUBJECT_LENGTH) {
-    throw new HttpsError('invalid-argument', `Subject must be ${MAX_SUBJECT_LENGTH} characters or fewer.`);
+  if (String(buildingName).length > MAX_NAME_LENGTH || String(programName).length > MAX_NAME_LENGTH) {
+    throw new HttpsError('invalid-argument', `Building/program name must be ${MAX_NAME_LENGTH} characters or fewer.`);
   }
-  if (String(text).length > MAX_TEXT_LENGTH) {
-    throw new HttpsError('invalid-argument', `Message body must be ${MAX_TEXT_LENGTH} characters or fewer.`);
+  if (String(link).length > MAX_LINK_LENGTH) {
+    throw new HttpsError('invalid-argument', `Link must be ${MAX_LINK_LENGTH} characters or fewer.`);
   }
-  return { to, subject, text };
+  return { to, buildingName, programName, link };
 }
 
 // Fixed-window counter, one doc per admin email — a Firestore transaction so two
@@ -156,13 +165,64 @@ async function sendViaSmtp({ to, subject, text, html, attachments }) {
   }
 }
 
+// Builds the branded induction-link email. Reframed from a bare link relay ("Here's the
+// induction link for X") into a formal notice explaining WHY the recipient is getting this at
+// all — confirmed with the user via a real mockup before implementing, iterated a few times:
+// the building name belongs in the black headline, not the green eyebrow line (which is just the
+// program name); no QR code (a QR code bridges a PHYSICAL medium to a digital one — inside an
+// email already open on a screen, the recipient already has a directly clickable link, so a QR
+// code here would only add clutter, not help — the separate printable-flyer backlog item is the
+// right place for one). Shares the exact same branded scaffold (and every Outlook-compatibility
+// lesson learned building buildResultEmailContent) as the trainee result email below.
+function buildInductionEmailContent({ buildingName, programName, link }) {
+  const subject = `Complete your ${programName} induction — ${buildingName}`;
+  const html = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#F7F5EE" style="background:#F7F5EE; font-family:'Helvetica Neue',Arial,sans-serif;">
+      <tr><td align="center" style="padding:24px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#EEEBE1" style="max-width:560px; background:#EEEBE1; border-collapse:collapse;">
+          <tr>
+            <td bgcolor="#1F4A34" style="background:#1F4A34; padding:26px 32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+                <td style="padding-right:20px;"><img src="cid:${TRADEFLEX_LOGO_CID}" width="122" height="40" alt="Tradeflex" style="display:block; border:0;"></td>
+                <td><img src="cid:${FUTUREGREEN_LOGO_CID}" width="134" height="40" alt="FutureGreen - Tradeflex Sustainability Program" style="display:block; border:0;"></td>
+              </tr></table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 8px; font-size:15px; letter-spacing:0.4px; text-transform:uppercase; color:#2F6F4E; font-weight:bold;">${esc(programName)}</p>
+              <p style="margin:0 0 16px; font-size:20px; font-weight:bold; color:#1E2A22;">${esc(buildingName)} requires you to complete this induction</p>
+              <p style="margin:0 0 24px; font-size:15px; color:#1E2A22; line-height:1.5;">This is a required part of ${esc(buildingName)}'s waste management program.</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:20px;">
+                <tr><td bgcolor="#2F6F4E" style="background:#2F6F4E; border-radius:6px; padding:0;">
+                  <a href="${esc(link)}" style="display:inline-block; padding:12px 24px; font-size:14px; font-weight:bold; color:#FFFFFF; text-decoration:none;">Start the induction &rarr;</a>
+                </td></tr>
+              </table>
+              <p style="margin:0 0 24px; font-size:12px; color:#4A5850; word-break:break-all;">Or copy this link: ${esc(link)}</p>
+              <p style="margin:0; font-size:15px; color:#1E2A22; line-height:1.5;">Thanks for helping keep ${esc(buildingName)} sorting waste correctly.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 32px; border-top:1px solid #DEDACB;">
+              <p style="margin:0; font-size:11px; color:#4A5850;">Tradeflex &middot; Integrated facilities services</p>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+  `;
+  const text = `${buildingName} requires you to complete this induction.\n\nThis is a required part of ${buildingName}'s waste management program.\n\nStart here: ${link}\n\nThanks for helping keep ${buildingName} sorting waste correctly.`;
+  return { subject, html, text };
+}
+
 exports.sendInductionEmail = onCall(
   { secrets: [SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER_MAILBOX] },
   async (request) => {
     await assertIsAdmin(request.auth);
     const payload = validatePayload(request.data);
     await checkRateLimit(request.auth.token.email);
-    await sendViaSmtp(payload);
+    const { subject, html, text } = buildInductionEmailContent(payload);
+    await sendViaSmtp({ to: payload.to, subject, html, text, attachments: EMAIL_LOGO_ATTACHMENTS });
     return { ok: true };
   }
 );
@@ -262,7 +322,7 @@ function buildResultEmailContent(data) {
   // <div style="background:...">, and (confirmed via a real send, 2026-09-23) doesn't reliably
   // size an empty width:1px <td> either, so both the page background and the logo divider need
   // the more old-fashioned, more compatible approach below. The two logos are referenced via
-  // cid: (see RESULT_EMAIL_LOGO_ATTACHMENTS) rather than a remote <img src>, so they don't
+  // cid: (see EMAIL_LOGO_ATTACHMENTS) rather than a remote <img src>, so they don't
   // depend on an external server being reachable when the recipient opens this. Colors/type
   // scale reuse this app's own tokens (recycling-training.html :root) rather than inventing new
   // ones — the card itself uses --paper (cream), not white, to match the rest of the app never
@@ -369,7 +429,7 @@ exports.sendMyResultEmail = onCall(
         subject: 'Your Recycling Sorting results',
         text,
         html,
-        attachments: RESULT_EMAIL_LOGO_ATTACHMENTS,
+        attachments: EMAIL_LOGO_ATTACHMENTS,
       });
     } catch (err) {
       // The increment above commits before the SMTP call is even attempted, so a transient
