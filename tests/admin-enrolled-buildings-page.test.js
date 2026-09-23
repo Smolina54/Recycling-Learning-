@@ -180,14 +180,22 @@ async function runFlow(page){
     buildingName
   );
 
-  // window.confirm/alert's native dialogs would otherwise fight the generic "unexpected dialog"
-  // handler above — overridden in-page, recording every call (several checks below need to
-  // verify not just that a confirmation happened, but what it said and exactly when).
+  // Workstream 11 replaced window.alert()/window.confirm() with a real in-page modal
+  // (#appModalOverlay) — there's no native dialog to stub anymore. Instead, auto-respond to the
+  // custom modal the same way the old stub did (always "confirm"/"OK"), recording every message
+  // into __confirmCalls/__alertCalls (several checks below need to verify not just that a
+  // confirmation happened, but what it said and exactly when).
   await page.evaluate(() => {
     window.__confirmCalls = [];
-    window.confirm = (msg) => { window.__confirmCalls.push(msg); return true; };
     window.__alertCalls = [];
-    window.alert = (msg) => { window.__alertCalls.push(msg); };
+    const overlay = document.getElementById('appModalOverlay');
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('open')) return;
+      const message = document.getElementById('appModalMessage').textContent;
+      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
+      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); }
+      else { window.__confirmCalls.push(message); buttons[buttons.length - 1].click(); }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
   });
 
   const enrolledSelector = `.enrolled-building-row[data-building-id="${buildingId}"]`;
@@ -462,14 +470,20 @@ async function runFlow(page){
     () => document.getElementById('enrolledBuildingsList')?.textContent.includes('No buildings enrolled'),
     { timeout: 10000 }
   ).catch(() => {});
-  // window.confirm/alert stubs don't survive a fresh page.goto() — this is a genuinely new JS
-  // context, not the same page — so they need reapplying before remove-enrollment-btn (below)
-  // triggers its own confirm() dialog.
+  // The MutationObserver-based modal auto-responder doesn't survive a fresh page.goto() — this
+  // is a genuinely new JS context, not the same page — so it needs reapplying before
+  // remove-enrollment-btn (below) triggers its own showConfirm() modal.
   await page.evaluate(() => {
     window.__confirmCalls = [];
-    window.confirm = (msg) => { window.__confirmCalls.push(msg); return true; };
     window.__alertCalls = [];
-    window.alert = (msg) => { window.__alertCalls.push(msg); };
+    const overlay = document.getElementById('appModalOverlay');
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('open')) return;
+      const message = document.getElementById('appModalMessage').textContent;
+      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
+      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); }
+      else { window.__confirmCalls.push(message); buttons[buttons.length - 1].click(); }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
   });
   check('the recycling-sorting-only building does NOT appear under a fresh Organics Focus',
     !(await page.$(`.enrolled-building-row[data-building-id="${buildingId}"]`)));

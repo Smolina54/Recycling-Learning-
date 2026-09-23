@@ -364,9 +364,31 @@
 
   /* padding-top/bottom only — same reasoning as .quiz-section above (.wrap-shorthand collision). */
   footer{padding-top:30px; padding-bottom:50px; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; color:var(--ink-soft); letter-spacing:0.04em;}
+
+  /* In-app replacement for window.alert()/window.confirm() - see Workstream 11 in the plan.
+     Native alert()/confirm() always prefix "<host> says" and can't be repositioned/restyled by
+     any page CSS/JS; this is a real DOM overlay we fully control, centered on screen. */
+  .app-modal-overlay{
+    display:none; position:fixed; inset:0; background:rgba(30,42,34,0.55); z-index:9999;
+    align-items:center; justify-content:center; padding:20px;
+  }
+  .app-modal-overlay.open{display:flex;}
+  .app-modal-box{
+    background:var(--paper); border-radius:8px; max-width:440px; width:100%;
+    padding:24px 26px; box-shadow:0 12px 40px rgba(0,0,0,0.35);
+  }
+  .app-modal-message{margin:0 0 20px; font-family:var(--body); font-size:15px; color:var(--ink); line-height:1.5; white-space:pre-wrap;}
+  .app-modal-actions{display:flex; justify-content:flex-end; gap:10px;}
 </style>
 </head>
 <body>
+
+<div class="app-modal-overlay" id="appModalOverlay">
+  <div class="app-modal-box">
+    <p class="app-modal-message" id="appModalMessage"></p>
+    <div class="app-modal-actions" id="appModalActions"></div>
+  </div>
+</div>
 
 <div class="preview-banner" id="previewBanner" style="display:none;">Preview mode - nothing you do here is saved.</div>
 
@@ -566,6 +588,48 @@ try {
   }
 } catch (err) {
   console.error('Firebase is not configured yet - the id-gate will show a fallback message until firebaseConfig is filled in.', err);
+}
+
+// ---- In-app replacement for window.alert()/window.confirm() (Workstream 11) ----
+// Both return a Promise, same call shape as the native versions, so every call site just adds
+// `await`. Escape/backdrop-click always resolve as "cancel" (never accidentally proceeds).
+const appModalOverlay = document.getElementById('appModalOverlay');
+const appModalMessage = document.getElementById('appModalMessage');
+const appModalActions = document.getElementById('appModalActions');
+let closeAppModal = null;
+
+function openAppModal(message, buttons){
+  return new Promise(resolve => {
+    appModalMessage.textContent = message;
+    appModalActions.innerHTML = '';
+    closeAppModal = (value) => {
+      appModalOverlay.classList.remove('open');
+      document.removeEventListener('keydown', onModalKeydown);
+      closeAppModal = null;
+      resolve(value);
+    };
+    function onModalKeydown(e){ if (e.key === 'Escape') closeAppModal(buttons.escapeValue); }
+    document.addEventListener('keydown', onModalKeydown);
+    buttons.list.forEach(b => {
+      const btn = document.createElement('button');
+      btn.className = b.className;
+      btn.textContent = b.label;
+      btn.addEventListener('click', () => closeAppModal(b.value));
+      appModalActions.appendChild(btn);
+    });
+    appModalOverlay.classList.add('open');
+  });
+}
+appModalOverlay.addEventListener('click', (e) => { if (e.target === appModalOverlay && closeAppModal) closeAppModal(false); });
+
+function showAlert(message){
+  return openAppModal(message, { escapeValue: undefined, list: [{ label: 'OK', className: 'btn', value: undefined }] });
+}
+function showConfirm(message){
+  return openAppModal(message, { escapeValue: false, list: [
+    { label: 'Cancel', className: 'btn secondary', value: false },
+    { label: 'OK', className: 'btn', value: true },
+  ] });
 }
 
 (function(){
@@ -986,9 +1050,9 @@ try {
   }
 
   let resultsShown = false; // guards against a queued double-click double-submitting results
-  document.getElementById('submitQuizBtn').addEventListener('click', () => {
+  document.getElementById('submitQuizBtn').addEventListener('click', async () => {
     if (Object.keys(answers).length < QUESTIONS.length){
-      alert('Please answer every question before submitting.');
+      await showAlert('Please answer every question before submitting.');
       return;
     }
     if (resultsShown) return;

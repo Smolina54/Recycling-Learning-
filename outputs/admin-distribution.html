@@ -2716,9 +2716,31 @@ var qrcode = function() {
       color:var(--ink-soft); margin:12px 0 0;
     }
   }
+
+  /* In-app replacement for window.alert()/window.confirm() - see Workstream 11 in the plan.
+     Native alert()/confirm() always prefix "<host> says" and can't be repositioned/restyled by
+     any page CSS/JS; this is a real DOM overlay we fully control, centered on screen. */
+  .app-modal-overlay{
+    display:none; position:fixed; inset:0; background:rgba(30,42,34,0.55); z-index:9999;
+    align-items:center; justify-content:center; padding:20px;
+  }
+  .app-modal-overlay.open{display:flex;}
+  .app-modal-box{
+    background:var(--paper); border-radius:8px; max-width:440px; width:100%;
+    padding:24px 26px; box-shadow:0 12px 40px rgba(0,0,0,0.35);
+  }
+  .app-modal-message{margin:0 0 20px; font-family:var(--body); font-size:15px; color:var(--ink); line-height:1.5; white-space:pre-wrap;}
+  .app-modal-actions{display:flex; justify-content:flex-end; gap:10px;}
 </style>
 </head>
 <body>
+
+<div class="app-modal-overlay" id="appModalOverlay">
+  <div class="app-modal-box">
+    <p class="app-modal-message" id="appModalMessage"></p>
+    <div class="app-modal-actions" id="appModalActions"></div>
+  </div>
+</div>
 
 <div class="page-shell" id="pageShell">
 <div class="wrap">
@@ -2832,6 +2854,48 @@ try {
   }
 } catch (err) {
   console.error('Firebase is not configured yet - sign-in and distribution links will stay unavailable until firebaseConfig is filled in.', err);
+}
+
+// ---- In-app replacement for window.alert()/window.confirm() (Workstream 11) ----
+// Both return a Promise, same call shape as the native versions, so every call site just adds
+// `await`. Escape/backdrop-click always resolve as "cancel" (never accidentally proceeds).
+const appModalOverlay = document.getElementById('appModalOverlay');
+const appModalMessage = document.getElementById('appModalMessage');
+const appModalActions = document.getElementById('appModalActions');
+let closeAppModal = null;
+
+function openAppModal(message, buttons){
+  return new Promise(resolve => {
+    appModalMessage.textContent = message;
+    appModalActions.innerHTML = '';
+    closeAppModal = (value) => {
+      appModalOverlay.classList.remove('open');
+      document.removeEventListener('keydown', onModalKeydown);
+      closeAppModal = null;
+      resolve(value);
+    };
+    function onModalKeydown(e){ if (e.key === 'Escape') closeAppModal(buttons.escapeValue); }
+    document.addEventListener('keydown', onModalKeydown);
+    buttons.list.forEach(b => {
+      const btn = document.createElement('button');
+      btn.className = b.className;
+      btn.textContent = b.label;
+      btn.addEventListener('click', () => closeAppModal(b.value));
+      appModalActions.appendChild(btn);
+    });
+    appModalOverlay.classList.add('open');
+  });
+}
+appModalOverlay.addEventListener('click', (e) => { if (e.target === appModalOverlay && closeAppModal) closeAppModal(false); });
+
+function showAlert(message){
+  return openAppModal(message, { escapeValue: undefined, list: [{ label: 'OK', className: 'btn', value: undefined }] });
+}
+function showConfirm(message){
+  return openAppModal(message, { escapeValue: false, list: [
+    { label: 'Cancel', className: 'btn secondary', value: false },
+    { label: 'OK', className: 'btn', value: true },
+  ] });
 }
 
 const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
@@ -3066,7 +3130,7 @@ document.getElementById('distributionList').addEventListener('click', async (e) 
   const revokeLinkBtn = e.target.closest('.revoke-link-btn');
   if (revokeLinkBtn){
     const linkId = revokeLinkBtn.closest('li').dataset.linkId;
-    const confirmed = confirm(
+    const confirmed = await showConfirm(
       `Revoke this link?\n\n` +
       `Anyone holding this exact link loses access right away. This can't be undone on this ` +
       `same link, though you can generate a new one immediately.`
@@ -3077,7 +3141,7 @@ document.getElementById('distributionList').addEventListener('click', async (e) 
       await refreshDistributionView();
     } catch (err){
       console.error('Failed to revoke link:', err);
-      alert('Failed to revoke - check the console for details.');
+      await showAlert('Failed to revoke - check the console for details.');
     }
     return;
   }
@@ -3107,7 +3171,7 @@ document.addEventListener('click', async (e) => {
       setTimeout(() => { copyBtn.textContent = original; }, 1500);
     } catch (err){
       console.error('Clipboard write failed:', err);
-      alert('Could not copy automatically - select and copy the link text manually.');
+      await showAlert('Could not copy automatically - select and copy the link text manually.');
     }
     return;
   }
@@ -3133,7 +3197,7 @@ document.addEventListener('click', async (e) => {
       setTimeout(() => { sendEmailBtn.textContent = original; sendEmailBtn.disabled = false; }, 2500);
     } catch (err){
       console.error('sendInductionEmail failed:', err);
-      alert('Could not send automatically - use "Copy addresses" and send it yourself instead.');
+      await showAlert('Could not send automatically - use "Copy addresses" and send it yourself instead.');
       sendEmailBtn.textContent = original;
       sendEmailBtn.disabled = false;
     }

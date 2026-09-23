@@ -88,9 +88,22 @@ async function runFlow(page){
   const backHref = await page.$eval('.settings-sidebar-exit a', el => el.getAttribute('href')).catch(() => null);
   check('"← Back to reports" points at sorting-station-report.html', backHref === 'sorting-station-report.html?emulator=1', backHref);
 
-  // window.confirm's native dialog would otherwise fight the generic "unexpected dialog"
-  // handler above — same override-in-page pattern already established elsewhere.
-  await page.evaluate(() => { window.confirm = () => true; });
+  // Workstream 11 replaced window.alert()/window.confirm() with a real in-page modal
+  // (#appModalOverlay) — there's no native dialog to stub anymore. Instead, auto-respond to the
+  // custom modal the same way the old stub did (always "confirm"/"OK"), recording each message
+  // into the same __confirmCalls/__alertCalls arrays other assertions in this file may read from.
+  await page.evaluate(() => {
+    window.__confirmCalls = [];
+    window.__alertCalls = [];
+    const overlay = document.getElementById('appModalOverlay');
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('open')) return;
+      const message = document.getElementById('appModalMessage').textContent;
+      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
+      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); }
+      else { window.__confirmCalls.push(message); buttons[buttons.length - 1].click(); }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  });
 
   // --- Register, archive, unarchive — exactly like the old in-page tab used to ---
   const programName = 'Organics Focus ' + Date.now();

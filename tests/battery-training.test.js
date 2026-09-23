@@ -114,16 +114,26 @@ async function runFlow(page, consoleErrors){
   const questionBlocks = await page.$$eval('.quiz-question', els => els.length);
   check('all 5 questions render', questionBlocks === 5, questionBlocks);
 
-  // The page's own window.confirm/alert flow through the harness's blanket page.on('dialog')
-  // handler (dismisses everything) — check the expected alert landed in consoleErrors instead
-  // of racing a second dialog handler against it. The dialog event itself arrives over the
-  // DevTools protocol asynchronously relative to the click resolving, so poll briefly for it
-  // to land instead of guessing a fixed delay.
-  const errorsBeforeSubmitAttempt = consoleErrors.length;
+  // Workstream 11 replaced window.alert() with a real in-page modal (#appModalOverlay) — there's
+  // no native dialog left for the harness's blanket page.on('dialog') handler to catch. Auto-
+  // respond to the custom modal instead, recording each message into __alertCalls, and poll that
+  // array briefly instead of guessing a fixed delay (openAppModal's DOM update is async relative
+  // to the click resolving).
+  await page.evaluate(() => {
+    window.__alertCalls = [];
+    const overlay = document.getElementById('appModalOverlay');
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('open')) return;
+      const message = document.getElementById('appModalMessage').textContent;
+      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
+      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); }
+      else { buttons[buttons.length - 1].click(); }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  });
   await page.click('#submitQuizBtn');
   let alertFired = false;
   for (let i = 0; i < 20 && !alertFired; i++){
-    if (consoleErrors.slice(errorsBeforeSubmitAttempt).some(e => e.includes('answer every question'))) alertFired = true;
+    if ((await page.evaluate(() => window.__alertCalls)).some(e => e.includes('answer every question'))) alertFired = true;
     else await new Promise(r => setTimeout(r, 50));
   }
   check('submitting with no answers is rejected (alert, no results shown)',

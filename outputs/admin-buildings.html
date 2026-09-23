@@ -235,9 +235,31 @@
   .filter-field select:focus-visible, .filter-field input[type=date]:focus-visible{
     outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);
   }
+
+  /* In-app replacement for window.alert()/window.confirm() - see Workstream 11 in the plan.
+     Native alert()/confirm() always prefix "<host> says" and can't be repositioned/restyled by
+     any page CSS/JS; this is a real DOM overlay we fully control, centered on screen. */
+  .app-modal-overlay{
+    display:none; position:fixed; inset:0; background:rgba(30,42,34,0.55); z-index:9999;
+    align-items:center; justify-content:center; padding:20px;
+  }
+  .app-modal-overlay.open{display:flex;}
+  .app-modal-box{
+    background:var(--paper); border-radius:8px; max-width:440px; width:100%;
+    padding:24px 26px; box-shadow:0 12px 40px rgba(0,0,0,0.35);
+  }
+  .app-modal-message{margin:0 0 20px; font-family:var(--body); font-size:15px; color:var(--ink); line-height:1.5; white-space:pre-wrap;}
+  .app-modal-actions{display:flex; justify-content:flex-end; gap:10px;}
 </style>
 </head>
 <body>
+
+<div class="app-modal-overlay" id="appModalOverlay">
+  <div class="app-modal-box">
+    <p class="app-modal-message" id="appModalMessage"></p>
+    <div class="app-modal-actions" id="appModalActions"></div>
+  </div>
+</div>
 
 <div class="page-shell sidebar-mode" id="pageShell">
   <aside class="settings-sidebar" id="settingsSidebar">
@@ -290,22 +312,34 @@
       <h2>Buildings</h2>
     </div>
 
-    <div class="report-block">
-      <h3>Add a building</h3>
-      <div class="filter-row">
-        <label class="filter-field"><span>Building name</span><input type="text" id="newBuildingName" placeholder="e.g. 123 Example Tower"></label>
-      </div>
-      <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
-        <button class="btn" id="addBuildingBtn">+ Add building</button>
-      </div>
-      <p class="block-sub" id="buildingsStatus" style="margin-top:10px;"></p>
+    <div style="display:flex; gap:20px; border-bottom:1.5px solid var(--line); margin-bottom:20px;">
+      <button class="tab-btn active" id="tabActiveBuildingsBtn">Buildings</button>
+      <button class="tab-btn" id="tabArchivedBuildingsBtn">Archived buildings <span id="archivedCountBadge"></span></button>
     </div>
 
-    <div class="filter-row" style="margin-bottom:16px;">
-      <label class="filter-field"><span>Search</span><input type="text" id="buildingSearchInput" placeholder="Search buildings by name…"></label>
+    <div id="activeBuildingsPane">
+      <div class="report-block">
+        <h3>Add a building</h3>
+        <div class="filter-row">
+          <label class="filter-field"><span>Building name</span><input type="text" id="newBuildingName" placeholder="e.g. 123 Example Tower"></label>
+        </div>
+        <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
+          <button class="btn" id="addBuildingBtn">+ Add building</button>
+        </div>
+        <p class="block-sub" id="buildingsStatus" style="margin-top:10px;"></p>
+      </div>
+
+      <div class="filter-row" style="margin-bottom:16px;">
+        <label class="filter-field"><span>Search</span><input type="text" id="buildingSearchInput" placeholder="Search buildings by name…"></label>
+      </div>
+
+      <div id="buildingsList"></div>
     </div>
 
-    <div id="buildingsList"></div>
+    <div id="archivedBuildingsPane" style="display:none;">
+      <p class="block-sub" style="margin-bottom:16px;">Buildings archived from the Buildings tab. Restore one to bring it back, or delete it permanently to erase it - and all of its induction history - for good.</p>
+      <div id="archivedBuildingsList"></div>
+    </div>
   </section>
 </div>
 </div>
@@ -320,7 +354,7 @@ import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
-import { getFunctions, connectFunctionsEmulator } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
+import { getFunctions, connectFunctionsEmulator, httpsCallable } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
 import { read as readWorkbook, utils as xlsxUtils, writeFile as xlsxWriteFile } from "https://cdn.sheetjs.com/xlsx-latest/package/xlsx.mjs";
 
 // ---- Firebase init (deliberately duplicated per-page — see the architecture roadmap plan,
@@ -367,6 +401,48 @@ try {
   }
 } catch (err) {
   console.error('Firebase is not configured yet - sign-in and building management will stay unavailable until firebaseConfig is filled in.', err);
+}
+
+// ---- In-app replacement for window.alert()/window.confirm() (Workstream 11) ----
+// Both return a Promise, same call shape as the native versions, so every call site just adds
+// `await`. Escape/backdrop-click always resolve as "cancel" (never accidentally proceeds).
+const appModalOverlay = document.getElementById('appModalOverlay');
+const appModalMessage = document.getElementById('appModalMessage');
+const appModalActions = document.getElementById('appModalActions');
+let closeAppModal = null;
+
+function openAppModal(message, buttons){
+  return new Promise(resolve => {
+    appModalMessage.textContent = message;
+    appModalActions.innerHTML = '';
+    closeAppModal = (value) => {
+      appModalOverlay.classList.remove('open');
+      document.removeEventListener('keydown', onModalKeydown);
+      closeAppModal = null;
+      resolve(value);
+    };
+    function onModalKeydown(e){ if (e.key === 'Escape') closeAppModal(buttons.escapeValue); }
+    document.addEventListener('keydown', onModalKeydown);
+    buttons.list.forEach(b => {
+      const btn = document.createElement('button');
+      btn.className = b.className;
+      btn.textContent = b.label;
+      btn.addEventListener('click', () => closeAppModal(b.value));
+      appModalActions.appendChild(btn);
+    });
+    appModalOverlay.classList.add('open');
+  });
+}
+appModalOverlay.addEventListener('click', (e) => { if (e.target === appModalOverlay && closeAppModal) closeAppModal(false); });
+
+function showAlert(message){
+  return openAppModal(message, { escapeValue: undefined, list: [{ label: 'OK', className: 'btn', value: undefined }] });
+}
+function showConfirm(message){
+  return openAppModal(message, { escapeValue: false, list: [
+    { label: 'Cancel', className: 'btn secondary', value: false },
+    { label: 'OK', className: 'btn', value: true },
+  ] });
 }
 
 const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
@@ -505,8 +581,17 @@ async function loadAllActiveBuildings(){
   return buildingsSnap.docs.filter(d => d.data().active !== false);
 }
 
+// Unlike loadAllActiveBuildings() above (shared with other pages' "active only" pickers, e.g.
+// admin-enrolled-buildings.html's own copy — must keep excluding archived buildings), this page's
+// OWN building list needs to see archived buildings too, to power the "Archived buildings" tab.
+async function loadAllBuildingsIncludingArchived(){
+  const buildingsSnap = await getDocs(collection(db, 'buildings'));
+  return buildingsSnap.docs;
+}
+
 // ---------------- Buildings tab (admin: create buildings/tenants) ----------------
 let buildingsCache = [];
+let archivedBuildingsCache = [];
 let editingBuildingId = null;
 let editingTenant = null; // {buildingId, tenantId}
 // The managers editor has no edit/view-mode toggle to signal a successful save (unlike tenant
@@ -515,28 +600,33 @@ let editingTenant = null; // {buildingId, tenantId}
 let justSavedManagersForBuildingId = null;
 let buildingSearchTerm = '';
 const expandedBuildingIds = new Set();
+let permanentDeletePanelBuildingId = null; // which archived row currently has its confirm panel open
 
 function refreshBuildingsView(){
   const term = buildingSearchTerm.trim().toLowerCase();
   const filtered = term ? buildingsCache.filter(b => b.name.toLowerCase().includes(term)) : buildingsCache;
   renderBuildingsList(filtered);
+  document.getElementById('archivedCountBadge').textContent = archivedBuildingsCache.length ? `(${archivedBuildingsCache.length})` : '';
+  renderArchivedBuildingsList(archivedBuildingsCache);
 }
 
 async function loadMasterBuildings(){
   try {
-    const buildingDocs = await loadAllActiveBuildings();
+    const buildingDocs = await loadAllBuildingsIncludingArchived();
     const buildings = await Promise.all(buildingDocs.map(async (d) => {
       const tenantsSnap = await getDocs(collection(db, 'buildings', d.id, 'tenants'));
       return {
         id: d.id,
         name: d.data().name || '(untitled)',
+        active: d.data().active !== false,
         tenants: tenantsSnap.docs
           .filter(t => t.data().active !== false)
           .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [], emails: t.data().emails || [] })),
         managerEmails: d.data().managerEmails || [],
       };
     }));
-    buildingsCache = buildings;
+    buildingsCache = buildings.filter(b => b.active);
+    archivedBuildingsCache = buildings.filter(b => !b.active);
     refreshBuildingsView();
   } catch (err){
     console.error('Failed to load buildings:', err);
@@ -589,7 +679,7 @@ function renderBuildingsList(buildings){
           <span class="building-tenant-count">${b.tenants.length} tenant${b.tenants.length === 1 ? '' : 's'}</span>
           <div class="building-header-actions">
             <button class="btn secondary edit-building-btn">Edit name</button>
-            <button class="btn secondary delete-building-btn danger-btn">Delete building</button>
+            <button class="btn secondary delete-building-btn danger-btn">Archive building</button>
           </div>
         </div>`;
     if (!isExpanded){
@@ -650,6 +740,45 @@ function renderBuildingsList(buildings){
         </label>
       </div>
       <div class="import-contacts-review" style="display:none;"></div>
+    </div>
+  `;
+  }).join('');
+}
+
+// Deliberately minimal — no edit/tenant-management UI while archived, that's reachable again
+// after Restore. Delete permanently only ever appears here, never on an active building's row
+// (Workstream 10's archive-first safety gate — enforced again server-side in the Cloud Function).
+function renderArchivedBuildingsList(buildings){
+  const container = document.getElementById('archivedBuildingsList');
+  if (buildings.length === 0){
+    container.innerHTML = '<p class="block-sub">No archived buildings.</p>';
+    return;
+  }
+  container.innerHTML = buildings.map(b => {
+    const panelOpen = permanentDeletePanelBuildingId === b.id;
+    return `
+    <div class="report-block building-row" data-building-id="${b.id}">
+      <div class="building-header-row">
+        <h3>${esc(b.name)}</h3>
+        <span class="building-tenant-count">${b.tenants.length} tenant${b.tenants.length === 1 ? '' : 's'}</span>
+        <div class="building-header-actions">
+          <button class="btn secondary restore-building-btn">Restore</button>
+          <button class="btn secondary permanent-delete-building-btn danger-btn">Delete permanently</button>
+        </div>
+      </div>
+      ${panelOpen ? `
+        <div class="permanent-delete-panel">
+          <p class="app-modal-message" style="margin:0 0 12px;">This permanently deletes "${esc(b.name)}", its tenants, and ALL of its induction history - submissions and attempts - across every program. This cannot be undone.</p>
+          <div class="filter-row">
+            <label class="filter-field"><span>Type the building name to confirm</span><input type="text" class="permanent-delete-confirm-input" placeholder="${esc(b.name)}"></label>
+          </div>
+          <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+            <button class="btn secondary danger-btn permanent-delete-confirm-btn" disabled>Delete permanently</button>
+            <button class="btn secondary permanent-delete-cancel-btn">Cancel</button>
+          </div>
+          <p class="block-sub permanent-delete-status" style="margin-top:10px;"></p>
+        </div>
+      ` : ''}
     </div>
   `;
   }).join('');
@@ -806,6 +935,88 @@ document.getElementById('buildingSearchInput').addEventListener('input', (e) => 
   refreshBuildingsView();
 });
 
+document.getElementById('tabActiveBuildingsBtn').addEventListener('click', () => {
+  document.getElementById('tabActiveBuildingsBtn').classList.add('active');
+  document.getElementById('tabArchivedBuildingsBtn').classList.remove('active');
+  document.getElementById('activeBuildingsPane').style.display = '';
+  document.getElementById('archivedBuildingsPane').style.display = 'none';
+});
+document.getElementById('tabArchivedBuildingsBtn').addEventListener('click', () => {
+  document.getElementById('tabArchivedBuildingsBtn').classList.add('active');
+  document.getElementById('tabActiveBuildingsBtn').classList.remove('active');
+  document.getElementById('archivedBuildingsPane').style.display = '';
+  document.getElementById('activeBuildingsPane').style.display = 'none';
+});
+
+document.getElementById('archivedBuildingsList').addEventListener('click', async (e) => {
+  const restoreBtn = e.target.closest('.restore-building-btn');
+  if (restoreBtn){
+    const buildingId = restoreBtn.closest('.building-row').dataset.buildingId;
+    try {
+      await updateDoc(doc(db, 'buildings', buildingId), { active: true });
+      await loadMasterBuildings();
+    } catch (err){
+      console.error('Failed to restore building:', err);
+      await showAlert('Failed to restore - check the console for details.');
+    }
+    return;
+  }
+
+  const openPermDeleteBtn = e.target.closest('.permanent-delete-building-btn');
+  if (openPermDeleteBtn){
+    const buildingId = openPermDeleteBtn.closest('.building-row').dataset.buildingId;
+    permanentDeletePanelBuildingId = permanentDeletePanelBuildingId === buildingId ? null : buildingId;
+    renderArchivedBuildingsList(archivedBuildingsCache);
+    return;
+  }
+
+  const cancelPermDeleteBtn = e.target.closest('.permanent-delete-cancel-btn');
+  if (cancelPermDeleteBtn){
+    permanentDeletePanelBuildingId = null;
+    renderArchivedBuildingsList(archivedBuildingsCache);
+    return;
+  }
+
+  const confirmPermDeleteBtn = e.target.closest('.permanent-delete-confirm-btn');
+  if (confirmPermDeleteBtn && !confirmPermDeleteBtn.disabled){
+    const row = confirmPermDeleteBtn.closest('.building-row');
+    const buildingId = row.dataset.buildingId;
+    const typedName = row.querySelector('.permanent-delete-confirm-input').value;
+    const statusEl = row.querySelector('.permanent-delete-status');
+    confirmPermDeleteBtn.disabled = true;
+    confirmPermDeleteBtn.textContent = 'Deleting…';
+    statusEl.textContent = '';
+    try {
+      const deleteBuildingPermanently = httpsCallable(functions, 'deleteBuildingPermanently', { timeout: 300000 });
+      const result = await deleteBuildingPermanently({ buildingId, confirmName: typedName });
+      const c = result.data.deletedCounts;
+      await showAlert(
+        `Deleted "${result.data.buildingName}" permanently.\n\n` +
+        `${c.submissions} submissions, ${c.attempts} attempts, ${c.links} links, ${c.enrollments} enrollments, ` +
+        `${c.buildingAccess} access grant(s), ${c.tenants} tenant(s).`
+      );
+      permanentDeletePanelBuildingId = null;
+      await loadMasterBuildings();
+    } catch (err){
+      console.error('Failed to permanently delete building:', err);
+      statusEl.textContent = err.message || 'Failed to delete - check the console for details.';
+      confirmPermDeleteBtn.disabled = false;
+      confirmPermDeleteBtn.textContent = 'Delete permanently';
+    }
+    return;
+  }
+});
+
+document.getElementById('archivedBuildingsList').addEventListener('input', (e) => {
+  const input = e.target.closest('.permanent-delete-confirm-input');
+  if (!input) return;
+  const row = input.closest('.building-row');
+  const buildingId = row.dataset.buildingId;
+  const building = archivedBuildingsCache.find(b => b.id === buildingId);
+  const confirmBtn = row.querySelector('.permanent-delete-confirm-btn');
+  confirmBtn.disabled = !(building && input.value === building.name);
+});
+
 document.getElementById('buildingsList').addEventListener('click', async (e) => {
   const addLevelRowBtn = e.target.closest('.add-level-row-btn');
   if (addLevelRowBtn){
@@ -860,14 +1071,14 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     const row = saveBuildingNameBtn.closest('.building-row');
     const buildingId = row.dataset.buildingId;
     const newName = row.querySelector('.edit-building-name-input').value.trim();
-    if (!newName){ alert('The name can\'t be empty.'); return; }
+    if (!newName){ await showAlert('The name can\'t be empty.'); return; }
     try {
       await setDoc(doc(db, 'buildings', buildingId), { name: newName }, { merge: true });
       editingBuildingId = null;
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to rename building:', err);
-      alert('Failed to save - check the console for details.');
+      await showAlert('Failed to save - check the console for details.');
     }
     return;
   }
@@ -877,12 +1088,11 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     const buildingId = deleteBuildingBtn.closest('.building-row').dataset.buildingId;
     const building = buildingsCache.find(b => b.id === buildingId);
     const tenantCount = building ? building.tenants.length : 0;
-    const confirmed = confirm(
-      `Delete "${building ? building.name : 'this building'}" and its ${tenantCount} tenant(s)?\n\n` +
+    const confirmed = await showConfirm(
+      `Archive "${building ? building.name : 'this building'}" and its ${tenantCount} tenant(s)?\n\n` +
       `Every link/QR code you've shared for this building, in every induction it's enrolled in, ` +
       `stops working immediately. Its data and history (submissions, attempts, configuration) ` +
-      `are NOT deleted - only hidden - but there's no button yet to bring it back if you change ` +
-      `your mind.`
+      `are NOT deleted - you can restore it any time from the "Archived buildings" tab.`
     );
     if (!confirmed) return;
     try {
@@ -893,7 +1103,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to delete building:', err);
-      alert('Failed to delete - check the console for details.');
+      await showAlert('Failed to delete - check the console for details.');
     }
     return;
   }
@@ -904,7 +1114,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     const editorEl = saveManagersBtn.closest('.building-managers-block').querySelector('.building-managers-emails-editor');
     const newEmails = readEmailsFromEditor(editorEl);
     const badEmail = newEmails.find(addr => !isValidEmail(addr));
-    if (badEmail){ alert(`"${badEmail}" doesn't look like a valid email address.`); return; }
+    if (badEmail){ await showAlert(`"${badEmail}" doesn't look like a valid email address.`); return; }
     try {
       await updateDoc(doc(db, 'buildings', buildingId), { managerEmails: newEmails });
       justSavedManagersForBuildingId = buildingId;
@@ -917,7 +1127,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       }, 2500);
     } catch (err){
       console.error('Failed to save building managers:', err);
-      alert('Failed to save - check the console for details.');
+      await showAlert('Failed to save - check the console for details.');
     }
     return;
   }
@@ -946,9 +1156,9 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     const newName = li.querySelector('.edit-tenant-name-input').value.trim();
     const newLevels = readLevelsFromEditor(li.querySelector('.edit-tenant-levels-editor'));
     const newEmails = readEmailsFromEditor(li.querySelector('.edit-tenant-emails-editor'));
-    if (!newName || newLevels.length === 0){ alert('Enter a tenant name and at least one level.'); return; }
+    if (!newName || newLevels.length === 0){ await showAlert('Enter a tenant name and at least one level.'); return; }
     const badEmail = newEmails.find(addr => !isValidEmail(addr));
-    if (badEmail){ alert(`"${badEmail}" doesn't look like a valid email address.`); return; }
+    if (badEmail){ await showAlert(`"${badEmail}" doesn't look like a valid email address.`); return; }
     try {
       // No {merge:true} here — this fully replaces the tenant doc, so every field that should
       // survive an edit (emails included) must be listed explicitly.
@@ -957,7 +1167,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to update tenant:', err);
-      alert('Failed to save - check the console for details.');
+      await showAlert('Failed to save - check the console for details.');
     }
     return;
   }
@@ -966,7 +1176,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
   if (deleteTenantBtn){
     const buildingId = deleteTenantBtn.closest('.building-row').dataset.buildingId;
     const tenantId = deleteTenantBtn.closest('li').dataset.tenantId;
-    const confirmed = confirm(
+    const confirmed = await showConfirm(
       `Delete this tenant? It disappears from every program immediately and any link scoped ` +
       `to it stops working. Its data and history are NOT deleted - only hidden - but there's ` +
       `no button yet to bring it back if you change your mind.`
@@ -978,7 +1188,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to delete tenant:', err);
-      alert('Failed to delete - check the console for details.');
+      await showAlert('Failed to delete - check the console for details.');
     }
     return;
   }
@@ -990,15 +1200,15 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     const tenantName = row.querySelector('.new-tenant-name').value.trim();
     const levels = readLevelsFromEditor(row.querySelector('.new-tenant-levels-editor'));
     const emails = readEmailsFromEditor(row.querySelector('.new-tenant-emails-editor'));
-    if (!tenantName || levels.length === 0){ alert('Enter a tenant name and at least one level.'); return; }
+    if (!tenantName || levels.length === 0){ await showAlert('Enter a tenant name and at least one level.'); return; }
     const badEmail = emails.find(addr => !isValidEmail(addr));
-    if (badEmail){ alert(`"${badEmail}" doesn't look like a valid email address.`); return; }
+    if (badEmail){ await showAlert(`"${badEmail}" doesn't look like a valid email address.`); return; }
     try {
       await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: tenantName, levels, emails });
       await loadMasterBuildings(); // re-renders the whole tab, including a fresh blank "add tenant" form
     } catch (err){
       console.error('Failed to add tenant:', err);
-      alert('Failed to add tenant - check the console for details.');
+      await showAlert('Failed to add tenant - check the console for details.');
     }
     return;
   }
@@ -1023,7 +1233,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
         return { name, levels };
       })
       .filter(t => t.name && t.levels.length);
-    if (toImport.length === 0){ alert('Nothing selected to import.'); return; }
+    if (toImport.length === 0){ await showAlert('Nothing selected to import.'); return; }
 
     // Cross-check against tenants that already exist in this building (case-insensitive) — a
     // re-import of an already-imported/re-exported roster (e.g. a quarterly refresh) previously
@@ -1034,10 +1244,10 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     const duplicates = toImport.filter(t => existingNames.has(t.name.toLowerCase()));
     const fresh = toImport.filter(t => !existingNames.has(t.name.toLowerCase()));
     if (duplicates.length > 0){
-      const proceed = confirm(`${duplicates.length} of ${toImport.length} selected tenant(s) already exist in this building by name and will be skipped:\n${duplicates.map(t => t.name).join(', ')}\n\nImport the remaining ${fresh.length}?`);
+      const proceed = await showConfirm(`${duplicates.length} of ${toImport.length} selected tenant(s) already exist in this building by name and will be skipped:\n${duplicates.map(t => t.name).join(', ')}\n\nImport the remaining ${fresh.length}?`);
       if (!proceed) return;
     }
-    if (fresh.length === 0){ alert('Nothing left to import - every selected tenant already exists in this building.'); return; }
+    if (fresh.length === 0){ await showAlert('Nothing left to import - every selected tenant already exists in this building.'); return; }
 
     confirmBtn.disabled = true;
     confirmBtn.textContent = 'Importing…';
@@ -1053,7 +1263,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Bulk import failed:', err);
-      alert('Import failed - check the console for details. Nothing was partially added (this import is a single atomic batch).');
+      await showAlert('Import failed - check the console for details. Nothing was partially added (this import is a single atomic batch).');
     } finally {
       confirmBtn.disabled = false;
       confirmBtn.textContent = 'Import selected →';
@@ -1097,7 +1307,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
         const emails = r.dataset.emails ? r.dataset.emails.split(';').filter(Boolean) : [];
         return { tenantId, tenant, emails };
       });
-    if (toWrite.length === 0){ alert('Nothing selected to import.'); return; }
+    if (toWrite.length === 0){ await showAlert('Nothing selected to import.'); return; }
     confirmContactsBtn.disabled = true;
     confirmContactsBtn.textContent = 'Importing…';
     try {
@@ -1121,7 +1331,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       await loadMasterBuildings();
     } catch (err){
       console.error('Failed to import contact emails:', err);
-      alert('Import failed - check the console for details.');
+      await showAlert('Import failed - check the console for details.');
       confirmContactsBtn.disabled = false;
       confirmContactsBtn.textContent = 'Import selected →';
     }
@@ -1151,7 +1361,7 @@ document.getElementById('buildingsList').addEventListener('change', async (e) =>
       renderImportReview(row, candidates);
     } catch (err){
       console.error('Failed to read Excel file:', err);
-      alert("Could not read that file - make sure it's a valid .xlsx export.");
+      await showAlert("Could not read that file - make sure it's a valid .xlsx export.");
     }
     input.value = '';
     return;
@@ -1170,13 +1380,13 @@ document.getElementById('buildingsList').addEventListener('change', async (e) =>
       const rows = xlsxUtils.sheet_to_json(sheet, { header: 1 });
       const parsed = parseContactsFromRows(rows, b.tenants);
       if (parsed.columnsNotFound){
-        alert("Couldn't find \"Tenant ID\", \"Tenant\", or \"Email\" columns in that file - make sure it's the exported contacts template (or has matching column headers) and try again.");
+        await showAlert("Couldn't find \"Tenant ID\", \"Tenant\", or \"Email\" columns in that file - make sure it's the exported contacts template (or has matching column headers) and try again.");
       } else {
         renderContactsImportReview(row, parsed);
       }
     } catch (err){
       console.error('Failed to read Excel file:', err);
-      alert("Could not read that file - make sure it's a valid .xlsx export.");
+      await showAlert("Could not read that file - make sure it's a valid .xlsx export.");
     }
     contactsInput.value = '';
     return;
@@ -1232,10 +1442,14 @@ if (auth){
       document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';
       document.getElementById('buildingsSection').style.display = 'none';
       document.getElementById('buildingsList').innerHTML = '';
+      document.getElementById('archivedBuildingsList').innerHTML = '';
+      document.getElementById('archivedCountBadge').textContent = '';
       document.getElementById('buildingsStatus').textContent = '';
       editingBuildingId = null;
       editingTenant = null;
+      permanentDeletePanelBuildingId = null;
       buildingsCache = [];
+      archivedBuildingsCache = [];
     }
   });
 }

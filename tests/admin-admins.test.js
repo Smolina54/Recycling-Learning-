@@ -69,10 +69,22 @@ async function runFlow(page){
   // before its own getDocs() call has actually resolved and populated #adminsList.
   await page.waitForFunction(() => (document.getElementById('adminsList')?.textContent || '').trim() !== '', { timeout: 10000 });
 
-  // window.confirm's native dialog would otherwise fight the generic "unexpected dialog"
-  // handler above (only one Puppeteer dialog listener can meaningfully handle a given prompt) —
-  // same override-in-page pattern already established in tests/admin-buildings.test.js.
-  await page.evaluate(() => { window.confirm = () => true; });
+  // Workstream 11 replaced window.alert()/window.confirm() with a real in-page modal
+  // (#appModalOverlay) — there's no native dialog to stub anymore. Instead, auto-respond to the
+  // custom modal the same way the old stub did (always "confirm"/"OK"), recording each message
+  // into the same __confirmCalls/__alertCalls arrays other assertions in this file may read from.
+  await page.evaluate(() => {
+    window.__confirmCalls = [];
+    window.__alertCalls = [];
+    const overlay = document.getElementById('appModalOverlay');
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('open')) return;
+      const message = document.getElementById('appModalMessage').textContent;
+      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
+      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); }
+      else { window.__confirmCalls.push(message); buttons[buttons.length - 1].click(); }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  });
 
   check('owner email note is shown', (await page.$eval('#ownerEmailNote', el => el.textContent)) === ALLOWED_EMAIL);
   check('no additional admins yet', (await page.$eval('#adminsList', el => el.textContent)).includes('just you'));

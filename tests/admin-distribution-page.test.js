@@ -157,6 +157,26 @@ async function runFlow(page){
     buildingName
   );
 
+  // Workstream 11 replaced window.alert()/window.confirm() with a real in-page modal
+  // (#appModalOverlay) — there's no native dialog to stub anymore. Instead, auto-respond to the
+  // custom modal the same way the old stub did (always "confirm"/"OK"), recording each message
+  // into __confirmCalls/__alertCalls so checks further down (e.g. the "Send via email" failure
+  // check) can inspect what it said. Installed here, before the FIRST click that can trigger the
+  // modal (copy-link-btn's clipboard-unavailable fallback, below) — an alert left unanswered
+  // leaves the overlay open and blocks every subsequent click in this flow.
+  await page.evaluate(() => {
+    window.__confirmCalls = [];
+    window.__alertCalls = [];
+    const overlay = document.getElementById('appModalOverlay');
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('open')) return;
+      const message = document.getElementById('appModalMessage').textContent;
+      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
+      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); }
+      else { window.__confirmCalls.push(message); buttons[buttons.length - 1].click(); }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  });
+
   const distributionSelector = `.distribution-building-row[data-building-id="${buildingId}"]`;
   check('the enrolled building appears in Distribution', Boolean(await page.$(distributionSelector)));
 
@@ -203,15 +223,6 @@ async function runFlow(page){
   }
 
   // --- Tenant-scoped links: Widgetco (has an email) vs. Northwind Consulting (doesn't) ---
-  // window.confirm/alert's native dialogs would otherwise fight the generic "unexpected dialog"
-  // handler at the top of this file — overridden in-page instead, recording alert() calls so
-  // the "Send via email" failure check below can inspect what it said.
-  await page.evaluate(() => {
-    window.confirm = () => true;
-    window.__alertCalls = [];
-    window.alert = (msg) => { window.__alertCalls.push(msg); };
-  });
-
   async function generateTenantLink(tenantId){
     await page.select(`${distributionSelector} .new-link-tenant`, tenantId);
     await page.click(`${distributionSelector} .generate-link-btn`);

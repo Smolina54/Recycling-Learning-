@@ -88,8 +88,13 @@ async function main(){
     process.exit(1);
   }
 
+  // deleteBuildingPermanently/CORS policy: expected — this suite doesn't start the Functions
+  // emulator (only firestore,auth), so the real fetch to deleteBuildingPermanently is expected to
+  // fail with a CORS/network error, same reasoning as admin-distribution-page.test.js's own
+  // "Send via email" graceful-failure check.
   const unexpectedErrors = consoleErrors.filter(e =>
-    !e.includes('Failed to load resource') && !e.includes('400'));
+    !e.includes('Failed to load resource') && !e.includes('400')
+    && !e.includes('deleteBuildingPermanently') && !e.includes('CORS policy') && !e.includes('Failed to permanently delete building'));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
   await browser.close();
@@ -112,13 +117,21 @@ async function runFlow(page, consoleErrors){
   );
   check('Buildings section is visible once signed in (this page has nothing else on it)', true);
 
-  // window.confirm's native dialog would otherwise fight the generic "unexpected dialog"
-  // handler above — override it in-page instead (same pattern as tests/admin-admins.test.js).
+  // Workstream 11 replaced window.alert()/window.confirm() with a real in-page modal
+  // (#appModalOverlay) — there's no native dialog to stub anymore. Instead, auto-respond to the
+  // custom modal the same way the old stub did (always "confirm"/"OK"), recording each message
+  // into the same __confirmCalls/__alertCalls arrays the checks below already read from.
   await page.evaluate(() => {
     window.__confirmCalls = [];
-    window.confirm = (msg) => { window.__confirmCalls.push(msg); return true; };
     window.__alertCalls = [];
-    window.alert = (msg) => { window.__alertCalls.push(msg); };
+    const overlay = document.getElementById('appModalOverlay');
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('open')) return;
+      const message = document.getElementById('appModalMessage').textContent;
+      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
+      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); }
+      else { window.__confirmCalls.push(message); buttons[buttons.length - 1].click(); }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
   });
 
   const buildingName = 'Test Tower ' + Date.now();
@@ -157,9 +170,13 @@ async function runFlow(page, consoleErrors){
 
   const duplicateId = matchingIds.find(id => id !== buildingId);
   if (duplicateId){
-    await page.$eval(`.building-row[data-building-id="${duplicateId}"] .delete-building-btn`, el => el.click());
+    // "Delete building" now archives rather than removes the DOM node entirely (Workstream 10) —
+    // the row moves from #buildingsList to #archivedBuildingsList, both of which reuse the same
+    // .building-row[data-building-id] markup, so the "gone" check must be scoped to
+    // #buildingsList specifically or it'll still match the archived copy.
+    await page.$eval(`#buildingsList .building-row[data-building-id="${duplicateId}"] .delete-building-btn`, el => el.click());
     await page.waitForFunction(
-      (id) => !document.querySelector(`.building-row[data-building-id="${id}"]`),
+      (id) => !document.querySelector(`#buildingsList .building-row[data-building-id="${id}"]`),
       { timeout: 8000 }, duplicateId
     );
   }
@@ -180,9 +197,13 @@ async function runFlow(page, consoleErrors){
     Boolean(await rowAfterExpand.$('.new-tenant-name')));
 
   // --- Search box: narrows the list by name, restores it when cleared ---
+  // Scoped to #buildingsList specifically, not just ".building-row h3" — by this point in the
+  // flow the earlier name-collision duplicate (same buildingName) has already been archived, and
+  // its row still exists (in #archivedBuildingsList, Workstream 10), which an unscoped query
+  // would also match.
   await page.type('#buildingSearchInput', 'zzz-does-not-match-anything');
   await new Promise(r => setTimeout(r, 200));
-  const namesWhenSearchMisses = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
+  const namesWhenSearchMisses = await page.$$eval('#buildingsList .building-row h3', els => els.map(el => el.textContent));
   const noMatchMessageShown = await page.$eval('#buildingsList', el => el.textContent.includes('No buildings match your search'));
   check('a non-matching search hides the building and shows a "no match" message',
     !namesWhenSearchMisses.includes(buildingName) && noMatchMessageShown);
@@ -190,7 +211,7 @@ async function runFlow(page, consoleErrors){
   await page.$eval('#buildingSearchInput', el => { el.value = ''; });
   await page.$eval('#buildingSearchInput', el => el.dispatchEvent(new Event('input', { bubbles: true })));
   await new Promise(r => setTimeout(r, 200));
-  const namesAfterClearingSearch = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
+  const namesAfterClearingSearch = await page.$$eval('#buildingsList .building-row h3', els => els.map(el => el.textContent));
   check('clearing the search restores the building to the list', namesAfterClearingSearch.includes(buildingName));
 
   // --- Add a tenant ---
@@ -566,13 +587,14 @@ async function runFlow(page, consoleErrors){
   row = await findRowByName(page, '.building-row', renamedBuildingName);
   await row.$eval('.delete-building-btn', el => el.click());
   // delete-building-btn's handler is async (updateDoc + await loadMasterBuildings()) — wait for
-  // the row to actually disappear.
+  // the row to actually disappear FROM THE ACTIVE LIST. It's still in the DOM (moved into
+  // #archivedBuildingsList, Workstream 10), so this must scope to #buildingsList specifically.
   await page.waitForFunction(
-    (name) => ![...document.querySelectorAll('.building-row h3')].some(el => el.textContent === name),
+    (name) => ![...document.querySelectorAll('#buildingsList .building-row h3')].some(el => el.textContent === name),
     { timeout: 8000 }, renamedBuildingName
   );
 
-  buildingNames = await page.$$eval('.building-row h3', els => els.map(el => el.textContent));
+  buildingNames = await page.$$eval('#buildingsList .building-row h3', els => els.map(el => el.textContent));
   check('deleted building no longer appears in the list', !buildingNames.includes(renamedBuildingName), buildingNames.join('|') || '(none left)');
 
   // "Delete building" is a soft-delete (active:false) — confirm the real link stops working too.
@@ -587,6 +609,65 @@ async function runFlow(page, consoleErrors){
   const invalidShownForDeleted = await deletedBuildingPage.$eval('#idCardInvalid', el => getComputedStyle(el).display !== 'none').catch(() => false);
   check('a soft-deleted building\'s real link now shows the invalid-link fallback, same as a real delete would', invalidShownForDeleted);
   await deletedBuildingPage.close();
+
+  // --- Workstream 10: "Archived buildings" tab, Restore, and "Delete permanently" ---
+  await page.click('#tabArchivedBuildingsBtn');
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('#archivedBuildingsList .building-row h3')].some(el => el.textContent === name),
+    { timeout: 8000 }, renamedBuildingName
+  );
+  check('the archived building appears under the "Archived buildings" tab with a Restore button',
+    Boolean(await page.$('#archivedBuildingsList .restore-building-btn')));
+
+  let archivedRow = await findRowByName(page, '#archivedBuildingsList .building-row', renamedBuildingName);
+  await archivedRow.$eval('.restore-building-btn', el => el.click());
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('#buildingsList .building-row h3')].some(el => el.textContent === name),
+    { timeout: 8000 }, renamedBuildingName
+  );
+  const namesAfterRestore = await page.$$eval('#archivedBuildingsList .building-row h3', els => els.map(el => el.textContent));
+  check('Restore brings the building back to the main Buildings list and out of Archived',
+    !namesAfterRestore.includes(renamedBuildingName), namesAfterRestore.join('|') || '(none left)');
+
+  // Re-archive it so there's something to test "Delete permanently" against.
+  row = await findRowByName(page, '#buildingsList .building-row', renamedBuildingName);
+  await row.$eval('.delete-building-btn', el => el.click());
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('#archivedBuildingsList .building-row h3')].some(el => el.textContent === name),
+    { timeout: 8000 }, renamedBuildingName
+  );
+
+  archivedRow = await findRowByName(page, '#archivedBuildingsList .building-row', renamedBuildingName);
+  await archivedRow.$eval('.permanent-delete-building-btn', el => el.click());
+  await page.waitForSelector('.permanent-delete-panel', { timeout: 4000 });
+  // The click above re-renders #archivedBuildingsList's innerHTML to show the new panel (same
+  // "opening a panel replaces the DOM" behavior already hit elsewhere in this project, e.g. the
+  // buildings-managers save race noted in the backlog above) — archivedRow is now a stale/
+  // detached handle, re-fetch it fresh before querying inside it.
+  archivedRow = await findRowByName(page, '#archivedBuildingsList .building-row', renamedBuildingName);
+  let confirmBtn = await archivedRow.$('.permanent-delete-confirm-btn');
+  check('"Delete permanently" opens a panel whose confirm button starts disabled', await confirmBtn.evaluate(el => el.disabled));
+
+  const nameInput = await archivedRow.$('.permanent-delete-confirm-input');
+  await nameInput.type('the wrong name');
+  check('typing the wrong name keeps the confirm button disabled', await confirmBtn.evaluate(el => el.disabled));
+
+  await nameInput.evaluate(el => { el.value = ''; });
+  await nameInput.type(renamedBuildingName);
+  check('typing the exact building name enables the confirm button', !(await confirmBtn.evaluate(el => el.disabled)));
+
+  // This suite only starts firestore+auth (no Functions emulator — same deliberate choice as
+  // admin-distribution-page.test.js's own "Send via email" check), so the real call is expected
+  // to fail gracefully here; the actual delete cascade is verified for real in
+  // tests/functions-deletebuildingpermanently.test.js instead.
+  await confirmBtn.click();
+  await new Promise(r => setTimeout(r, 1500));
+  const statusText = await archivedRow.$eval('.permanent-delete-status', el => el.textContent);
+  check('clicking "Delete permanently" without a reachable Cloud Function fails gracefully with a status message',
+    statusText.trim().length > 0, statusText);
+  const confirmBtnAfterFailure = await archivedRow.$('.permanent-delete-confirm-btn');
+  check('the confirm button resets to its original label and stays usable after a failed call',
+    await confirmBtnAfterFailure.evaluate(el => el.textContent.includes('Delete permanently') && !el.disabled));
 
   // --- Sidebar nav + sign out ---
   // Every sidebar link gets ?emulator=1 appended on load (see the page's own patch right after

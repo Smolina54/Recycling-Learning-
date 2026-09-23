@@ -20,6 +20,7 @@
     "test:links": "firebase emulators:exec --only firestore \"node tests/distribution-links.test.js\"",
     "test:functions": "firebase emulators:exec --only firestore,auth,functions \"node tests/functions-sendinductionemail.test.js\"",
     "test:functions-result-email": "firebase emulators:exec --only firestore,auth,functions \"node tests/functions-sendmyresultemail.test.js\"",
+    "test:functions-delete-building": "firebase emulators:exec --only firestore,auth,functions \"node tests/functions-deletebuildingpermanently.test.js\"",
     "test:scoped-report": "firebase emulators:exec --only firestore,auth \"node tests/scoped-report-access.test.js\"",
     "test:client-report": "firebase emulators:exec --only firestore,auth \"node tests/client-report.test.js\"",
     "test:catalog": "node tests/catalog-sync.test.js",

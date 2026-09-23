@@ -411,9 +411,31 @@
       color:var(--ink-soft); margin:12px 0 0;
     }
   }
+
+  /* In-app replacement for window.alert()/window.confirm() - see Workstream 11 in the plan.
+     Native alert()/confirm() always prefix "<host> says" and can't be repositioned/restyled by
+     any page CSS/JS; this is a real DOM overlay we fully control, centered on screen. */
+  .app-modal-overlay{
+    display:none; position:fixed; inset:0; background:rgba(30,42,34,0.55); z-index:9999;
+    align-items:center; justify-content:center; padding:20px;
+  }
+  .app-modal-overlay.open{display:flex;}
+  .app-modal-box{
+    background:var(--paper); border-radius:8px; max-width:440px; width:100%;
+    padding:24px 26px; box-shadow:0 12px 40px rgba(0,0,0,0.35);
+  }
+  .app-modal-message{margin:0 0 20px; font-family:var(--body); font-size:15px; color:var(--ink); line-height:1.5; white-space:pre-wrap;}
+  .app-modal-actions{display:flex; justify-content:flex-end; gap:10px;}
 </style>
 </head>
 <body>
+
+<div class="app-modal-overlay" id="appModalOverlay">
+  <div class="app-modal-box">
+    <p class="app-modal-message" id="appModalMessage"></p>
+    <div class="app-modal-actions" id="appModalActions"></div>
+  </div>
+</div>
 
 <div class="page-shell" id="pageShell">
 <div class="wrap">
@@ -541,6 +563,48 @@ try {
   }
 } catch (err) {
   console.error('Firebase is not configured yet - sign-in and enrolled-building management will stay unavailable until firebaseConfig is filled in.', err);
+}
+
+// ---- In-app replacement for window.alert()/window.confirm() (Workstream 11) ----
+// Both return a Promise, same call shape as the native versions, so every call site just adds
+// `await`. Escape/backdrop-click always resolve as "cancel" (never accidentally proceeds).
+const appModalOverlay = document.getElementById('appModalOverlay');
+const appModalMessage = document.getElementById('appModalMessage');
+const appModalActions = document.getElementById('appModalActions');
+let closeAppModal = null;
+
+function openAppModal(message, buttons){
+  return new Promise(resolve => {
+    appModalMessage.textContent = message;
+    appModalActions.innerHTML = '';
+    closeAppModal = (value) => {
+      appModalOverlay.classList.remove('open');
+      document.removeEventListener('keydown', onModalKeydown);
+      closeAppModal = null;
+      resolve(value);
+    };
+    function onModalKeydown(e){ if (e.key === 'Escape') closeAppModal(buttons.escapeValue); }
+    document.addEventListener('keydown', onModalKeydown);
+    buttons.list.forEach(b => {
+      const btn = document.createElement('button');
+      btn.className = b.className;
+      btn.textContent = b.label;
+      btn.addEventListener('click', () => closeAppModal(b.value));
+      appModalActions.appendChild(btn);
+    });
+    appModalOverlay.classList.add('open');
+  });
+}
+appModalOverlay.addEventListener('click', (e) => { if (e.target === appModalOverlay && closeAppModal) closeAppModal(false); });
+
+function showAlert(message){
+  return openAppModal(message, { escapeValue: undefined, list: [{ label: 'OK', className: 'btn', value: undefined }] });
+}
+function showConfirm(message){
+  return openAppModal(message, { escapeValue: false, list: [
+    { label: 'Cancel', className: 'btn secondary', value: false },
+    { label: 'OK', className: 'btn', value: true },
+  ] });
 }
 
 const ESC_MAP = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'};
@@ -1134,7 +1198,7 @@ async function saveItemStreamsEditor(){
     return true;
   } catch (err2){
     console.error('Failed to save item-stream configuration:', err2);
-    alert('Failed to save - check the console for details.');
+    await showAlert('Failed to save - check the console for details.');
     return false;
   }
 }
@@ -1158,7 +1222,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('click', async
     // ever true via editingItemsBuildingId === b.id, not a real membership in
     // expandedEnrolledBuildingIds.
     if (editingItemsBuildingId && editingItemsBuildingId !== buildingId){
-      const proceed = confirm('You have an item-streams editor open for another building. Switching now will discard any unsaved changes there. Continue?');
+      const proceed = await showConfirm('You have an item-streams editor open for another building. Switching now will discard any unsaved changes there. Continue?');
       if (!proceed) return;
     }
     const building = enrolledBuildingsCache.find(b => b.id === buildingId);
@@ -1191,7 +1255,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('click', async
     const row = quickMergeBtn.closest('.items-editor');
     const fromStream = row.querySelector('.quick-merge-from').value;
     const toStream = row.querySelector('.quick-merge-to').value;
-    if (fromStream === toStream){ alert('Choose two different streams to merge.'); return; }
+    if (fromStream === toStream){ await showAlert('Choose two different streams to merge.'); return; }
     Object.keys(catalog).forEach(id => {
       // Only items actually active in the "from" stream get swept into the merge — an
       // inactive item sitting there nominally isn't really "in" that stream for a trainee.
@@ -1214,7 +1278,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('click', async
   if (removeEnrollmentBtn){
     const buildingId = removeEnrollmentBtn.closest('.enrolled-building-row').dataset.buildingId;
     const building = enrolledBuildingsCache.find(b => b.id === buildingId);
-    const confirmed = confirm(
+    const confirmed = await showConfirm(
       `Remove "${building ? building.name : 'this building'}" from ${currentProgram.name}?\n\n` +
       `New links for this program stop working for this building right away. Its configuration ` +
       `and history are kept and come back automatically if it's re-enrolled later. Its enrolment ` +
@@ -1228,7 +1292,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('click', async
       await loadEnrolledData();
     } catch (err){
       console.error('Failed to remove enrollment:', err);
-      alert('Failed to remove - check the console for details.');
+      await showAlert('Failed to remove - check the console for details.');
     }
     return;
   }
@@ -1245,7 +1309,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('click', async
       .map(c => (building.tenants.find(t => t.id === c.dataset.tenantId) || {}).name)
       .filter(Boolean);
     if (newlyDisabledNames.length){
-      const confirmed = confirm(
+      const confirmed = await showConfirm(
         `Disable this induction for ${newlyDisabledNames.join(', ')}?\n\n` +
         `People from ${newlyDisabledNames.length === 1 ? 'that tenant' : 'those tenants'} immediately ` +
         `lose access to this induction's link. Re-enabling is instant and has no side effects.`

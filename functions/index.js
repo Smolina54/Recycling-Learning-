@@ -193,11 +193,21 @@ function buildInductionEmailContent({ buildingName, programName, link }) {
               <p style="margin:0 0 8px; font-size:15px; letter-spacing:0.4px; text-transform:uppercase; color:#2F6F4E; font-weight:bold;">${esc(programName)}</p>
               <p style="margin:0 0 16px; font-size:20px; font-weight:bold; color:#1E2A22;">${esc(buildingName)} requires you to complete this induction</p>
               <p style="margin:0 0 24px; font-size:15px; color:#1E2A22; line-height:1.5;">This is a required part of ${esc(buildingName)}'s waste management program.</p>
+              <!--[if mso]>
+              <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="padding-bottom:20px;">
+              <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${esc(link)}" style="height:44px;v-text-anchor:middle;width:220px;" arcsize="14%" strokecolor="#2F6F4E" fillcolor="#2F6F4E">
+                <w:anchorlock/>
+                <center style="color:#FFFFFF;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;font-weight:bold;">Start the induction &rarr;</center>
+              </v:roundrect>
+              </td></tr></table>
+              <![endif]-->
+              <!--[if !mso]><!-->
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:20px;">
                 <tr><td bgcolor="#2F6F4E" style="background:#2F6F4E; border-radius:6px; padding:0;">
                   <a href="${esc(link)}" style="display:inline-block; padding:12px 24px; font-size:14px; font-weight:bold; color:#FFFFFF; text-decoration:none;">Start the induction &rarr;</a>
                 </td></tr>
               </table>
+              <!--<![endif]-->
               <p style="margin:0 0 24px; font-size:12px; color:#4A5850; word-break:break-all;">Or copy this link: ${esc(link)}</p>
               <p style="margin:0; font-size:15px; color:#1E2A22; line-height:1.5;">Thanks for helping keep ${esc(buildingName)} sorting waste correctly.</p>
             </td>
@@ -446,3 +456,79 @@ exports.sendMyResultEmail = onCall(
     return { ok: true };
   }
 );
+
+// deleteBuildingPermanently — the real, irreversible delete behind admin-buildings.html's
+// "Delete permanently" button (Workstream 10). Admin-only, and only ever wipes a building that's
+// already been archived (active:false) first — the client UI only ever shows this button on an
+// archived row, and this function enforces the same rule server-side, so even a direct callable
+// invocation can't skip the archive-first safety gate.
+//
+// links and attempts both have `allow delete: if false` in firestore.rules, denied to every
+// client including admins, by deliberate design — that rule is NOT being loosened. Only the
+// Admin SDK (used here) bypasses Firestore rules, so this is the one narrow, admin-authenticated,
+// name-confirmed path that can actually remove them. Every other collection below (submissions,
+// enrollments, buildingAccess, tenants) IS technically client-deletable today too, but the whole
+// cascade is kept here in one function anyway, for one atomic-in-spirit, fully audit-logged job
+// instead of a split client/server delete path.
+const BUILDING_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
+
+// Loops a `where(buildingId==X).limit(400)` query to chunked batch deletes until the collection
+// is empty. 400 (not Firestore's 500-per-commit cap) leaves headroom so one .get() maps 1:1 to
+// one .batch().commit(). Looping-to-empty (not computing a total up front) makes this naturally
+// retriable if the function times out mid-collection — a retry just re-queries and keeps finding/
+// deleting whatever's left, since already-deleted docs never come back in a later page.
+async function deleteAllMatchingBuildingId(collectionName, buildingId) {
+  const db = admin.firestore();
+  let deleted = 0;
+  for (;;) {
+    const snap = await db.collection(collectionName).where('buildingId', '==', buildingId).limit(400).get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    deleted += snap.docs.length;
+  }
+  return deleted;
+}
+
+exports.deleteBuildingPermanently = onCall({ timeoutSeconds: 300 }, async (request) => {
+  await assertIsAdmin(request.auth);
+
+  const { buildingId, confirmName } = request.data || {};
+  if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
+    throw new HttpsError('invalid-argument', 'A valid building id is required.');
+  }
+
+  const buildingRef = admin.firestore().doc(`buildings/${buildingId}`);
+  const buildingSnap = await buildingRef.get();
+  if (!buildingSnap.exists) {
+    throw new HttpsError('not-found', 'No building found for that id.');
+  }
+  const building = buildingSnap.data();
+
+  if (building.active !== false) {
+    throw new HttpsError('failed-precondition', 'Archive this building first, then delete it permanently from the Archived buildings tab.');
+  }
+
+  const realName = String(building.name || '').trim();
+  if (String(confirmName || '').trim() !== realName) {
+    throw new HttpsError('failed-precondition', 'Typed name does not match. Nothing was deleted.');
+  }
+
+  // Children before the parent building doc — if this crashes partway through, the building doc
+  // (and whatever's already deleted) is a safely retriable state: nothing is left orphaned under
+  // a vanished building, since the building itself is only removed once every child is gone.
+  const deletedCounts = {
+    submissions: await deleteAllMatchingBuildingId('submissions', buildingId),
+    attempts: await deleteAllMatchingBuildingId('attempts', buildingId),
+    links: await deleteAllMatchingBuildingId('links', buildingId),
+    enrollments: await deleteAllMatchingBuildingId('enrollments', buildingId),
+    buildingAccess: await deleteAllMatchingBuildingId('buildingAccess', buildingId),
+  };
+
+  const tenantsSnap = await buildingRef.collection('tenants').get();
+  deletedCounts.tenants = tenantsSnap.size;
+  await admin.firestore().recursiveDelete(buildingRef);
+
+  return { ok: true, buildingName: realName, deletedCounts };
+});
