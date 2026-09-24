@@ -51,6 +51,14 @@
         { "fieldPath": "programId", "order": "ASCENDING" },
         { "fieldPath": "startedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "bintrackerRows",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "buildingId", "order": "ASCENDING" },
+        { "fieldPath": "collectDate", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

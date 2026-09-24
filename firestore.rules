@@ -215,5 +215,13 @@ service cloud.firestore {
       allow read: if canReviewBuilding(resource.data.buildingId);
       allow update, delete: if false;
     }
+
+    // Real Bintracker waste-collection rows, fetched by refreshBintrackerData (Admin SDK, which
+    // bypasses these rules for its own writes) — client-side write is never needed, so it stays
+    // fully closed. Read scoping mirrors submissions/attempts above.
+    match /bintrackerRows/{rowId} {
+      allow read: if canReviewBuilding(resource.data.buildingId);
+      allow write: if false;
+    }
   }
 }

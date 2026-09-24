@@ -612,6 +612,7 @@ let editingTenant = null; // {buildingId, tenantId}
 // edits, where the form disappearing back into a read-only row IS the confirmation) - this tracks
 // which building's Save was just clicked so a brief "Saved" note can show next to its button.
 let justSavedManagersForBuildingId = null;
+let justSavedBintrackerMappingForBuildingId = null;
 let buildingSearchTerm = '';
 const expandedBuildingIds = new Set();
 let permanentDeletePanelBuildingId = null; // which archived row currently has its confirm panel open
@@ -637,6 +638,7 @@ async function loadMasterBuildings(){
           .filter(t => t.data().active !== false)
           .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [], emails: t.data().emails || [] })),
         managerEmails: d.data().managerEmails || [],
+        bintrackerBuildingName: d.data().bintrackerBuildingName || '',
       };
     }));
     buildingsCache = buildings.filter(b => b.active);
@@ -664,6 +666,24 @@ function renderBuildingManagersHtml(b){
       <div class="print-row" style="justify-content:flex-start; align-items:center; margin-top:10px;">
         <button class="btn save-managers-btn">Save</button>
         ${justSavedManagersForBuildingId === b.id ? '<span class="managers-saved-note">Saved ✓</span>' : ''}
+      </div>
+    </div>`;
+}
+
+// Bintracker Sync (Workstream 12) reads this to know which building this maps to in Bintracker's
+// own system - blank means this building isn't tracked in Bintracker, and both the induction-vs-
+// real-data comparison and the Bintracker Sync tab must render nothing for it, not an error.
+function renderBintrackerMappingHtml(b){
+  return `
+    <div class="building-managers-block">
+      <p class="generate-link-title"><strong>Bintracker mapping</strong></p>
+      <p class="block-sub">Must match this building's name exactly as registered in Bintracker. Leave blank if this building isn't tracked in Bintracker.</p>
+      <div class="filter-row">
+        <label class="filter-field"><span>Bintracker building name</span><input type="text" class="bintracker-mapping-input" value="${esc(b.bintrackerBuildingName)}" placeholder="e.g. 123 Example Tower"></label>
+      </div>
+      <div class="print-row" style="justify-content:flex-start; align-items:center; margin-top:10px;">
+        <button class="btn save-bintracker-mapping-btn">Save</button>
+        ${justSavedBintrackerMappingForBuildingId === b.id ? '<span class="managers-saved-note">Saved ✓</span>' : ''}
       </div>
     </div>`;
 }
@@ -727,6 +747,7 @@ function renderBuildingsList(buildings){
     <div class="report-block building-row" data-building-id="${b.id}">
       ${headerHtml}
       ${renderBuildingManagersHtml(b)}
+      ${renderBintrackerMappingHtml(b)}
       <ul class="tenant-list">${tenantsHtml}</ul>
       <p class="block-sub contacts-coverage-note">${withEmail} of ${b.tenants.length} tenants have a contact email saved.</p>
       <p class="generate-link-title"><strong>Add tenant</strong></p>
@@ -1141,6 +1162,28 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       }, 2500);
     } catch (err){
       console.error('Failed to save building managers:', err);
+      await showAlert('Failed to save - check the console for details.');
+    }
+    return;
+  }
+
+  const saveBintrackerMappingBtn = e.target.closest('.save-bintracker-mapping-btn');
+  if (saveBintrackerMappingBtn){
+    const buildingId = saveBintrackerMappingBtn.closest('.building-row').dataset.buildingId;
+    const inputEl = saveBintrackerMappingBtn.closest('.building-managers-block').querySelector('.bintracker-mapping-input');
+    const newValue = inputEl.value.trim();
+    try {
+      await updateDoc(doc(db, 'buildings', buildingId), { bintrackerBuildingName: newValue });
+      justSavedBintrackerMappingForBuildingId = buildingId;
+      await loadMasterBuildings();
+      setTimeout(() => {
+        if (justSavedBintrackerMappingForBuildingId === buildingId){
+          justSavedBintrackerMappingForBuildingId = null;
+          refreshBuildingsView();
+        }
+      }, 2500);
+    } catch (err){
+      console.error('Failed to save Bintracker mapping:', err);
       await showAlert('Failed to save - check the console for details.');
     }
     return;

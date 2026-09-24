@@ -15,7 +15,9 @@ const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const nodemailer = require('nodemailer');
 const path = require('path');
+const crypto = require('crypto');
 const { catalog } = require('./catalog');
+const { fetchBintrackerCollections, mapWasteTypeToStream } = require('./bintracker');
 
 // Co-located with Firestore, which already lives in australia-southeast2 (Melbourne) — moved
 // here from the platform's us-central1 default on 2026-09-23 for data residency (Tradeflex is
@@ -52,6 +54,8 @@ admin.initializeApp();
 const SMTP_USERNAME = defineSecret('SMTP_USERNAME');
 const SMTP_PASSWORD = defineSecret('SMTP_PASSWORD');
 const SMTP_SENDER_MAILBOX = defineSecret('SMTP_SENDER_MAILBOX');
+const BINTRACKER_APP_ID = defineSecret('BINTRACKER_APP_ID');
+const BINTRACKER_APP_KEY = defineSecret('BINTRACKER_APP_KEY');
 
 // Same OWNER_EMAIL as outputs/sorting-station-report.html — kept in sync by hand, there's no
 // shared module between the static site and this function. A client-side admin check is only
@@ -543,3 +547,107 @@ exports.deleteBuildingPermanently = onCall({ timeoutSeconds: 300 }, async (reque
 
   return { ok: true, buildingName: realName, deletedCounts };
 });
+
+// refreshBintrackerData — Workstream 7, Point 1 in the plan: pulls real waste-collection data
+// from Bintracker's Data Sharing API for one building, over an admin-picked date range (the SAME
+// range the calling report is already showing, so the induction-quiz side and the real-data side
+// never silently desync), maps each row's wasteType to our 5 core streams (anything unmapped is
+// silently dropped, never forced into an "other" bucket), and stores it for the comparison
+// feature (Phase C) to read. This is on-demand (an admin clicks "Refresh"), not scheduled -
+// firebase-functions/v2/scheduler is a new pattern this codebase doesn't use anywhere yet, and
+// proving the on-demand path first is the deliberate, lower-risk choice (see the plan).
+function bintrackerRowDocId(buildingId, collectDate, tenantRaw, locationRaw, wasteTypeRaw) {
+  const key = [buildingId, collectDate, tenantRaw, locationRaw, wasteTypeRaw].join('__');
+  return crypto.createHash('sha256').update(key).digest('hex');
+}
+
+// Same "delete existing docs matching a query, then write fresh ones" idiom as
+// deleteAllMatchingBuildingId above, scoped by buildingId + a collectDate range instead of just
+// buildingId - keeps a re-run of "Refresh" for the same building/range provably current instead
+// of trying to merge/dedupe against whatever a previous pull happened to store.
+async function deleteBintrackerRowsInRange(buildingId, fromDate, toDate) {
+  const db = admin.firestore();
+  for (;;) {
+    const snap = await db.collection('bintrackerRows')
+      .where('buildingId', '==', buildingId)
+      .where('collectDate', '>=', fromDate)
+      .where('collectDate', '<=', toDate)
+      .limit(400)
+      .get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+}
+
+exports.refreshBintrackerData = onCall(
+  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300 },
+  async (request) => {
+    await assertIsAdmin(request.auth);
+
+    const { buildingId, fromDate, toDate } = request.data || {};
+    if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
+      throw new HttpsError('invalid-argument', 'A valid building id is required.');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fromDate)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(toDate))) {
+      throw new HttpsError('invalid-argument', 'fromDate and toDate must be YYYY-MM-DD.');
+    }
+
+    const buildingSnap = await admin.firestore().doc(`buildings/${buildingId}`).get();
+    if (!buildingSnap.exists) throw new HttpsError('not-found', 'No building found for that id.');
+    const bintrackerBuildingName = buildingSnap.data().bintrackerBuildingName;
+    if (!bintrackerBuildingName) {
+      throw new HttpsError('failed-precondition', 'No Bintracker mapping set for this building yet.');
+    }
+
+    const rawRows = await fetchBintrackerCollections({
+      building: bintrackerBuildingName,
+      collectDateFrom: fromDate,
+      collectDateTo: toDate,
+      appId: BINTRACKER_APP_ID.value(),
+      appKey: BINTRACKER_APP_KEY.value(),
+    });
+
+    await deleteBintrackerRowsInRange(buildingId, fromDate, toDate);
+
+    const db = admin.firestore();
+    let rowsMapped = 0;
+    let rowsSkipped = 0;
+    const fetchedAt = admin.firestore.FieldValue.serverTimestamp();
+    for (let i = 0; i < rawRows.length; i += 400) {
+      const chunk = rawRows.slice(i, i + 400);
+      const batch = db.batch();
+      for (const row of chunk) {
+        const ourStream = mapWasteTypeToStream(row.wasteType);
+        if (!ourStream) { rowsSkipped++; continue; }
+        const collectDate = String(row.collectDate || '').slice(0, 10);
+        const tenantRaw = row.tenant || '';
+        const locationRaw = row.primaryLocation || '';
+        const docId = bintrackerRowDocId(buildingId, collectDate, tenantRaw, locationRaw, row.wasteType);
+        batch.set(db.collection('bintrackerRows').doc(docId), {
+          buildingId,
+          bintrackerTenantRaw: tenantRaw,
+          bintrackerLocationRaw: locationRaw,
+          ourStream,
+          wasteTypeRaw: row.wasteType,
+          contaminated: Boolean(row.contaminated),
+          collectDate,
+          weight: typeof row.weight === 'number' ? row.weight : (typeof row.actualWeight === 'number' ? row.actualWeight : null),
+          fetchedAt,
+        });
+        rowsMapped++;
+      }
+      await batch.commit();
+    }
+
+    return {
+      ok: true,
+      buildingName: bintrackerBuildingName,
+      rowsFetched: rawRows.length,
+      rowsMapped,
+      rowsSkipped,
+      dateRange: { fromDate, toDate },
+    };
+  }
+);
