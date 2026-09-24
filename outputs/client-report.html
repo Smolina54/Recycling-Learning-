@@ -910,7 +910,16 @@ async function generateReport(){
 // them). No fetch()/CORS involved either way, avoiding the exact file:// module-loading trap
 // already hit once in this project (see the architecture roadmap plan, Workstream 2 Phase 0).
 function buildPrintDocument(){
-  const styleText = document.querySelector('style').textContent;
+  // Paged.js does its own internal url(...) parsing/resolution while building its virtual page
+  // model (separate from the browser's native CSS engine, which already resolves these relative
+  // paths fine against the iframe's inherited base URL) - it calls `new URL(value)` with no base
+  // argument, which throws "Failed to construct 'URL': Invalid URL" for a bare relative path like
+  // 'branding/Gilroy-Bold.otf', silently breaking pagination (confirmed via a real production
+  // error report, not guessed). Rewrite every relative branding/... reference to a fully-
+  // qualified absolute one first, which `new URL(...)` can construct with no base needed.
+  const brandingBase = new URL('branding/', document.baseURI).href;
+  const styleText = document.querySelector('style').textContent
+    .replace(/url\((['"]?)branding\//g, `url($1${brandingBase}`);
   const reportPageHtml = document.querySelector('.report-page').outerHTML;
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">

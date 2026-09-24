@@ -82,7 +82,7 @@ async function main(){
   page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
 
   try {
-    await runFlow(page);
+    await runFlow(page, consoleErrors);
   } catch (err) {
     console.error('CRASHED — dumping diagnostics:', err.message);
     console.error('--- results so far ---');
@@ -105,7 +105,7 @@ async function main(){
   process.exit(allOk ? 0 : 1);
 }
 
-async function runFlow(page){
+async function runFlow(page, consoleErrors){
   const { b1 } = await seedTestData();
 
   // --- "No ?program=" and an unrecognized one: the explicit fallback, never a silent default ---
@@ -151,6 +151,35 @@ async function runFlow(page){
 
   const findingsText = await page.$eval('#keyFindings', el => el.textContent);
   check('key findings calls out the weaker building by name', findingsText.includes('Collins Tower') && findingsText.includes('Harbor Plaza'), findingsText.replace(/\s+/g,' ').slice(0,300));
+
+  // --- Print / Save as PDF (Paged.js) actually completes, no uncaught pageerror ---
+  // Regression test for a real production bug (2026-09-24): Paged.js does its own internal
+  // url(...) parsing while building its virtual page model, separate from the browser's native
+  // CSS engine - it throws "Failed to construct 'URL': Invalid URL" on the @font-face src's
+  // relative branding/*.otf paths, silently hanging pagination forever (the print overlay never
+  // clears, "Still working..." shows after 8s and never resolves). Fixed in buildPrintDocument()
+  // by rewriting relative branding/ references to absolute ones before handing the stylesheet to
+  // Paged.js. This check would have caught it (a pageerror during/after the click).
+  const errorsBeforePrint = consoleErrors.length;
+  await page.click('#printReportBtn');
+  // Paged.js actually finishing pagination (real .pagedjs_page boxes exist in the iframe) is the
+  // real signal that the bug is fixed - checked instead of waiting for the overlay to clear via
+  // window.print()/'afterprint', since headless Puppeteer/Edge doesn't reliably resolve a nested
+  // iframe's own window.print() the way a real user's OS print dialog would.
+  const pagingCompleted = await page.waitForFunction(
+    () => {
+      const iframe = document.querySelector('.print-frame');
+      return iframe && iframe.contentDocument && iframe.contentDocument.querySelector('.pagedjs_page');
+    },
+    { timeout: 15000 }
+  ).then(() => true).catch(() => false);
+  check('clicking "Print / Save as PDF" actually paginates the report (real .pagedjs_page boxes appear)', pagingCompleted);
+  const printErrors = consoleErrors.slice(errorsBeforePrint);
+  check('no pageerror during the print/Paged.js flow', !printErrors.some(e => e.startsWith('pageerror:')), printErrors.join(' || '));
+  // Headless window.print() may never fire 'afterprint' on a nested iframe, unlike a real user's
+  // OS print dialog closing - clean up directly instead of waiting on it, so later steps in this
+  // same test aren't blocked by the still-open, full-viewport overlay.
+  await page.evaluate(() => { const btn = document.getElementById('cancelPrintBtn'); if (btn) btn.click(); });
   check('key findings calls out the most commonly missed item', findingsText.includes('Rinsed glass jar'), findingsText.replace(/\s+/g,' ').slice(0,300));
 
   const byBuildingVisible = await page.$eval('#byBuildingSection', el => getComputedStyle(el).display !== 'none');
