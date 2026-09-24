@@ -38,6 +38,7 @@ const SUITES = [
   { name: 'test:admin', file: 'admin-buildings.test.js' },
   { name: 'test:admin-admins', file: 'admin-admins.test.js' },
   { name: 'test:admin-buildings-page', file: 'admin-buildings-page.test.js' },
+  { name: 'test:admin-buildings-bintracker', file: 'admin-buildings-bintracker.test.js' },
   { name: 'test:catalog-admin', file: 'admin-catalog.test.js' },
   { name: 'test:admin-catalog-page', file: 'admin-catalog-page.test.js' },
   { name: 'test:admin-distribution-page', file: 'admin-distribution-page.test.js' },

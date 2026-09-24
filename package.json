@@ -11,6 +11,7 @@
     "test:admin": "firebase emulators:exec --only firestore,auth \"node tests/admin-buildings.test.js\"",
     "test:admin-admins": "firebase emulators:exec --only firestore,auth \"node tests/admin-admins.test.js\"",
     "test:admin-buildings-page": "firebase emulators:exec --only firestore,auth \"node tests/admin-buildings-page.test.js\"",
+    "test:admin-buildings-bintracker": "firebase emulators:exec --only firestore,auth \"node tests/admin-buildings-bintracker.test.js\"",
     "test:catalog-admin": "firebase emulators:exec --only firestore,auth \"node tests/admin-catalog.test.js\"",
     "test:admin-catalog-page": "firebase emulators:exec --only firestore,auth \"node tests/admin-catalog-page.test.js\"",
     "test:admin-distribution-page": "firebase emulators:exec --only firestore,auth \"node tests/admin-distribution-page.test.js\"",

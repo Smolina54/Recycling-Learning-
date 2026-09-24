@@ -202,6 +202,18 @@
     color:var(--gw); border:1px solid var(--gw); padding:2px 6px; flex-shrink:0;
   }
   .tenant-list .btn.secondary, .building-header-actions .btn, .building-edit-row .btn{padding:6px 14px; font-size:12.5px;}
+  /* Bintracker tenant-match review (Point 1, Phase B) — sits inside a .tenant-list li, which is
+     display:flex/flex-wrap, so this needs to force onto its own line rather than squeezing in
+     next to the name/levels/actions. */
+  .bintracker-match-row{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap; width:100%;
+    margin-top:8px; padding-top:8px; border-top:1px dashed var(--line);
+  }
+  .bintracker-match-row .btn, .bintracker-match-row .btn.secondary{padding:6px 14px; font-size:12.5px;}
+  .bintracker-match-row select{
+    font-family:var(--body); font-size:13px; padding:6px 8px; border:1.5px solid var(--line);
+    background:var(--paper); border-radius:var(--radius); color:var(--ink);
+  }
   .danger-btn{border-color:var(--gw) !important; color:var(--gw) !important;}
   .danger-btn:hover{background:var(--gw) !important; color:var(--paper) !important;}
   input[type=file]{display:none;}
@@ -361,7 +373,8 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, collection, getDoc, getDocs, doc, setDoc, updateDoc, writeBatch, runTransaction, serverTimestamp, connectFirestoreEmulator
+  getFirestore, collection, getDoc, getDocs, doc, setDoc, updateDoc, writeBatch, runTransaction, serverTimestamp,
+  query, where, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
@@ -515,6 +528,47 @@ function isValidEmail(str){
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(str || '').trim());
 }
 
+// ---- Duplicated from functions/bintracker.js (Point 1, Phase B) — this codebase's established
+// convention is to duplicate small pure-JS helpers per page rather than share a module across
+// file://-loaded pages (see e.g. isValidEmail above, already duplicated the same way). Keep this
+// in sync with functions/bintracker.js's own copy (covered there by tests/bintracker-unit.test.js)
+// if the matching rules ever change. ----
+function normalizeForMatching(str){
+  return String(str || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function wordOverlapRatio(a, b){
+  const wordsA = new Set(a.split(' ').filter(Boolean));
+  const wordsB = new Set(b.split(' ').filter(Boolean));
+  if (!wordsA.size || !wordsB.size) return 0;
+  let shared = 0;
+  wordsA.forEach((w) => { if (wordsB.has(w)) shared++; });
+  const unionSize = new Set([...wordsA, ...wordsB]).size;
+  return shared / unionSize;
+}
+function findBestMatch(ourName, candidateNames){
+  const ours = normalizeForMatching(ourName);
+  if (!ours) return null;
+  let best = null;
+  for (const raw of candidateNames){
+    const theirs = normalizeForMatching(raw);
+    if (!theirs) continue;
+    if (theirs === ours) return { candidate: raw, confidence: 'exact' };
+    if (!best && (theirs.includes(ours) || ours.includes(theirs))){
+      best = { candidate: raw, confidence: 'contains' };
+    }
+  }
+  if (best) return best;
+  const PARTIAL_FLOOR = 0.5;
+  let bestRatio = 0;
+  let bestRaw = null;
+  for (const raw of candidateNames){
+    const ratio = wordOverlapRatio(ours, normalizeForMatching(raw));
+    if (ratio > bestRatio){ bestRatio = ratio; bestRaw = raw; }
+  }
+  if (bestRaw && bestRatio >= PARTIAL_FLOOR) return { candidate: bestRaw, confidence: 'partial' };
+  return null;
+}
+
 // A tenant with many "Level N" rows reads as a long, repetitive "Level 1, Level 2, Level 3…"
 // list — group those into one "Levels 1, 2, 3" and leave anything else (Ground, a custom
 // "Other" name) as its own literal entry. A single level (of any kind) stays exactly as-is.
@@ -617,6 +671,14 @@ let buildingSearchTerm = '';
 const expandedBuildingIds = new Set();
 let permanentDeletePanelBuildingId = null; // which archived row currently has its confirm panel open
 
+// ---- Bintracker tenant matching (Point 1, Phase B) ----
+let refreshingBintrackerBuildingId = null; // building whose "Refresh Bintracker data" call is in flight
+const lastBintrackerRefreshCountsByBuildingId = new Map(); // buildingId -> {rowsFetched, rowsMapped, rowsSkipped} — kept (not cleared on a timeout) so the admin can see the last refresh's result while reviewing matches
+const bintrackerRowsByBuildingId = new Map(); // buildingId -> array of {bintrackerTenantRaw, bintrackerLocationRaw, ...}
+const bintrackerMatchesByBuildingId = new Map(); // buildingId -> Map(tenantId -> confirmed bintrackerTenantMatches doc data)
+const bintrackerLoadedForBuildingId = new Set(); // buildings we've already fetched rows+matches for in this session
+let bintrackerChangeOpenKey = null; // `${buildingId}__${tenantId}` of the tenant whose manual picker is open, or null
+
 function refreshBuildingsView(){
   const term = buildingSearchTerm.trim().toLowerCase();
   const filtered = term ? buildingsCache.filter(b => b.name.toLowerCase().includes(term)) : buildingsCache;
@@ -674,6 +736,9 @@ function renderBuildingManagersHtml(b){
 // own system - blank means this building isn't tracked in Bintracker, and both the induction-vs-
 // real-data comparison and the Bintracker Sync tab must render nothing for it, not an error.
 function renderBintrackerMappingHtml(b){
+  const hasMapping = Boolean(b.bintrackerBuildingName);
+  const isRefreshing = refreshingBintrackerBuildingId === b.id;
+  const counts = lastBintrackerRefreshCountsByBuildingId.get(b.id);
   return `
     <div class="building-managers-block">
       <p class="generate-link-title"><strong>Bintracker mapping</strong></p>
@@ -685,7 +750,129 @@ function renderBintrackerMappingHtml(b){
         <button class="btn save-bintracker-mapping-btn">Save</button>
         ${justSavedBintrackerMappingForBuildingId === b.id ? '<span class="managers-saved-note">Saved ✓</span>' : ''}
       </div>
+      ${hasMapping ? `
+      <div class="print-row" style="justify-content:flex-start; align-items:center; margin-top:10px;">
+        <button class="btn secondary refresh-bintracker-btn"${isRefreshing ? ' disabled' : ''}>${isRefreshing ? 'Refreshing…' : 'Refresh Bintracker data'}</button>
+        ${counts ? `<span class="managers-saved-note">Refreshed ✓ (${counts.rowsFetched} rows fetched, ${counts.rowsMapped} mapped, ${counts.rowsSkipped} skipped)</span>` : ''}
+      </div>` : ''}
     </div>`;
+}
+
+// Fetches this building's bintrackerRows + confirmed bintrackerTenantMatches directly from
+// Firestore (not via the Cloud Function — that only ever WRITES rows; reading them back for the
+// match-review UI is a plain client-side query, same as every other read on this page) and caches
+// both. Idempotent per session — bintrackerLoadedForBuildingId guards against re-fetching on every
+// render; callers that know the underlying data changed (a fresh Refresh, a just-confirmed match)
+// clear the relevant cache entry first.
+async function loadBintrackerDataForBuilding(buildingId){
+  if (bintrackerLoadedForBuildingId.has(buildingId)) return;
+  try {
+    const [rowsSnap, matchesSnap] = await Promise.all([
+      getDocs(query(collection(db, 'bintrackerRows'), where('buildingId', '==', buildingId))),
+      getDocs(query(collection(db, 'bintrackerTenantMatches'), where('buildingId', '==', buildingId))),
+    ]);
+    bintrackerRowsByBuildingId.set(buildingId, rowsSnap.docs.map(d => d.data()));
+    const matches = new Map();
+    matchesSnap.docs.forEach(d => {
+      const data = d.data();
+      if (data.status === 'confirmed') matches.set(data.tenantId, data);
+    });
+    bintrackerMatchesByBuildingId.set(buildingId, matches);
+    bintrackerLoadedForBuildingId.add(buildingId);
+  } catch (err){
+    console.error('Failed to load Bintracker rows/matches for building', buildingId, err);
+    // Still mark as "loaded" (with nothing found) even on failure — otherwise every subsequent
+    // re-render would retry this fetch indefinitely (renderBuildingsList's lazy-load trigger
+    // fires on every render of an expanded, mapped building that isn't yet in this Set).
+    bintrackerRowsByBuildingId.set(buildingId, []);
+    bintrackerMatchesByBuildingId.set(buildingId, new Map());
+    bintrackerLoadedForBuildingId.add(buildingId);
+  }
+}
+
+// Simple mode (most-frequent-value) of bintrackerLocationRaw among this building's rows for one
+// matched raw tenant string — deliberately not more sophisticated than that, per the plan's own
+// "keep this simple" instruction.
+function mostCommonLocationForTenant(buildingId, bintrackerTenantRaw){
+  const rows = bintrackerRowsByBuildingId.get(buildingId) || [];
+  const counts = new Map();
+  rows.forEach(r => {
+    if (r.bintrackerTenantRaw !== bintrackerTenantRaw) return;
+    const loc = r.bintrackerLocationRaw || '';
+    counts.set(loc, (counts.get(loc) || 0) + 1);
+  });
+  let best = '', bestCount = -1;
+  counts.forEach((count, loc) => { if (count > bestCount){ bestCount = count; best = loc; } });
+  return best;
+}
+
+// Writes the admin-confirmed match (a suggested candidate, accepted as-is, or a manually-picked
+// one from the "Change" select — both funnel through here) — composite key mirrors the
+// buildingAccess convention already used elsewhere in this codebase.
+async function confirmBintrackerMatch(building, tenant, bintrackerTenantRaw){
+  const matchId = `${building.id}__${tenant.id}`;
+  const bintrackerLocationRaw = mostCommonLocationForTenant(building.id, bintrackerTenantRaw);
+  try {
+    await setDoc(doc(db, 'bintrackerTenantMatches', matchId), {
+      buildingId: building.id,
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+      bintrackerTenantRaw,
+      bintrackerLocationRaw,
+      confirmedBy: (auth && auth.currentUser) ? auth.currentUser.email : '',
+      confirmedAt: serverTimestamp(),
+      status: 'confirmed',
+    });
+    const matches = bintrackerMatchesByBuildingId.get(building.id) || new Map();
+    matches.set(tenant.id, {
+      buildingId: building.id, tenantId: tenant.id, tenantName: tenant.name,
+      bintrackerTenantRaw, bintrackerLocationRaw, status: 'confirmed',
+    });
+    bintrackerMatchesByBuildingId.set(building.id, matches);
+    bintrackerChangeOpenKey = null;
+    refreshBuildingsView();
+  } catch (err){
+    console.error('Failed to save Bintracker tenant match:', err);
+    await showAlert('Failed to save match - check the console for details.');
+  }
+}
+
+// Per-tenant review row: a confirmed match shown plainly with a "Change" link; otherwise a
+// findBestMatch() candidate suggestion with Confirm/Change, or "No match found" with a manual
+// picker — never a silent automatic link (only a `status:'confirmed'` doc, written here, ever
+// feeds Phase C's comparison).
+function renderBintrackerTenantMatchHtml(building, tenant, distinctBintrackerTenantRaws, matches){
+  const changeKey = `${building.id}__${tenant.id}`;
+  const confirmed = matches.get(tenant.id);
+  if (bintrackerChangeOpenKey === changeKey){
+    const options = ['<option value="">— pick a Bintracker tenant —</option>']
+      .concat(distinctBintrackerTenantRaws.map(raw =>
+        `<option value="${esc(raw)}"${confirmed && confirmed.bintrackerTenantRaw === raw ? ' selected' : ''}>${esc(raw)}</option>`));
+    return `<div class="bintracker-match-row" data-building-id="${esc(building.id)}" data-tenant-id="${esc(tenant.id)}">
+      <select class="bintracker-manual-select">${options.join('')}</select>
+      <button type="button" class="btn bintracker-confirm-manual-btn">Confirm</button>
+      <button type="button" class="btn secondary bintracker-cancel-change-btn">Cancel</button>
+    </div>`;
+  }
+  if (confirmed){
+    return `<div class="bintracker-match-row" data-building-id="${esc(building.id)}" data-tenant-id="${esc(tenant.id)}">
+      <span class="block-sub">Bintracker match: "${esc(confirmed.bintrackerTenantRaw)}" ✓</span>
+      <button type="button" class="btn secondary bintracker-open-change-btn">Change</button>
+    </div>`;
+  }
+  const candidate = distinctBintrackerTenantRaws.length ? findBestMatch(tenant.name, distinctBintrackerTenantRaws) : null;
+  if (candidate){
+    const confidenceLabel = candidate.confidence === 'exact' ? 'exact match' : candidate.confidence === 'contains' ? 'contains match' : 'partial match';
+    return `<div class="bintracker-match-row" data-building-id="${esc(building.id)}" data-tenant-id="${esc(tenant.id)}" data-candidate="${esc(candidate.candidate)}">
+      <span class="block-sub">"${esc(tenant.name)}" ~ matched to Bintracker tenant "${esc(candidate.candidate)}" (${confidenceLabel})</span>
+      <button type="button" class="btn bintracker-confirm-candidate-btn">Confirm</button>
+      <button type="button" class="btn secondary bintracker-open-change-btn">Change</button>
+    </div>`;
+  }
+  return `<div class="bintracker-match-row" data-building-id="${esc(building.id)}" data-tenant-id="${esc(tenant.id)}">
+    <span class="block-sub">No Bintracker match found for "${esc(tenant.name)}"</span>
+    <button type="button" class="btn secondary bintracker-open-change-btn">Pick manually</button>
+  </div>`;
 }
 
 // Master (⚙ Edificios): pure building/tenant CRUD, no program awareness at all — no Configure
@@ -719,6 +906,15 @@ function renderBuildingsList(buildings){
     if (!isExpanded){
       return `<div class="report-block building-row" data-building-id="${b.id}">${headerHtml}</div>`;
     }
+    // Bintracker match review only renders once there's something to review — before the first
+    // ever Refresh (no rows) and no manually-confirmed match yet, showing "No match found" for
+    // every tenant would just be noise, not the graceful-absence principle this app uses
+    // elsewhere for an unset bintrackerBuildingName.
+    const bintrackerRowsForBuilding = bintrackerRowsByBuildingId.get(b.id) || [];
+    const bintrackerMatchesForBuilding = bintrackerMatchesByBuildingId.get(b.id) || new Map();
+    const distinctBintrackerTenantRaws = [...new Set(bintrackerRowsForBuilding.map(r => r.bintrackerTenantRaw).filter(Boolean))].sort();
+    const showBintrackerMatches = Boolean(b.bintrackerBuildingName) && bintrackerLoadedForBuildingId.has(b.id) &&
+      (bintrackerRowsForBuilding.length > 0 || bintrackerMatchesForBuilding.size > 0);
     const tenantsHtml = b.tenants.length
       ? b.tenants.map(t => {
           const isEditing = editingTenant && editingTenant.buildingId === b.id && editingTenant.tenantId === t.id;
@@ -739,6 +935,7 @@ function renderBuildingsList(buildings){
               <button class="btn secondary edit-tenant-btn">Edit</button>
               <button class="btn secondary delete-tenant-btn danger-btn">Delete</button>
             </span>
+            ${showBintrackerMatches ? renderBintrackerTenantMatchHtml(b, t, distinctBintrackerTenantRaws, bintrackerMatchesForBuilding) : ''}
           </li>`;
         }).join('')
       : '<li class="block-sub">No tenants yet.</li>';
@@ -778,6 +975,16 @@ function renderBuildingsList(buildings){
     </div>
   `;
   }).join('');
+
+  // Lazily fetch Bintracker rows/matches for any expanded, mapped building that hasn't been
+  // loaded yet this session — covers both a fresh page load onto an already-expanded building
+  // (e.g. right after a Refresh triggers a re-render) and expanding one for the first time.
+  // Fire-and-forget: each load re-renders the view again once its data lands.
+  buildings.forEach(b => {
+    if (isBuildingExpanded(b) && b.bintrackerBuildingName && !bintrackerLoadedForBuildingId.has(b.id)){
+      loadBintrackerDataForBuilding(b.id).then(() => refreshBuildingsView());
+    }
+  });
 }
 
 // Deliberately minimal — no edit/tenant-management UI while archived, that's reachable again
@@ -1189,6 +1396,73 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     return;
   }
 
+  const refreshBintrackerBtn = e.target.closest('.refresh-bintracker-btn');
+  if (refreshBintrackerBtn){
+    const buildingId = refreshBintrackerBtn.closest('.building-row').dataset.buildingId;
+    refreshingBintrackerBuildingId = buildingId;
+    refreshBuildingsView();
+    try {
+      const refreshBintrackerData = httpsCallable(functions, 'refreshBintrackerData', { timeout: 300000 });
+      const toDate = new Date();
+      const fromDate = new Date(toDate);
+      fromDate.setMonth(fromDate.getMonth() - 12);
+      const fmt = (d) => d.toISOString().slice(0, 10);
+      const result = await refreshBintrackerData({ buildingId, fromDate: fmt(fromDate), toDate: fmt(toDate) });
+      lastBintrackerRefreshCountsByBuildingId.set(buildingId, {
+        rowsFetched: result.data.rowsFetched, rowsMapped: result.data.rowsMapped, rowsSkipped: result.data.rowsSkipped,
+      });
+      // Force a fresh reload of rows/matches for this building — a re-refresh may have changed
+      // which raw tenant/location strings exist, and the old cached set would otherwise keep
+      // showing stale candidates until a full page reload.
+      bintrackerLoadedForBuildingId.delete(buildingId);
+      await loadBintrackerDataForBuilding(buildingId);
+    } catch (err){
+      console.error('Failed to refresh Bintracker data:', err);
+      await showAlert(err.message || 'Failed to refresh - check the console for details.');
+    } finally {
+      refreshingBintrackerBuildingId = null;
+      refreshBuildingsView();
+    }
+    return;
+  }
+
+  const bintrackerOpenChangeBtn = e.target.closest('.bintracker-open-change-btn');
+  if (bintrackerOpenChangeBtn){
+    const row = bintrackerOpenChangeBtn.closest('.bintracker-match-row');
+    bintrackerChangeOpenKey = `${row.dataset.buildingId}__${row.dataset.tenantId}`;
+    refreshBuildingsView();
+    return;
+  }
+
+  const bintrackerCancelChangeBtn = e.target.closest('.bintracker-cancel-change-btn');
+  if (bintrackerCancelChangeBtn){
+    bintrackerChangeOpenKey = null;
+    refreshBuildingsView();
+    return;
+  }
+
+  const bintrackerConfirmCandidateBtn = e.target.closest('.bintracker-confirm-candidate-btn');
+  if (bintrackerConfirmCandidateBtn){
+    const row = bintrackerConfirmCandidateBtn.closest('.bintracker-match-row');
+    const building = buildingsCache.find(x => x.id === row.dataset.buildingId);
+    const tenant = building && building.tenants.find(x => x.id === row.dataset.tenantId);
+    if (!building || !tenant) return;
+    await confirmBintrackerMatch(building, tenant, row.dataset.candidate);
+    return;
+  }
+
+  const bintrackerConfirmManualBtn = e.target.closest('.bintracker-confirm-manual-btn');
+  if (bintrackerConfirmManualBtn){
+    const row = bintrackerConfirmManualBtn.closest('.bintracker-match-row');
+    const chosen = row.querySelector('.bintracker-manual-select').value;
+    if (!chosen){ await showAlert('Pick a Bintracker tenant first.'); return; }
+    const building = buildingsCache.find(x => x.id === row.dataset.buildingId);
+    const tenant = building && building.tenants.find(x => x.id === row.dataset.tenantId);
+    if (!building || !tenant) return;
+    await confirmBintrackerMatch(building, tenant, chosen);
+    return;
+  }
+
   const editTenantBtn = e.target.closest('.edit-tenant-btn');
   if (editTenantBtn){
     const buildingId = editTenantBtn.closest('.building-row').dataset.buildingId;
@@ -1507,6 +1781,12 @@ if (auth){
       permanentDeletePanelBuildingId = null;
       buildingsCache = [];
       archivedBuildingsCache = [];
+      lastBintrackerRefreshCountsByBuildingId.clear();
+      bintrackerRowsByBuildingId.clear();
+      bintrackerMatchesByBuildingId.clear();
+      bintrackerLoadedForBuildingId.clear();
+      bintrackerChangeOpenKey = null;
+      refreshingBintrackerBuildingId = null;
     }
   });
 }
