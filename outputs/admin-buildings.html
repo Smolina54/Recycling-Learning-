@@ -135,13 +135,6 @@
   @media (max-width:640px){.import-row{grid-template-columns:20px 1fr;} .import-row .import-levels{grid-column:2;}}
 
   .building-row, .enrolled-building-row, .distribution-building-row{margin-bottom:20px;}
-  .building-link-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
-  .building-link-text{
-    font-family:var(--mono); font-size:12px; background:var(--paper); border:1px solid var(--line);
-    padding:8px 12px; border-radius:var(--radius); overflow-x:auto; white-space:nowrap; max-width:100%;
-  }
-  .building-qr{width:120px; height:120px; margin-bottom:16px;}
-  .building-qr svg{width:100%; height:100%;}
   .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
   .building-row:has(> .building-header-row:only-child) .building-header-row{margin-bottom:0;}
   .building-header-row h3{margin-bottom:0;}
@@ -166,7 +159,6 @@
   .tenant-list .tenant-name{font-weight:600;}
   .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
   .tenant-row-actions{display:flex; gap:8px; flex-shrink:0; margin-left:auto;}
-  .remove-admin-btn{margin-left:auto;}
   /* ".tenant-list li" (a descendant selector) beats a plain ".tenant-edit-row" class selector on
      specificity alone, regardless of source order — align-items:center from that base rule was
      silently winning here. Match its selector shape (with the extra class) to actually override it. */
@@ -213,7 +205,6 @@
   .danger-btn{border-color:var(--gw) !important; color:var(--gw) !important;}
   .danger-btn:hover{background:var(--gw) !important; color:var(--paper) !important;}
   input[type=file]{display:none;}
-  .file-name{font-family:var(--mono); font-size:12px; color:var(--ink-soft); margin-top:14px;}
 
   .report-header-row{display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px; margin:36px 0 20px;}
   .report-header-row h2{font-family:var(--display); text-transform:uppercase; font-size:24px; margin:0;}
