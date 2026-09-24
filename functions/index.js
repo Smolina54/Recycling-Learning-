@@ -539,6 +539,8 @@ exports.deleteBuildingPermanently = onCall({ timeoutSeconds: 300 }, async (reque
     links: await deleteAllMatchingBuildingId('links', buildingId),
     enrollments: await deleteAllMatchingBuildingId('enrollments', buildingId),
     buildingAccess: await deleteAllMatchingBuildingId('buildingAccess', buildingId),
+    bintrackerRows: await deleteAllMatchingBuildingId('bintrackerRows', buildingId),
+    bintrackerTenantMatches: await deleteAllMatchingBuildingId('bintrackerTenantMatches', buildingId),
   };
 
   const tenantsSnap = await buildingRef.collection('tenants').get();

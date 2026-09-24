@@ -223,5 +223,13 @@ service cloud.firestore {
       allow read: if canReviewBuilding(resource.data.buildingId);
       allow write: if false;
     }
+
+    // Admin-confirmed tenant matches (a candidate suggestion from findBestMatch() must be
+    // reviewed/confirmed by an admin before it's trusted anywhere — never a silent automatic
+    // link) — admin-write, same read scoping as everything else building-scoped.
+    match /bintrackerTenantMatches/{matchId} {
+      allow read: if canReviewBuilding(resource.data.buildingId);
+      allow write: if isAllowedReviewer();
+    }
   }
 }

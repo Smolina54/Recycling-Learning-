@@ -152,7 +152,8 @@ async function main() {
   if (happyResult.ok) {
     const c = happyResult.data.deletedCounts;
     check('deletedCounts matches what was seeded',
-      c.submissions === 2 && c.attempts === 2 && c.links === 1 && c.enrollments === 1 && c.buildingAccess === 1 && c.tenants === 2,
+      c.submissions === 2 && c.attempts === 2 && c.links === 1 && c.enrollments === 1 && c.buildingAccess === 1 && c.tenants === 2
+        && c.bintrackerRows === 0 && c.bintrackerTenantMatches === 0,
       JSON.stringify(c));
   }
   const buildingDocAfter = await getDoc(doc(otherAdmin.db, 'buildings', VALID_BUILDING_ID));
