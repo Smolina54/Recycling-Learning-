@@ -225,8 +225,16 @@ function buildInductionEmailContent({ buildingName, programName, link }) {
   return { subject, html, text };
 }
 
+// maxInstances/concurrency: buildTransporter() opens a fresh SMTP connection per call with no
+// shared pool or global limiter - left uncapped, this could scale to 20 instances x 80 concurrent
+// requests each (Cloud Functions v2's own defaults), opening far more parallel SMTP connections
+// than a single mailbox's SMTP AUTH throttling on Microsoft 365 can take, surfacing as generic
+// send failures with no specific handling. Capped low enough that a real burst (e.g. a company-
+// wide rollout finishing around the same time) gets naturally queued/serialized instead - real
+// scale here is dozens-to-low-hundreds of sends per rollout, not thousands, so this costs nothing
+// in practice while bounding the worst case.
 exports.sendInductionEmail = onCall(
-  { secrets: [SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER_MAILBOX] },
+  { secrets: [SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER_MAILBOX], maxInstances: 3, concurrency: 5 },
   async (request) => {
     await assertIsAdmin(request.auth);
     const payload = validatePayload(request.data);
@@ -392,8 +400,11 @@ function buildResultEmailContent(data) {
   return { html, text };
 }
 
+// Same concurrency cap and reasoning as sendInductionEmail above - this one has no admin-side
+// rate limit to fall back on (its cap is per-submission instead), so bounding total concurrent
+// SMTP connections here matters just as much.
 exports.sendMyResultEmail = onCall(
-  { secrets: [SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER_MAILBOX] },
+  { secrets: [SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER_MAILBOX], maxInstances: 3, concurrency: 5 },
   async (request) => {
     const { submissionId, confirmedEmail } = request.data || {};
     if (!submissionId || typeof submissionId !== 'string') {
