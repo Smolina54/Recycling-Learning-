@@ -40,7 +40,7 @@
       "fields": [
         { "fieldPath": "buildingId", "order": "ASCENDING" },
         { "fieldPath": "programId", "order": "ASCENDING" },
-        { "fieldPath": "timestamp", "order": "DESCENDING" }
+        { "fieldPath": "timestamp", "order": "ASCENDING" }
       ]
     },
     {
@@ -49,7 +49,7 @@
       "fields": [
         { "fieldPath": "buildingId", "order": "ASCENDING" },
         { "fieldPath": "programId", "order": "ASCENDING" },
-        { "fieldPath": "startedAt", "order": "DESCENDING" }
+        { "fieldPath": "startedAt", "order": "ASCENDING" }
       ]
     }
   ],
