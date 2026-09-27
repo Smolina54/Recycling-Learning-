@@ -8,6 +8,14 @@
 // manually and directly (2026-09-24), not by this automated suite, same reasoning as
 // sendInductionEmail's own real-send path being left untested here by design.
 //
+// testRecyclingLevelAggregation() (Workstream 7 Point 5 sub-idea, 2026-09-24) covers the OTHER
+// half of refreshBintrackerData - the recyclingLevelPct aggregate write step - by calling
+// functions/index.js's exported _writeRecyclingLevelAggregates directly against
+// bintrackerRows/bintrackerTenantMatches seeded straight into the emulator (via the admin SDK,
+// obtained through the also-exported _getAdminFirestoreForTests() - bypasses rules entirely),
+// same "seed what a real refresh would have produced, skip the real network" approach as the
+// rest of this file and as admin-buildings-bintracker.test.js's own review-UI suite.
+//
 // Run: npm run test:functions-bintracker
 // On this machine, port 5001 may already be taken by an unrelated project's dev server - run
 // instead with:
@@ -75,6 +83,122 @@ async function withRulesDisabled(fn) {
 
 const VALID_PAYLOAD_SHAPE = { fromDate: '2026-01-01', toDate: '2026-01-31' };
 
+// --- Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24) ---
+// Exercises _writeRecyclingLevelAggregates directly (exported from functions/index.js purely for
+// this test) against bintrackerRows/bintrackerTenantMatches seeded straight into the Firestore
+// emulator via the admin SDK — the real refreshBintrackerData handler also calls the real
+// Bintracker network (fetchBintrackerCollections) before ever reaching this step, which this
+// suite deliberately never does (see the file header) — same "seed the data a real refresh would
+// have produced, skip the network" approach as admin-buildings-bintracker.test.js's own review-UI
+// coverage. Requires firebase-admin, which only functions/node_modules has installed — got via
+// functions/index.js's own `_admin` export rather than requiring firebase-admin directly here.
+async function testRecyclingLevelAggregation() {
+  const { _writeRecyclingLevelAggregates, _getAdminFirestoreForTests } = require('../functions/index.js');
+  const db = _getAdminFirestoreForTests();
+  const suffix = Date.now() + '-agg';
+  const buildingId = 'agg-tower-' + suffix;
+  const tenantConfirmedId = 'agg-tenant-confirmed-' + suffix;
+  const tenantUnconfirmedId = 'agg-tenant-unconfirmed-' + suffix;
+  const tenantGhostId = 'agg-tenant-ghost-' + suffix; // confirmed match, tenant doc never created
+
+  await db.doc(`buildings/${buildingId}`).set({ name: 'Aggregate Tower', bintrackerBuildingName: 'Agg Demo Building' });
+  await db.doc(`buildings/${buildingId}/tenants/${tenantConfirmedId}`).set({ name: 'Confirmed Co', levels: ['L1'] });
+  await db.doc(`buildings/${buildingId}/tenants/${tenantUnconfirmedId}`).set({ name: 'Unconfirmed Co', levels: ['L1'] });
+
+  // "Confirmed Raw Co" — 5 qualifying rows (exactly at the floor), 4 Recycled -> 80%.
+  const confirmedRows = [
+    ['mr', 'Recycled'], ['mr', 'Recycled'], ['pc', 'Recycled'], ['og', 'Recycled'], ['og', 'Non-Recycled'],
+  ];
+  // "Other Co" — 5 qualifying rows, 3 Recycled -> would be 60% IF its match were confirmed;
+  // its match doc below is deliberately left as status:'pending' to prove an unconfirmed match
+  // never feeds the tenant-level field, same "admin reviews, never fully automatic" principle
+  // established for the rest of this workstream.
+  const otherRows = [
+    ['mr', 'Recycled'], ['mr', 'Recycled'], ['pc', 'Recycled'], ['pc', 'Non-Recycled'], ['og', 'Non-Recycled'],
+  ];
+  // One row tagged with a different-case variant of the confirmed raw string — bintrackerTenantRaw
+  // matching is documented as case-sensitive exact match; this row must count toward the BUILDING
+  // total (still externalOnly + a recyclable stream) but must NOT count toward Confirmed Co's own
+  // tenant-level number.
+  const caseVariantRow = { ourStream: 'mr', externalOnly: true, wasteOutcome: 'Recycled', bintrackerTenantRaw: 'confirmed raw co' };
+  // Noise that must never count toward either number: General Waste/E-Waste (wrong streams) and
+  // an internalOnly (externalOnly:false) recyclable-stream row.
+  const excludedRows = [
+    { ourStream: 'gw', externalOnly: true, wasteOutcome: 'Recycled', bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'ew', externalOnly: true, wasteOutcome: 'Recycled', bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'mr', externalOnly: false, wasteOutcome: 'Recycled', bintrackerTenantRaw: 'Confirmed Raw Co' },
+  ];
+
+  const allRows = [
+    ...confirmedRows.map(([ourStream, wasteOutcome]) => ({ ourStream, externalOnly: true, wasteOutcome, bintrackerTenantRaw: 'Confirmed Raw Co' })),
+    ...otherRows.map(([ourStream, wasteOutcome]) => ({ ourStream, externalOnly: true, wasteOutcome, bintrackerTenantRaw: 'Other Co' })),
+    caseVariantRow,
+    ...excludedRows,
+  ];
+  for (const r of allRows) {
+    await db.collection('bintrackerRows').add({
+      buildingId, bintrackerLocationRaw: 'Level 1', wasteTypeRaw: 'x', contaminated: false,
+      collectDate: '2026-01-15', weight: 10, fetchedAt: new Date(), ...r,
+    });
+  }
+  // Building total: Confirmed Raw Co (5 rows, 4 recycled) + Other Co (5 rows, 3 recycled) +
+  // the lowercase case-variant row (1 row, recycled) = 11 qualifying, 8 recycled -> 8/11 = 72.7% -> 73.
+  // Confirmed Co's own number: only the 5 exact-case "Confirmed Raw Co" rows -> 4/5 = 80%.
+
+  await db.doc('bintrackerTenantMatches/' + `${buildingId}__${tenantConfirmedId}`).set({
+    buildingId, tenantId: tenantConfirmedId, tenantName: 'Confirmed Co',
+    bintrackerTenantRaw: 'Confirmed Raw Co', bintrackerLocationRaw: 'Level 1',
+    confirmedBy: 'admin@example.com', status: 'confirmed',
+  });
+  await db.doc('bintrackerTenantMatches/' + `${buildingId}__${tenantUnconfirmedId}`).set({
+    buildingId, tenantId: tenantUnconfirmedId, tenantName: 'Unconfirmed Co',
+    bintrackerTenantRaw: 'Other Co', bintrackerLocationRaw: 'Level 1',
+    confirmedBy: '', status: 'pending',
+  });
+  await db.doc('bintrackerTenantMatches/' + `${buildingId}__${tenantGhostId}`).set({
+    buildingId, tenantId: tenantGhostId, tenantName: 'Ghost Co',
+    bintrackerTenantRaw: 'Ghost Raw Co', bintrackerLocationRaw: 'Level 1',
+    confirmedBy: 'admin@example.com', status: 'confirmed',
+  });
+
+  await _writeRecyclingLevelAggregates(db, buildingId);
+
+  const buildingSnap = await db.doc(`buildings/${buildingId}`).get();
+  check('building-wide recyclingLevelPct computed correctly across all qualifying rows (8/11 -> 73%)',
+    buildingSnap.data().recyclingLevelPct === 73, JSON.stringify(buildingSnap.data()));
+
+  const confirmedTenantSnap = await db.doc(`buildings/${buildingId}/tenants/${tenantConfirmedId}`).get();
+  check('confirmed tenant recyclingLevelPct computed from only its own exact-case raw rows (4/5 -> 80%)',
+    confirmedTenantSnap.data().recyclingLevelPct === 80, JSON.stringify(confirmedTenantSnap.data()));
+
+  const unconfirmedTenantSnap = await db.doc(`buildings/${buildingId}/tenants/${tenantUnconfirmedId}`).get();
+  check('a tenant whose match is only "pending" (not confirmed) gets no recyclingLevelPct field at all',
+    unconfirmedTenantSnap.data().recyclingLevelPct === undefined, JSON.stringify(unconfirmedTenantSnap.data()));
+
+  const ghostTenantSnap = await db.doc(`buildings/${buildingId}/tenants/${tenantGhostId}`).get();
+  check('a confirmed match pointing at a tenant doc that was never created is skipped gracefully, not crashing and not creating a phantom doc',
+    !ghostTenantSnap.exists, JSON.stringify(ghostTenantSnap.data()));
+
+  // --- Below-the-floor + stale-field deletion: delete every bintrackerRows doc for this building
+  // (simulating a re-refresh over a narrower/emptier range) and re-run the aggregate — both the
+  // building's and the tenant's previously-written numbers must be REMOVED (FieldValue.delete()),
+  // not left stale and not zeroed out. ---
+  const rowsSnap = await db.collection('bintrackerRows').where('buildingId', '==', buildingId).get();
+  const batch = db.batch();
+  rowsSnap.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+
+  await _writeRecyclingLevelAggregates(db, buildingId);
+
+  const buildingSnapAfter = await db.doc(`buildings/${buildingId}`).get();
+  check('after the qualifying rows disappear, the building doc\'s stale recyclingLevelPct is removed entirely (not left, not zeroed)',
+    buildingSnapAfter.exists && !('recyclingLevelPct' in buildingSnapAfter.data()), JSON.stringify(buildingSnapAfter.data()));
+
+  const confirmedTenantSnapAfter = await db.doc(`buildings/${buildingId}/tenants/${tenantConfirmedId}`).get();
+  check('...and the confirmed tenant\'s stale recyclingLevelPct is removed the same way',
+    confirmedTenantSnapAfter.exists && !('recyclingLevelPct' in confirmedTenantSnapAfter.data()), JSON.stringify(confirmedTenantSnapAfter.data()));
+}
+
 async function main() {
   const MAPPED_BUILDING_ID = 'mapped-tower-' + Date.now();
   const UNMAPPED_BUILDING_ID = 'unmapped-tower-' + Date.now();
@@ -107,6 +231,8 @@ async function main() {
 
   const unmappedResult = await callRefresh(otherAdmin.functions, { buildingId: UNMAPPED_BUILDING_ID, ...VALID_PAYLOAD_SHAPE });
   check('a building with no bintrackerBuildingName set is rejected', !unmappedResult.ok && unmappedResult.code === 'functions/failed-precondition', JSON.stringify(unmappedResult));
+
+  await testRecyclingLevelAggregation();
 
   for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.ok ? '' : ' ' + r.extra}`);
   const failed = results.filter(r => !r.ok);

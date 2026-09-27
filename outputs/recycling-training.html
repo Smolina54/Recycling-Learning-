@@ -65,6 +65,20 @@
   .id-gate-brand .brand-divider{width:1px; align-self:stretch; background:var(--line);}
   .id-card{max-width:440px; width:100%; background:var(--panel); border:1px solid var(--line); padding:44px 36px;}
   .id-card .headline{font-size:clamp(26px,5vw,36px); margin-bottom:16px;}
+  /* Real Bintracker recycling-level banner (Workstream 7 Point 5 sub-idea) - reuses the same
+     forest/gw pass-fail colors as the results gauge (.gauge-fill / .gauge-fill.failed) so "on
+     track" vs "needs work" reads consistently across the whole app. */
+  .level-banner{
+    display:flex; align-items:center; gap:14px;
+    padding:14px 16px; margin:0 0 20px; border-radius:var(--radius);
+    border-left:4px solid var(--forest); background:rgba(47,111,78,0.09);
+  }
+  .level-banner.needs-improvement{border-left-color:var(--gw); background:rgba(140,47,57,0.07);}
+  .level-banner-pct{font-family:var(--display); font-weight:700; font-size:26px; line-height:1; color:var(--forest); white-space:nowrap;}
+  .level-banner.needs-improvement .level-banner-pct{color:var(--gw);}
+  .level-banner-copy{display:flex; flex-direction:column; gap:3px;}
+  .level-banner-label{font-family:var(--mono); font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-soft);}
+  .level-banner-msg{font-size:14px; font-weight:500; color:var(--ink);}
   .id-form{margin-top:8px;}
   .id-field{display:flex; flex-direction:column; gap:6px; margin-bottom:18px;}
   .id-field span{font-family:var(--mono); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink-soft);}
@@ -421,6 +435,13 @@
   <div class="id-card" id="idCardForm" style="display:none;">
     <p class="eyebrow">Before you start</p>
     <h1 class="headline">Tell us who's sorting.</h1>
+    <div class="level-banner" id="idLevelBanner" style="display:none;">
+      <span class="level-banner-pct" id="idLevelBannerPct"></span>
+      <span class="level-banner-copy">
+        <span class="level-banner-label">Real recycling level</span>
+        <span class="level-banner-msg" id="idLevelBannerMsg"></span>
+      </span>
+    </div>
     <p class="hero-sub" style="margin-bottom:8px;">This records your training completion for <strong id="idBuildingNameInline"></strong>.</p>
     <form class="id-form" id="idForm" novalidate>
       <label class="id-field">
@@ -862,6 +883,7 @@ try {
   const idCardInvalid = document.getElementById('idCardInvalid');
   const idCardForm = document.getElementById('idCardForm');
   const idTenantSelect = document.getElementById('idTenant');
+  const idLevelBanner = document.getElementById('idLevelBanner');
   const idLevelSelect = document.getElementById('idLevel');
   const idLevelField = document.getElementById('idLevelField');
 
@@ -1041,6 +1063,35 @@ try {
       if (lockedTenantId) idTenantSelect.disabled = true;
       idTenantSelect.addEventListener('change', () => populateLevelsForTenant(idTenantSelect.value));
       if (lockedTenantId) populateLevelsForTenant(lockedTenantId);
+
+      // Real Bintracker recycling-level banner (Workstream 7 Point 5 sub-idea, 2026-09-24) —
+      // reads an already-cached field off the building/tenant doc this id-gate fetches anyway,
+      // never a live Bintracker/Cloud Function call from the trainee's own page load. A
+      // tenant-scoped link (lockedTenantId set) shows ONLY that tenant's own number — never a
+      // fallback to the building's aggregate, which would misrepresent building-wide data as
+      // being specifically about that tenant. A whole-building link shows the building's own
+      // number. Either can simply be absent (no refresh yet, no confirmed Bintracker match, or
+      // too thin a sample) — absence means no banner, never a stale/misleading value.
+      let levelPct = null;
+      let levelScopeLabel = 'Your building';
+      if (lockedTenantId){
+        const lockedTenant = tenantsCache.find(t => t.id === lockedTenantId);
+        levelPct = lockedTenant && typeof lockedTenant.recyclingLevelPct === 'number' ? lockedTenant.recyclingLevelPct : null;
+        levelScopeLabel = 'Your company';
+      } else if (typeof buildingSnap.data().recyclingLevelPct === 'number'){
+        levelPct = buildingSnap.data().recyclingLevelPct;
+      }
+      if (levelPct === null){
+        idLevelBanner.style.display = 'none';
+      } else {
+        const onTrack = levelPct >= 75;
+        idLevelBanner.classList.toggle('needs-improvement', !onTrack);
+        document.getElementById('idLevelBannerPct').textContent = levelPct + '%';
+        document.getElementById('idLevelBannerMsg').textContent = onTrack
+          ? `${levelScopeLabel} is recycling well. Keep it up!`
+          : `${levelScopeLabel} has room to improve. Let's work on it together!`;
+        idLevelBanner.style.display = 'flex';
+      }
 
       idCardLoading.style.display = 'none';
       idCardForm.style.display = 'block';

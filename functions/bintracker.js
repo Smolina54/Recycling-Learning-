@@ -105,6 +105,28 @@ function mapWasteTypeToStream(wasteType) {
   return WASTE_TYPE_TO_STREAM[wasteType] || null;
 }
 
+// ---- Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24) ----
+// The single combined "real recycling level" percentage shown on the id-gate (Point 5) -
+// same scope restriction as Point 1's own comparisons: General Waste and E-Waste are excluded,
+// since "recycled/non-recycled" has no meaning for them. A plain, pure function over an array of
+// bintrackerRows-shaped objects (already filtered to one building, or one building+tenant, by
+// the caller) so it can be unit-tested with no Firestore/Functions emulator at all, same as the
+// rest of this file's exports.
+const RECYCLABLE_STREAMS = new Set(['mr', 'pc', 'og']);
+const MIN_ROWS_FOR_RECYCLING_LEVEL = 5; // same floor as Point 1's own comparison guard
+
+// Returns a rounded 0-100 percentage, or null if there aren't at least
+// MIN_ROWS_FOR_RECYCLING_LEVEL qualifying rows - never a 0% or otherwise misleading number from
+// too thin a sample ("graceful absence", the same principle used everywhere else in this
+// workstream). Qualifying = externalOnly === true AND ourStream is one of the 3 recyclable
+// streams; among those, the share with wasteOutcome === 'Recycled'.
+function computeRecyclingLevelPct(rows) {
+  const qualifying = (rows || []).filter((r) => r.externalOnly === true && RECYCLABLE_STREAMS.has(r.ourStream));
+  if (qualifying.length < MIN_ROWS_FOR_RECYCLING_LEVEL) return null;
+  const recycled = qualifying.filter((r) => r.wasteOutcome === 'Recycled').length;
+  return Math.round((recycled / qualifying.length) * 100);
+}
+
 // ---- Shared fuzzy matching (Point 1's Phase B + Workstream 12's tenant sync both use this) ----
 // Deliberately simple - no fuzzy-string-distance library (none exists in this codebase today):
 // normalize, then try exact match, then substring-contains either direction, then a trivial
@@ -157,6 +179,9 @@ module.exports = {
   WASTE_TYPE_TO_STREAM,
   normalizeForMatching,
   findBestMatch,
+  RECYCLABLE_STREAMS,
+  MIN_ROWS_FOR_RECYCLING_LEVEL,
+  computeRecyclingLevelPct,
   // exported for the isolated signing unit test - not used by other modules
   _oauth1Header: oauth1Header,
 };

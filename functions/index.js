@@ -17,7 +17,7 @@ const nodemailer = require('nodemailer');
 const path = require('path');
 const crypto = require('crypto');
 const { catalog } = require('./catalog');
-const { fetchBintrackerCollections, mapWasteTypeToStream } = require('./bintracker');
+const { fetchBintrackerCollections, mapWasteTypeToStream, computeRecyclingLevelPct } = require('./bintracker');
 
 // Co-located with Firestore, which already lives in australia-southeast2 (Melbourne) — moved
 // here from the platform's us-central1 default on 2026-09-23 for data residency (Tradeflex is
@@ -563,6 +563,48 @@ function bintrackerRowDocId(buildingId, collectDate, tenantRaw, locationRaw, was
   return crypto.createHash('sha256').update(key).digest('hex');
 }
 
+// Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24): a single cached
+// percentage the trainee-facing id-gate reads directly off the building/tenant doc it already
+// fetches - never a live call from the trainee's own page load. Computed from the building's
+// FULL current bintrackerRows set (not just one refresh call's fromDate/toDate slice) - a refresh
+// of one range shouldn't silently narrow what the id-gate shows about the building/tenant
+// overall. Factored out of refreshBintrackerData itself (which also does the real network fetch,
+// untestable without hitting Bintracker's live API) so this half - pure Firestore read/write
+// against already-seeded bintrackerRows/bintrackerTenantMatches - can be exercised directly by
+// tests/functions-refreshbintrackerdata.test.js against the Firestore emulator, exported below.
+async function writeRecyclingLevelAggregates(db, buildingId) {
+  const buildingRef = db.collection('buildings').doc(buildingId);
+  const buildingSnap = await buildingRef.get();
+  if (!buildingSnap.exists) return; // nothing to compute for a building that doesn't exist
+
+  const allRowsSnap = await db.collection('bintrackerRows').where('buildingId', '==', buildingId).get();
+  const allRows = allRowsSnap.docs.map((d) => d.data());
+  const buildingPct = computeRecyclingLevelPct(allRows);
+  // FieldValue.delete() when the current data no longer qualifies (e.g. a stale number from an
+  // earlier, richer date range) - graceful absence beats a stale/misleading number left behind.
+  await buildingRef.update({
+    recyclingLevelPct: buildingPct === null ? admin.firestore.FieldValue.delete() : buildingPct,
+  });
+
+  const confirmedMatchesSnap = await db.collection('bintrackerTenantMatches')
+    .where('buildingId', '==', buildingId)
+    .where('status', '==', 'confirmed')
+    .get();
+  for (const matchDoc of confirmedMatchesSnap.docs) {
+    const match = matchDoc.data();
+    // Case-sensitive exact match against the admin-confirmed raw string - this is the only link
+    // between a real Bintracker tenant string and one of this app's own tenant docs.
+    const tenantRows = allRows.filter((r) => r.bintrackerTenantRaw === match.bintrackerTenantRaw);
+    const tenantPct = computeRecyclingLevelPct(tenantRows);
+    const tenantRef = db.collection('buildings').doc(buildingId).collection('tenants').doc(match.tenantId);
+    const tenantSnap = await tenantRef.get();
+    if (!tenantSnap.exists) continue; // stale match pointing at a since-deleted tenant doc
+    await tenantRef.update({
+      recyclingLevelPct: tenantPct === null ? admin.firestore.FieldValue.delete() : tenantPct,
+    });
+  }
+}
+
 // Same "delete existing docs matching a query, then write fresh ones" idiom as
 // deleteAllMatchingBuildingId above, scoped by buildingId + a collectDate range instead of just
 // buildingId - keeps a re-run of "Refresh" for the same building/range provably current instead
@@ -634,6 +676,8 @@ exports.refreshBintrackerData = onCall(
           ourStream,
           wasteTypeRaw: row.wasteType,
           contaminated: Boolean(row.contaminated),
+          externalOnly: Boolean(row.externalOnly),
+          wasteOutcome: typeof row.wasteOutcome === 'string' ? row.wasteOutcome : null,
           collectDate,
           weight: typeof row.weight === 'number' ? row.weight : (typeof row.actualWeight === 'number' ? row.actualWeight : null),
           fetchedAt,
@@ -642,6 +686,8 @@ exports.refreshBintrackerData = onCall(
       }
       await batch.commit();
     }
+
+    await writeRecyclingLevelAggregates(db, buildingId);
 
     return {
       ok: true,
@@ -653,3 +699,17 @@ exports.refreshBintrackerData = onCall(
     };
   }
 );
+
+// Exported purely for tests/functions-refreshbintrackerdata.test.js to call directly against the
+// Firestore emulator (seeded bintrackerRows/bintrackerTenantMatches, no real Bintracker network
+// call) - neither is a Cloud Functions trigger itself, so `firebase deploy --only functions`
+// skips both (they aren't shaped like one - no onCall/onRequest wrapper), same as any other plain
+// named export would be. `_getAdminFirestoreForTests` (a plain function, not the raw `admin`
+// module object) is exported so the test can get a Firestore handle without needing
+// firebase-admin installed in its own node_modules (only functions/node_modules has it - resolved
+// here via this file's own require) - exporting the raw `admin` object itself was tried first and
+// broke the Functions emulator's own codebase loader (`RangeError: Maximum call stack size
+// exceeded` in firebase-functions' export-analysis step, tripping over admin SDK's internal
+// circular references) - a plain function has nothing for that analysis to recurse into.
+exports._writeRecyclingLevelAggregates = writeRecyclingLevelAggregates;
+exports._getAdminFirestoreForTests = () => admin.firestore();

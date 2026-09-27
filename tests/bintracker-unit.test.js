@@ -5,7 +5,7 @@
 // both depend on this).
 // Run: npm run test:bintracker-unit
 const assert = require('assert');
-const { mapWasteTypeToStream, normalizeForMatching, findBestMatch, _oauth1Header } = require('../functions/bintracker');
+const { mapWasteTypeToStream, normalizeForMatching, findBestMatch, computeRecyclingLevelPct, MIN_ROWS_FOR_RECYCLING_LEVEL, _oauth1Header } = require('../functions/bintracker');
 
 const results = [];
 function check(label, cond, extra) { results.push({ label, ok: Boolean(cond), extra: extra || '' }); }
@@ -73,6 +73,56 @@ check('no candidate above the floor returns null', noMatch === null, JSON.string
 
 const emptyOurs = findBestMatch('', ['Widgetco']);
 check('an empty our-name returns null (nothing to match)', emptyOurs === null, JSON.stringify(emptyOurs));
+
+// --- computeRecyclingLevelPct (Workstream 7 Point 5 sub-idea, 2026-09-24) ---
+function row(ourStream, externalOnly, wasteOutcome) {
+  return { ourStream, externalOnly, wasteOutcome };
+}
+
+check('MIN_ROWS_FOR_RECYCLING_LEVEL is the documented floor of 5', MIN_ROWS_FOR_RECYCLING_LEVEL === 5, MIN_ROWS_FOR_RECYCLING_LEVEL);
+
+// Below the sample floor: 4 qualifying rows, all Recycled - still null, not 100%.
+const tooFewRows = [
+  row('mr', true, 'Recycled'), row('mr', true, 'Recycled'),
+  row('pc', true, 'Recycled'), row('og', true, 'Recycled'),
+];
+check('below the 5-row floor returns null, not a misleading percentage',
+  computeRecyclingLevelPct(tooFewRows) === null, computeRecyclingLevelPct(tooFewRows));
+
+// Exactly at the floor, mixed outcome across all 3 recyclable streams -> 3/5 = 60%.
+const atFloorMixed = [
+  row('mr', true, 'Recycled'), row('mr', true, 'Non-Recycled'),
+  row('pc', true, 'Recycled'), row('og', true, 'Recycled'),
+  row('og', true, 'Non-Recycled'),
+];
+check('at exactly 5 qualifying rows, computes the real percentage (3/5 = 60%)',
+  computeRecyclingLevelPct(atFloorMixed) === 60, computeRecyclingLevelPct(atFloorMixed));
+
+// gw/ew rows must never count toward the sample or the numerator, even if plentiful and all
+// "Recycled" - only mr/pc/og participate in this metric.
+const gwEwExcluded = [
+  ...atFloorMixed,
+  row('gw', true, 'Recycled'), row('gw', true, 'Recycled'), row('gw', true, 'Recycled'),
+  row('ew', true, 'Recycled'), row('ew', true, 'Recycled'), row('ew', true, 'Recycled'),
+];
+check('gw/ew rows are excluded from both the sample size and the result (still 60%, not diluted)',
+  computeRecyclingLevelPct(gwEwExcluded) === 60, computeRecyclingLevelPct(gwEwExcluded));
+
+// internalOnly (externalOnly:false) rows must never count either, regardless of stream/outcome.
+const internalOnlyExcluded = [
+  ...atFloorMixed,
+  row('mr', false, 'Recycled'), row('pc', false, 'Recycled'), row('og', false, 'Recycled'),
+];
+check('externalOnly:false rows are excluded from the sample (still 60%, internal rows ignored)',
+  computeRecyclingLevelPct(internalOnlyExcluded) === 60, computeRecyclingLevelPct(internalOnlyExcluded));
+
+// All-recycled and all-non-recycled boundary cases.
+const allRecycled = [row('mr', true, 'Recycled'), row('mr', true, 'Recycled'), row('pc', true, 'Recycled'), row('pc', true, 'Recycled'), row('og', true, 'Recycled')];
+check('all-qualifying-rows-recycled computes 100%', computeRecyclingLevelPct(allRecycled) === 100, computeRecyclingLevelPct(allRecycled));
+const noneRecycled = [row('mr', true, 'Non-Recycled'), row('mr', true, 'Non-Recycled'), row('pc', true, 'Non-Recycled'), row('pc', true, 'Non-Recycled'), row('og', true, 'Non-Recycled')];
+check('all-qualifying-rows-non-recycled computes 0%', computeRecyclingLevelPct(noneRecycled) === 0, computeRecyclingLevelPct(noneRecycled));
+
+check('an empty row array returns null', computeRecyclingLevelPct([]) === null, computeRecyclingLevelPct([]));
 
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.ok ? '' : ' :: ' + r.extra}`);
 const failed = results.filter(r => !r.ok);

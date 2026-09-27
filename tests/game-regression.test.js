@@ -23,6 +23,27 @@ const TEST_BUILDING_ID = 'test-building-1';
 const TEST_TENANT_ID = 'test-tenant-1';
 const GAME_URL = `${url.pathToFileURL(GAME_PATH).href}?b=${TEST_BUILDING_ID}&emulator=1`;
 
+// --- Real Bintracker recycling-level banner (Workstream 7 Point 5 sub-idea, 2026-09-24) ---
+// A separate building from TEST_BUILDING_ID above (kept apart on purpose - the main flow's own
+// building has no recyclingLevelPct at all, and mixing scenarios into it would make that
+// assumption fragile) with a building-level recyclingLevelPct (>=75%, "on track" framing) and two
+// tenants: one with its OWN recyclingLevelPct (<75%, "needs improvement" framing, deliberately
+// different from the building's number so a tenant-scoped view showing the WRONG number would be
+// caught), and one with no recyclingLevelPct field at all (the graceful-absence case). Three
+// links exercise the three scopes the id-gate actually reads: whole-building, tenant-scoped with
+// a qualifying value, and tenant-scoped with none.
+const BANNER_BUILDING_ID = 'test-building-banner-' + Date.now();
+const BANNER_TENANT_LOW_ID = 'test-tenant-banner-low-' + Date.now();
+const BANNER_TENANT_NONE_ID = 'test-tenant-banner-none-' + Date.now();
+const BANNER_LINK_WHOLE_ID = 'test-link-banner-whole-' + Date.now();
+const BANNER_LINK_TENANT_LOW_ID = 'test-link-banner-tenant-low-' + Date.now();
+const BANNER_LINK_TENANT_NONE_ID = 'test-link-banner-tenant-none-' + Date.now();
+const BANNER_BUILDING_PCT = 82; // >= 75 -> "on track" framing
+const BANNER_TENANT_LOW_PCT = 55; // < 75 -> "needs improvement" framing, and != BANNER_BUILDING_PCT
+const GAME_URL_BANNER_WHOLE = `${url.pathToFileURL(GAME_PATH).href}?l=${BANNER_LINK_WHOLE_ID}&emulator=1`;
+const GAME_URL_BANNER_TENANT_LOW = `${url.pathToFileURL(GAME_PATH).href}?l=${BANNER_LINK_TENANT_LOW_ID}&emulator=1`;
+const GAME_URL_BANNER_TENANT_NONE = `${url.pathToFileURL(GAME_PATH).href}?l=${BANNER_LINK_TENANT_NONE_ID}&emulator=1`;
+
 const results = [];
 function check(label, cond, extra){ results.push({label, ok: Boolean(cond), extra: extra || ''}); }
 
@@ -78,6 +99,21 @@ async function seedTestBuilding(){
     await setDoc(doc(db, 'enrollments', `recycling-sorting__${TEST_BUILDING_ID}`), {
       programId: 'recycling-sorting', buildingId: TEST_BUILDING_ID, itemOverrides: {},
     });
+
+    // --- Recycling-level banner fixtures (see the BANNER_* constants above) ---
+    await setDoc(doc(db, 'buildings', BANNER_BUILDING_ID), { name: 'Banner Tower', recyclingLevelPct: BANNER_BUILDING_PCT });
+    await setDoc(doc(db, 'buildings', BANNER_BUILDING_ID, 'tenants', BANNER_TENANT_LOW_ID), {
+      name: 'Low Recycling Co', levels: ['Level 1'], recyclingLevelPct: BANNER_TENANT_LOW_PCT,
+    });
+    await setDoc(doc(db, 'buildings', BANNER_BUILDING_ID, 'tenants', BANNER_TENANT_NONE_ID), {
+      name: 'No Data Co', levels: ['Level 1'],
+    });
+    await setDoc(doc(db, 'enrollments', `recycling-sorting__${BANNER_BUILDING_ID}`), {
+      programId: 'recycling-sorting', buildingId: BANNER_BUILDING_ID, itemOverrides: {},
+    });
+    await setDoc(doc(db, 'links', BANNER_LINK_WHOLE_ID), { programId: 'recycling-sorting', buildingId: BANNER_BUILDING_ID, tenantId: null });
+    await setDoc(doc(db, 'links', BANNER_LINK_TENANT_LOW_ID), { programId: 'recycling-sorting', buildingId: BANNER_BUILDING_ID, tenantId: BANNER_TENANT_LOW_ID });
+    await setDoc(doc(db, 'links', BANNER_LINK_TENANT_NONE_ID), { programId: 'recycling-sorting', buildingId: BANNER_BUILDING_ID, tenantId: BANNER_TENANT_NONE_ID });
   });
   return testEnv;
 }
@@ -284,6 +320,60 @@ async function runFlow(page){
   await new Promise(r => setTimeout(r, 500));
   check('save SUCCEEDS against the emulator with valid gate data (no warning banner shown)',
     await page.$eval('#saveWarning', el => getComputedStyle(el).display === 'none'));
+
+  await checkRecyclingLevelBanner(page);
+}
+
+// Real Bintracker recycling-level banner (Workstream 7 Point 5 sub-idea, 2026-09-24) - three
+// separate navigations (own building/links, see the BANNER_* fixtures above), each just far
+// enough into the id-gate flow to read the banner's own DOM, not a full game playthrough.
+async function checkRecyclingLevelBanner(page){
+  // --- Whole-building link: shows the BUILDING's own recyclingLevelPct (>=75 -> "on track") ---
+  await page.goto(GAME_URL_BANNER_WHOLE, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => document.querySelector('#idTenant option[value]:not([value=""])') !== null,
+    { timeout: 10000 }
+  );
+  check('whole-building link: recycling-level banner is shown',
+    await page.$eval('#idLevelBanner', el => getComputedStyle(el).display !== 'none'));
+  const wholeBuildingPct = await page.$eval('#idLevelBannerPct', el => el.textContent.trim());
+  check('whole-building link: banner shows the BUILDING\'s own percentage',
+    wholeBuildingPct === `${BANNER_BUILDING_PCT}%`, wholeBuildingPct);
+  check('whole-building link: at/above the 75% pass mark uses the "on track" framing, not "needs improvement"',
+    !(await page.$eval('#idLevelBanner', el => el.classList.contains('needs-improvement'))));
+  const wholeBuildingMsg = await page.$eval('#idLevelBannerMsg', el => el.textContent.trim());
+  check('whole-building link: banner message refers to the building, not a company',
+    /building/i.test(wholeBuildingMsg) && !/company/i.test(wholeBuildingMsg), wholeBuildingMsg);
+
+  // --- Tenant-scoped link, tenant HAS its own (lower, different-from-building) recyclingLevelPct:
+  // shows the TENANT's number, not the building's - proves there's no fallback to the building
+  // aggregate on a tenant-scoped link. ---
+  await page.goto(GAME_URL_BANNER_TENANT_LOW, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => document.querySelector('#idTenant option[value]:not([value=""])') !== null,
+    { timeout: 10000 }
+  );
+  check('tenant-scoped link (qualifying tenant data): recycling-level banner is shown',
+    await page.$eval('#idLevelBanner', el => getComputedStyle(el).display !== 'none'));
+  const tenantPct = await page.$eval('#idLevelBannerPct', el => el.textContent.trim());
+  check('tenant-scoped link: banner shows the TENANT\'s own percentage, not the building\'s',
+    tenantPct === `${BANNER_TENANT_LOW_PCT}%` && tenantPct !== `${BANNER_BUILDING_PCT}%`, tenantPct);
+  check('tenant-scoped link: below the 75% pass mark uses the "needs improvement" framing',
+    await page.$eval('#idLevelBanner', el => el.classList.contains('needs-improvement')));
+  const tenantMsg = await page.$eval('#idLevelBannerMsg', el => el.textContent.trim());
+  check('tenant-scoped link: banner message refers to the trainee\'s company, not the building',
+    /company/i.test(tenantMsg) && !/building/i.test(tenantMsg), tenantMsg);
+
+  // --- Tenant-scoped link, tenant has NO recyclingLevelPct at all: banner must be hidden
+  // entirely - even though the BUILDING this tenant belongs to has a qualifying number, it must
+  // never be shown as a substitute (the plan's explicit "no fallback" decision). ---
+  await page.goto(GAME_URL_BANNER_TENANT_NONE, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => document.querySelector('#idTenant option[value]:not([value=""])') !== null,
+    { timeout: 10000 }
+  );
+  check('tenant-scoped link with no recyclingLevelPct on the tenant: banner is hidden (no fallback to the building\'s number)',
+    await page.$eval('#idLevelBanner', el => getComputedStyle(el).display === 'none'));
 }
 
 async function finishAndReport(page, browser, consoleErrors){
