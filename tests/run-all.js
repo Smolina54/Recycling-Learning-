@@ -49,6 +49,7 @@ const SUITES = [
   { name: 'test:rules', file: 'firestore-rules.test.js' },
   { name: 'test:scoped-report', file: 'scoped-report-access.test.js' },
   { name: 'test:client-report', file: 'client-report.test.js' },
+  { name: 'test:report-bintracker', file: 'report-bintracker-comparison.test.js' },
   { name: 'test:functions', file: 'functions-sendinductionemail.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
   { name: 'test:functions-result-email', file: 'functions-sendmyresultemail.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
   { name: 'test:functions-delete-building', file: 'functions-deletebuildingpermanently.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },

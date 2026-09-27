@@ -2580,6 +2580,20 @@ var qrcode = function() {
   .report-block h3{font-family:var(--display); text-transform:uppercase; font-size:17px; margin:0 0 6px;}
   .block-sub{font-size:13.5px; color:var(--ink-soft); margin:0 0 20px;}
 
+  /* Point 1, Phase C (revised): the "Current state" / "Induction impact" toggle inside the
+     Real-world data (Bintracker) block — a lightweight segmented-control look (not the heavier
+     folder-tab .tab-btn used for whole-page navigation), since this only switches content within
+     one already-open block. */
+  .bintracker-toggle-row{display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap;}
+  .bintracker-toggle-btn{
+    font-family:var(--body); font-weight:500; font-size:13px; color:var(--ink-soft);
+    background:transparent; border:1.5px solid var(--line); border-radius:20px;
+    padding:7px 16px; cursor:pointer; transition:background .15s ease, color .15s ease, border-color .15s ease;
+  }
+  .bintracker-toggle-btn:hover:not(.active){border-color:var(--ink); color:var(--ink);}
+  .bintracker-toggle-btn.active{background:var(--ink); color:var(--paper); border-color:var(--ink);}
+  .bintracker-toggle-btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
+
   .stream-bar-row{display:grid; grid-template-columns:150px 1fr 60px; align-items:center; gap:12px; margin-bottom:12px;}
   .stream-bar-row:last-child{margin-bottom:0;}
   .stream-bar-label{font-family:var(--mono); font-size:12px; text-transform:uppercase; letter-spacing:0.03em;}
@@ -2927,6 +2941,16 @@ var qrcode = function() {
           <table class="group-table" id="groupTable"></table>
         </div>
       </div>
+
+      <div class="report-block" id="bintrackerComparisonBlock" style="display:none;">
+        <h3>Real-world data (Bintracker)</h3>
+        <div class="bintracker-toggle-row">
+          <button type="button" class="bintracker-toggle-btn active" id="bintrackerToggleCurrentBtn">Current state</button>
+          <button type="button" class="bintracker-toggle-btn" id="bintrackerToggleImpactBtn">Induction impact</button>
+        </div>
+        <p class="block-sub" id="bintrackerIntro"></p>
+        <ul class="key-insights-list" id="bintrackerComparisonList"></ul>
+      </div>
     </div>
 
     <div class="print-row">
@@ -2966,6 +2990,10 @@ const firebaseConfig = {
 const RECAPTCHA_SITE_KEY = '';
 
 let db = null, auth = null, functions = null;
+// buildingId -> raw buildings/{id} doc data, cached once per sign-in — used only to check
+// bintrackerBuildingName (Point 1, Phase C's "is this building mapped to Bintracker at all" gate),
+// via loadBuildingsMetaById() below.
+let buildingsMetaById = new Map();
 // Hoisted out of the try block below (not `const` inside it) — code further down the page
 // (the Preview/Demo-link builders) needs to read this too, and a `const` scoped to the try
 // block is unreachable from there, throwing "isEmulatorMode is not defined" the moment
@@ -3322,6 +3350,10 @@ function showConfirm(message){
     const items = data.items || {};
     const row = {
       _id: id,
+      // buildingId/tenantId: not used by any pre-existing aggregate below (those all key off the
+      // display-name strings building/tenant/level), but needed to join against
+      // bintrackerTenantMatches/bintrackerRows for the Real-world data comparison (Point 1, Phase C).
+      buildingId: data.buildingId || '', tenantId: data.tenantId || '',
       building: data.buildingName || '', tenant: data.tenantName || '', level: data.level || '',
       name: data.name || '', email: data.email || '', programId: data.programId || '',
       score: data.score, avoided: data.avoided, total: data.total,
@@ -3849,6 +3881,271 @@ function showConfirm(message){
     list.innerHTML = insights.map(i => `<li class="${i.concern ? 'concern' : ''}">${i.text}</li>`).join('');
   }
 
+  // ---- Real-world data (Point 1, Phase C, revised 2026-09-24): two separate comparisons of
+  // induction results against real Bintracker data — "Current state" (does what a tenant knows
+  // match what their bin shows right now) and "Induction impact" (did real behavior actually
+  // change after training). Duplicated into this file rather than shared (this codebase's
+  // established convention for small pure logic, per Phases A/B of this same workstream —
+  // file://-loaded pages can't share ES modules). Identical logic also lives in client-report.html,
+  // adapted to that file's own {headline, detail, recommendation} findings shape instead of this
+  // file's {text, concern}.
+
+  // Only the 3 genuinely recyclable streams are in scope for either comparison — General Waste
+  // always goes to landfill regardless of sorting quality, and E-Waste has separate handling, so
+  // neither carries a real "was this recycled" signal. Deliberately a separate constant from the
+  // full 5-stream `streams` array used everywhere else in this file.
+  const BINTRACKER_STREAMS = ['mr', 'pc', 'og'];
+
+  // Client-side status filter (rather than a second where('status','==','confirmed')) to avoid
+  // needing a new composite index for this pass — only a 'confirmed' match may ever feed either
+  // comparison, a mere suggestion must never drive the narrative.
+  async function fetchConfirmedBintrackerMatches(buildingId){
+    const snap = await getDocs(query(collection(db, 'bintrackerTenantMatches'), where('buildingId', '==', buildingId)));
+    return snap.docs.map(d => d.data()).filter(m => m.status === 'confirmed');
+  }
+
+  // fromDateStr/toDateStr are 'YYYY-MM-DD' strings (or '' for unbounded), matching
+  // bintrackerRows.collectDate's stored format and this report's own filterDateFrom/filterDateTo
+  // inputs exactly — reuses the (buildingId, collectDate) composite index already added in
+  // Phase A, no new index needed. Comparison #2 (Induction impact) calls this with '' bounds for
+  // an all-time fetch, since its before/after split is anchored per-tenant, not to the viewing
+  // window — this same helper already supports that, no new fetch function needed.
+  async function fetchBintrackerRowsInRange(buildingId, fromDateStr, toDateStr){
+    const clauses = [where('buildingId', '==', buildingId)];
+    if (fromDateStr) clauses.push(where('collectDate', '>=', fromDateStr));
+    if (toDateStr) clauses.push(where('collectDate', '<=', toDateStr));
+    const snap = await getDocs(query(collection(db, 'bintrackerRows'), ...clauses));
+    return snap.docs.map(d => d.data());
+  }
+
+  // "{Tenant}" always includes "on {Level}" when every contributing submission shares one level
+  // value — omitted only when a tenant's submissions span multiple different levels. Shared by
+  // both comparisons.
+  function bintrackerWho(tenantName, subsForTenant){
+    const levels = new Set(subsForTenant.map(r => r.level).filter(Boolean));
+    return `${esc(tenantName || 'This tenant')}${levels.size === 1 ? ' on ' + esc([...levels][0]) : ''}`;
+  }
+
+  // ---- Comparison #1 — "Current state": does what a tenant knows match what their bin shows now ----
+  // Per tenant + one of the 3 recyclable streams, within the report's current date range:
+  // induction accuracy = sum(breakdown[stream].avoided)/sum(...total) across that tenant's
+  // submissions in range; real cleanliness = share of that tenant+stream's EXTERNAL
+  // (externalOnly===true — excludes on-site/internal processing, which carries no external
+  // quality judgment) Bintracker rows with wasteOutcome==='Recycled' (replaces the unreliable
+  // `contaminated` boolean, which real-world Bintracker data often leaves unrecorded). Both sides
+  // classified against the same 75% pass-mark bar used everywhere else in this app. Skips a
+  // tenant+stream pair entirely (no finding) below the sample-size floor (<3 induction submissions
+  // contributing, or <5 matching external Bintracker rows) — too little data to say anything
+  // meaningful. A building that composts a stream on-site simply has ~0 externalOnly:true rows for
+  // it, so the floor naturally excludes it — no special-case code needed.
+  function computeCurrentStateFindings(tenantRows, matches, bintrackerRows){
+    const findings = [];
+    matches.forEach(match => {
+      const subsForTenant = tenantRows.filter(r => r.tenantId === match.tenantId);
+      BINTRACKER_STREAMS.forEach(stream => {
+        let avoided = 0, total = 0, subCount = 0;
+        subsForTenant.forEach(r => {
+          const a = r[stream + '_avoided'], t = r[stream + '_total'];
+          if (typeof a === 'number' && typeof t === 'number'){ avoided += a; total += t; subCount++; }
+        });
+        if (subCount < 3 || total === 0) return;
+        const inductionPct = Math.round((avoided / total) * 100);
+
+        const realRows = bintrackerRows.filter(r =>
+          r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.ourStream === stream && r.externalOnly === true);
+        if (realRows.length < 5) return;
+        const realPct = Math.round((realRows.filter(r => r.wasteOutcome === 'Recycled').length / realRows.length) * 100);
+
+        const inductionLow = inductionPct < 75;
+        const realLow = realPct < 75;
+        const streamLabel = streamNames[stream];
+        const who = bintrackerWho(match.tenantName, subsForTenant);
+        const gap = Math.abs(inductionPct - realPct);
+        const large = gap >= 30;
+        const N = subCount, M = realRows.length;
+
+        if (inductionLow && realLow){
+          findings.push({
+            text: `<b>${streamLabel}: low induction result matches low real recycling</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), and only ${realPct}% of their real ${streamLabel} collections (${M} loads) were successfully recycled - consistent with the induction result. Both point to the same gap worth addressing.`,
+            concern: true,
+          });
+        } else if (!inductionLow && !realLow){
+          findings.push({
+            text: `<b>${streamLabel}: strong induction result matches strong real recycling</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), and ${realPct}% of their real ${streamLabel} collections (${M} loads) were successfully recycled - consistent with the induction result.`,
+            concern: false,
+          });
+        } else if (!inductionLow && realLow){
+          // Good induction result, low real recycling.
+          if (large){
+            findings.push({
+              text: `<b>${streamLabel}: strong induction result, but a significant gap in real recycling</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but only ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap. Consider checking bin signage, and whether everyone using this space - not just those who completed the induction - has seen this information.`,
+              concern: true,
+            });
+          } else {
+            findings.push({
+              text: `<b>${streamLabel}: good induction result, with a modest gap in real recycling</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but only ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap, worth keeping an eye on.`,
+              concern: true,
+            });
+          }
+        } else {
+          // Low induction result, good real recycling - real behavior better than the induction result suggests.
+          if (large){
+            findings.push({
+              text: `<b>${streamLabel}: real recycling is notably better than the induction result suggests</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap. Worth understanding who is actually responsible for sorting decisions in this space - real behavior looks stronger than the induction results alone would suggest, which may mean other staff are already sorting well, or that those who completed the induction aren't representative of everyone using the space.`,
+              concern: false,
+            });
+          } else {
+            findings.push({
+              text: `<b>${streamLabel}: real recycling is somewhat better than the induction result suggests</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap, worth keeping an eye on.`,
+              concern: false,
+            });
+          }
+        }
+      });
+    });
+    return findings;
+  }
+
+  // ---- Comparison #2 — "Induction impact": did real behavior actually change after training ----
+  // Cutoff, per tenant: the latest timestamp among that tenant's OWN submissions docs — not the
+  // report's date-range filter (allSubs, below, is the unfiltered `allRows` set, not the
+  // date-filtered `rows`), and explicitly not a link's expiresAt (unreliable — expiresAt is
+  // optional and a tenant can have multiple links over time). Before/after = share of that
+  // tenant+stream's externalOnly:true Bintracker rows with wasteOutcome==='Recycled', split on
+  // collectDate vs the cutoff. Needs >=5 rows on EACH side independently, and only surfaces a
+  // finding when the two sides differ by >=10 points (avoids over-interpreting noise from small
+  // samples).
+  function computeInductionImpactFindings(allSubs, matches, bintrackerRows){
+    const findings = [];
+    matches.forEach(match => {
+      const subsForTenant = allSubs.filter(r => r.tenantId === match.tenantId && r.timestamp);
+      if (!subsForTenant.length) return;
+      const cutoff = subsForTenant.reduce((max, r) => r.timestamp > max ? r.timestamp : max, subsForTenant[0].timestamp);
+      const cutoffDateStr = cutoff.slice(0, 10);
+      const who = bintrackerWho(match.tenantName, subsForTenant);
+
+      BINTRACKER_STREAMS.forEach(stream => {
+        const realRows = bintrackerRows.filter(r =>
+          r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.ourStream === stream && r.externalOnly === true);
+        const beforeRows = realRows.filter(r => r.collectDate < cutoffDateStr);
+        const afterRows = realRows.filter(r => r.collectDate >= cutoffDateStr);
+        if (beforeRows.length < 5 || afterRows.length < 5) return;
+
+        const beforePct = Math.round((beforeRows.filter(r => r.wasteOutcome === 'Recycled').length / beforeRows.length) * 100);
+        const afterPct = Math.round((afterRows.filter(r => r.wasteOutcome === 'Recycled').length / afterRows.length) * 100);
+        const gap = Math.abs(afterPct - beforePct);
+        if (gap < 10) return;
+
+        const streamLabel = streamNames[stream];
+        const M1 = beforeRows.length, M2 = afterRows.length;
+        const improved = afterPct > beforePct;
+        const large = gap >= 20;
+
+        if (improved){
+          const headline = large
+            ? `${streamLabel}: real recycling improved significantly after the induction`
+            : `${streamLabel}: real recycling improved after the induction`;
+          findings.push({
+            text: `<b>${headline}</b> - ${who}'s real ${streamLabel} collections were ${beforePct}% successfully recycled before their induction (${M1} loads), and ${afterPct}% after (${M2} loads) - a ${gap}-point improvement.`,
+            concern: false,
+          });
+        } else {
+          findings.push({
+            text: `<b>${streamLabel}: real recycling dropped after the induction</b> - ${who}'s real ${streamLabel} collections were ${beforePct}% successfully recycled before their induction (${M1} loads), and ${afterPct}% after (${M2} loads) - a ${gap}-point drop. Worth checking whether something changed in this tenant's space (turnover, new bin setup, etc.) around this time.`,
+            concern: true,
+          });
+        }
+      });
+    });
+    return findings;
+  }
+
+  const BINTRACKER_INTRO = {
+    current: 'Compares induction results against real Bintracker collection data, for tenants with a confirmed Bintracker match, over the current filter. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Induction scores reflect only the people who completed the induction, not everyone who uses this tenant\'s waste streams - a mismatch may reflect limited induction participation as much as a real behavior gap. This reflects a snapshot of current data, not before/after impact - see the induction impact comparison for whether real behavior changed after training.',
+    impact: 'Compares each tenant\'s real Bintracker collection data before and after their most recent induction completion, for tenants with a confirmed Bintracker match. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Not limited to the current date filter - the before/after split is anchored to each tenant\'s own most recent induction date, not the viewing window.',
+  };
+
+  // Fire-and-forget from renderReport (which stays synchronous) — fetches per-building Bintracker
+  // data for whichever buildings are both currently in scope (in the already-filtered `rows`) and
+  // mapped to Bintracker (bintrackerBuildingName set), computes BOTH comparisons up front, and
+  // caches them so the toggle below can swap between them with no re-fetch. A monotonically
+  // increasing token guards against an in-flight fetch from a stale filter state overwriting a
+  // newer one that resolves first.
+  let bintrackerRenderToken = 0;
+  let bintrackerFindingsByTab = { current: [], impact: [] };
+  let bintrackerActiveTab = 'current';
+
+  function renderActiveBintrackerTab(){
+    const list = document.getElementById('bintrackerComparisonList');
+    const intro = document.getElementById('bintrackerIntro');
+    document.getElementById('bintrackerToggleCurrentBtn').classList.toggle('active', bintrackerActiveTab === 'current');
+    document.getElementById('bintrackerToggleImpactBtn').classList.toggle('active', bintrackerActiveTab === 'impact');
+    intro.innerHTML = BINTRACKER_INTRO[bintrackerActiveTab];
+    const findings = bintrackerFindingsByTab[bintrackerActiveTab];
+    list.innerHTML = findings.map(f => `<li class="${f.concern ? 'concern' : ''}">${f.text}</li>`).join('');
+  }
+
+  document.getElementById('bintrackerToggleCurrentBtn').addEventListener('click', () => {
+    bintrackerActiveTab = 'current'; renderActiveBintrackerTab();
+  });
+  document.getElementById('bintrackerToggleImpactBtn').addEventListener('click', () => {
+    bintrackerActiveTab = 'impact'; renderActiveBintrackerTab();
+  });
+
+  async function renderBintrackerComparison(rows){
+    const token = ++bintrackerRenderToken;
+    const block = document.getElementById('bintrackerComparisonBlock');
+    const list = document.getElementById('bintrackerComparisonList');
+
+    const buildingIdsInScope = [...new Set(rows.map(r => r.buildingId).filter(Boolean))];
+    const mappedBuildingIds = buildingIdsInScope.filter(id => buildingsMetaById.get(id)?.bintrackerBuildingName);
+    // Graceful absence: no buildings currently in scope are mapped to Bintracker at all (or
+    // there's no live Firestore to query, e.g. sample data) — render nothing, no placeholder.
+    if (!db || !mappedBuildingIds.length){
+      block.style.display = 'none'; list.innerHTML = '';
+      return;
+    }
+
+    const fromDateStr = document.getElementById('filterDateFrom').value;
+    const toDateStr = document.getElementById('filterDateTo').value;
+
+    let findingsCurrent = [], findingsImpact = [];
+    try {
+      const perBuilding = await Promise.all(mappedBuildingIds.map(async (buildingId) => {
+        const [matches, rangedRows, allTimeRows] = await Promise.all([
+          fetchConfirmedBintrackerMatches(buildingId),
+          fetchBintrackerRowsInRange(buildingId, fromDateStr, toDateStr),
+          fetchBintrackerRowsInRange(buildingId, '', ''),
+        ]);
+        if (!matches.length) return { current: [], impact: [] };
+        const tenantRowsInRange = rows.filter(r => r.buildingId === buildingId);
+        // Comparison #2's cutoff is explicitly NOT scoped to the report's date-range filter — use
+        // the unfiltered `allRows` (still capped at MAX_ROWS most recent, not date-bounded).
+        const tenantRowsAllTime = allRows.filter(r => r.buildingId === buildingId);
+        return {
+          current: computeCurrentStateFindings(tenantRowsInRange, matches, rangedRows),
+          impact: computeInductionImpactFindings(tenantRowsAllTime, matches, allTimeRows),
+        };
+      }));
+      findingsCurrent = perBuilding.flatMap(p => p.current);
+      findingsImpact = perBuilding.flatMap(p => p.impact);
+    } catch (err){
+      console.error('Failed to load Bintracker comparison data:', err);
+      if (token === bintrackerRenderToken){ block.style.display = 'none'; list.innerHTML = ''; }
+      return;
+    }
+
+    if (token !== bintrackerRenderToken) return; // superseded by a newer filter/render
+
+    if (!findingsCurrent.length && !findingsImpact.length){
+      block.style.display = 'none'; list.innerHTML = '';
+      return;
+    }
+    bintrackerFindingsByTab = { current: findingsCurrent, impact: findingsImpact };
+    block.style.display = 'block';
+    renderActiveBintrackerTab();
+  }
+
   function renderReport(rows, sourceLabel, attempts){
     currentRows = rows;
     document.getElementById('reportSection').style.display = 'block';
@@ -3862,6 +4159,8 @@ function showConfirm(message){
     if (totalSubs === 0 && attempts.length === 0){
       document.getElementById('emptyState').style.display = 'block';
       document.getElementById('reportBody').style.display = 'none';
+      document.getElementById('bintrackerComparisonBlock').style.display = 'none';
+      bintrackerRenderToken++; // invalidate any still in-flight comparison fetch from before this empty state
       return;
     }
     document.getElementById('emptyState').style.display = 'none';
@@ -3963,6 +4262,11 @@ function showConfirm(message){
         `).join('')}
       </tbody>
     `;
+
+    // Real-world data comparison (Point 1, Phase C) — async, fire-and-forget (renderReport itself
+    // stays synchronous); the block starts/stays hidden until this resolves, and renders nothing
+    // at all if no building currently in scope is mapped to Bintracker.
+    renderBintrackerComparison(rows).catch(err => console.error('Failed to render Bintracker comparison:', err));
   }
 
   // ---------------- Loading data: live Firestore (signed in) or sample ----------------
@@ -4027,6 +4331,16 @@ function showConfirm(message){
     const attempts = attSnaps.flatMap(snap => snap.docs.map(d => attemptToRow(d.id, d.data())))
       .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, MAX_ROWS);
     return { rows, attempts };
+  }
+
+  // Caches every buildings/{id} doc's raw data, keyed by id — read:true for anyone per
+  // firestore.rules (same as admin-buildings.html's own building list), so this needs no new
+  // permission. Used only to check bintrackerBuildingName (Point 1, Phase C's "is this building
+  // mapped to Bintracker at all" gate) without re-querying per render.
+  async function loadBuildingsMetaById(){
+    if (!db) return;
+    const snap = await getDocs(collection(db, 'buildings'));
+    buildingsMetaById = new Map(snap.docs.map(d => [d.id, d.data()]));
   }
 
   async function loadLiveData(){
@@ -4368,6 +4682,7 @@ function showConfirm(message){
         document.getElementById('programSelectorRow').style.display = 'flex';
         document.getElementById('pageLoadError').style.display = 'none';
         try {
+          loadBuildingsMetaById().catch(err => console.error('Failed to load buildings metadata (Bintracker mapping):', err));
           await refreshProgramSelector();
           // Lets admin-distribution.html's "← Back to reports" link (Workstream 2 Phase 4 of the
           // architecture roadmap) land back on the same induction instead of the neutral "nothing
@@ -4391,7 +4706,7 @@ function showConfirm(message){
         // Completed/Pending tables, the building/tenant breakdown) was left fully visible and
         // populated after sign-out, which anyone at the same screen could still read.
         isLiveData = false;
-        allRows = []; currentRows = []; allAttempts = [];
+        allRows = []; currentRows = []; allAttempts = []; buildingsMetaById = new Map();
         document.getElementById('authZone').style.display = '';
         document.getElementById('authStatus').textContent = 'Sign in with an authorised account to load live results.';
         // Reset the email form back to its collapsed state, and never leave a typed password

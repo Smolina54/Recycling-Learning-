@@ -280,6 +280,19 @@
         <label class="filter-field"><span>To</span><input type="date" id="dateTo"></label>
       </div>
 
+      <div id="bintrackerOptionsBlock" style="margin-top:20px;">
+        <p class="config-title" style="font-size:14px;">Real-world data (Bintracker)</p>
+        <p class="block-sub" style="margin-bottom:12px;">Optional - only appears per-building if that building has a confirmed Bintracker mapping and real findings. Independent of each other.</p>
+        <label class="building-check-row" style="margin-bottom:8px;">
+          <input type="checkbox" id="includeBintrackerCurrentCheck">
+          <span>Include current-state comparison</span>
+        </label>
+        <label class="building-check-row">
+          <input type="checkbox" id="includeBintrackerImpactCheck">
+          <span>Include induction-impact comparison</span>
+        </label>
+      </div>
+
       <div class="upload-actions" style="justify-content:flex-start; margin-top:20px;">
         <button class="btn" id="generateBtn">Generate report</button>
       </div>
@@ -560,7 +573,14 @@ async function loadEnrolledBuildings(){
   return enrollmentsSnap.docs
     .map(d => d.data())
     .filter(e => e.active !== false && buildingDocsById.has(e.buildingId))
-    .map(e => ({ id: e.buildingId, name: buildingDocsById.get(e.buildingId).data().name || '(untitled)' }))
+    .map(e => ({
+      id: e.buildingId,
+      name: buildingDocsById.get(e.buildingId).data().name || '(untitled)',
+      // Set only once an admin has mapped this building to a Bintracker building name
+      // (outputs/admin-buildings.html) — blank/absent means the Real-world validation
+      // sub-block must render nothing for this building, never an error.
+      bintrackerBuildingName: buildingDocsById.get(e.buildingId).data().bintrackerBuildingName || '',
+    }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -607,10 +627,35 @@ async function fetchSubmissionsInRange(programId, buildingIds, fromDate, toDate)
     const row = {
       buildingId: data.buildingId, building: data.buildingName || '', email: data.email || null,
       score: data.score, avoided: data.avoided, total: data.total,
+      // tenantId/tenantName/level: not used by the pre-existing aggregates above, but needed to
+      // re-group this same fetched set by tenant for the Bintracker real-world comparison below —
+      // avoids a second query against 'submissions' for the same date range.
+      tenantId: data.tenantId || '', tenantName: data.tenantName || '', level: data.level || '',
     };
     streams.forEach(s => { if (breakdown[s]){ row[s+'_avoided'] = breakdown[s].avoided; row[s+'_total'] = breakdown[s].total; } });
     Object.entries(items).forEach(([itemId, wasAvoided]) => { row['item_' + itemId] = wasAvoided ? 1 : 0; });
     return row;
+  }));
+}
+
+// Unbounded-by-date submissions fetch, over the same buildings — used only by the "Induction
+// impact" Bintracker comparison, whose per-tenant before/after cutoff is explicitly the latest
+// timestamp among that tenant's OWN submissions docs, not the report's own date-range filter (a
+// tenant's most recent induction can easily sit outside whatever period the client happened to
+// pick for this report). Only tenantId/level/timestamp are needed here — no breakdown/score.
+async function fetchAllSubmissionTimestamps(programId, buildingIds){
+  const chunks = chunkArray(buildingIds, 10);
+  const snaps = await Promise.all(chunks.map(ids => getDocs(query(
+    collection(db, 'submissions'),
+    where('programId', '==', programId),
+    where('buildingId', 'in', ids),
+  ))));
+  return snaps.flatMap(snap => snap.docs.map(d => {
+    const data = d.data();
+    return {
+      buildingId: data.buildingId, tenantId: data.tenantId || '', level: data.level || '',
+      timestamp: (data.timestamp && typeof data.timestamp.toDate === 'function') ? data.timestamp.toDate().toISOString() : (data.timestamp || null),
+    };
   }));
 }
 
@@ -773,6 +818,187 @@ function computeSingleBuildingFindings(bStreamAgg, bItemAgg){
   return findings;
 }
 
+// ---- Real-world data (Point 1, Phase C, revised 2026-09-24): two separate comparisons of
+// induction results against real Bintracker data — "Current state" (does what a tenant knows
+// match what their bin shows right now) and "Induction impact" (did real behavior actually change
+// after training). Duplicated into this file rather than shared (this codebase's established
+// convention for small pure logic, per Phases A/B of this same workstream — file://-loaded pages
+// can't share ES modules). Identical logic also lives in sorting-station-report.html, adapted to
+// that file's own {text, concern} findings shape instead of this file's
+// {headline, detail, recommendation}.
+
+// Only the 3 genuinely recyclable streams are in scope for either comparison — General Waste
+// always goes to landfill regardless of sorting quality, and E-Waste has separate handling, so
+// neither carries a real "was this recycled" signal. Deliberately a separate constant from the
+// full 5-stream `streams` array used everywhere else in this file.
+const BINTRACKER_STREAMS = ['mr', 'pc', 'og'];
+
+// Client-side status filter (rather than a second `where('status','==','confirmed')`) to avoid
+// needing a new composite index for this pass — only a 'confirmed' match may ever feed either
+// comparison, a mere suggestion must never drive the narrative.
+async function fetchConfirmedBintrackerMatches(buildingId){
+  const snap = await getDocs(query(collection(db, 'bintrackerTenantMatches'), where('buildingId', '==', buildingId)));
+  return snap.docs.map(d => d.data()).filter(m => m.status === 'confirmed');
+}
+
+// fromDateStr/toDateStr are 'YYYY-MM-DD' strings (or '' for unbounded), matching
+// bintrackerRows.collectDate's stored format exactly — reuses the (buildingId, collectDate)
+// composite index already added in Phase A, no new index needed. Comparison #2 (Induction impact)
+// calls this with '' bounds for an all-time fetch, since its before/after split is anchored
+// per-tenant, not to the report's own configured date range — this same helper already supports
+// that, no new fetch function needed.
+async function fetchBintrackerRowsInRange(buildingId, fromDateStr, toDateStr){
+  const clauses = [where('buildingId', '==', buildingId)];
+  if (fromDateStr) clauses.push(where('collectDate', '>=', fromDateStr));
+  if (toDateStr) clauses.push(where('collectDate', '<=', toDateStr));
+  const snap = await getDocs(query(collection(db, 'bintrackerRows'), ...clauses));
+  return snap.docs.map(d => d.data());
+}
+
+// "{Tenant}" always includes "on {Level}" when every contributing submission shares one level
+// value — omitted only when a tenant's submissions span multiple different levels. Shared by both
+// comparisons.
+function bintrackerWho(tenantName, subsForTenant){
+  const levels = new Set(subsForTenant.map(r => r.level).filter(Boolean));
+  return `${esc(tenantName || 'This tenant')}${levels.size === 1 ? ' on ' + esc([...levels][0]) : ''}`;
+}
+
+// ---- Comparison #1 — "Current state": does what a tenant knows match what their bin shows now ----
+// Per tenant + one of the 3 recyclable streams, within the report's own configured date range:
+// induction accuracy = sum(breakdown[stream].avoided)/sum(...total) across that tenant's
+// submissions in range; real cleanliness = share of that tenant+stream's EXTERNAL
+// (externalOnly===true — excludes on-site/internal processing, which carries no external quality
+// judgment) Bintracker rows with wasteOutcome==='Recycled' (replaces the unreliable `contaminated`
+// boolean, which real-world Bintracker data often leaves unrecorded). Both sides classified
+// against the same 75% pass-mark bar used everywhere else in this app. Skips a tenant+stream pair
+// entirely (no finding) below the sample-size floor (<3 induction submissions contributing, or <5
+// matching external Bintracker rows) — too little data to say anything meaningful. A building that
+// composts a stream on-site simply has ~0 externalOnly:true rows for it, so the floor naturally
+// excludes it — no special-case code needed.
+function computeCurrentStateFindings(tenantRows, matches, bintrackerRows){
+  const findings = [];
+  matches.forEach(match => {
+    const subsForTenant = tenantRows.filter(r => r.tenantId === match.tenantId);
+    BINTRACKER_STREAMS.forEach(stream => {
+      let avoided = 0, total = 0, subCount = 0;
+      subsForTenant.forEach(r => {
+        const a = r[stream + '_avoided'], t = r[stream + '_total'];
+        if (typeof a === 'number' && typeof t === 'number'){ avoided += a; total += t; subCount++; }
+      });
+      if (subCount < 3 || total === 0) return;
+      const inductionPct = Math.round((avoided / total) * 100);
+
+      const realRows = bintrackerRows.filter(r =>
+        r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.ourStream === stream && r.externalOnly === true);
+      if (realRows.length < 5) return;
+      const realPct = Math.round((realRows.filter(r => r.wasteOutcome === 'Recycled').length / realRows.length) * 100);
+
+      const inductionLow = inductionPct < 75;
+      const realLow = realPct < 75;
+      const streamLabel = streamNames[stream];
+      const who = bintrackerWho(match.tenantName, subsForTenant);
+      const gap = Math.abs(inductionPct - realPct);
+      const large = gap >= 30;
+      const N = subCount, M = realRows.length;
+
+      if (inductionLow && realLow){
+        findings.push({
+          headline: `${streamLabel}: low induction result matches low real recycling`,
+          detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), and only ${realPct}% of their real ${streamLabel} collections (${M} loads) were successfully recycled — consistent with the induction result. Both point to the same gap worth addressing.`,
+        });
+      } else if (!inductionLow && !realLow){
+        findings.push({
+          headline: `${streamLabel}: strong induction result matches strong real recycling`,
+          detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), and ${realPct}% of their real ${streamLabel} collections (${M} loads) were successfully recycled — consistent with the induction result.`,
+        });
+      } else if (!inductionLow && realLow){
+        // Good induction result, low real recycling.
+        if (large){
+          findings.push({
+            headline: `${streamLabel}: strong induction result, but a significant gap in real recycling`,
+            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but only ${realPct}% of their real collections (${M} loads) were successfully recycled — a ${gap}-point gap.`,
+            recommendation: 'Consider checking bin signage, and whether everyone using this space — not just those who completed the induction — has seen this information.',
+          });
+        } else {
+          findings.push({
+            headline: `${streamLabel}: good induction result, with a modest gap in real recycling`,
+            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but only ${realPct}% of their real collections (${M} loads) were successfully recycled — a ${gap}-point gap, worth keeping an eye on.`,
+          });
+        }
+      } else {
+        // Low induction result, good real recycling - real behavior better than the induction result suggests.
+        if (large){
+          findings.push({
+            headline: `${streamLabel}: real recycling is notably better than the induction result suggests`,
+            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled — a ${gap}-point gap.`,
+            recommendation: "Worth understanding who is actually responsible for sorting decisions in this space — real behavior looks stronger than the induction results alone would suggest, which may mean other staff are already sorting well, or that those who completed the induction aren't representative of everyone using the space.",
+          });
+        } else {
+          findings.push({
+            headline: `${streamLabel}: real recycling is somewhat better than the induction result suggests`,
+            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled — a ${gap}-point gap, worth keeping an eye on.`,
+          });
+        }
+      }
+    });
+  });
+  return findings;
+}
+
+// ---- Comparison #2 — "Induction impact": did real behavior actually change after training ----
+// Cutoff, per tenant: the latest timestamp among that tenant's OWN submissions docs (allSubs is
+// the unbounded fetchAllSubmissionTimestamps() result, NOT the report's own date-range-scoped
+// `rows`) — not the report's date-range filter, and explicitly not a link's expiresAt (unreliable
+// — expiresAt is optional and a tenant can have multiple links over time). Before/after = share of
+// that tenant+stream's externalOnly:true Bintracker rows with wasteOutcome==='Recycled', split on
+// collectDate vs the cutoff. Needs >=5 rows on EACH side independently, and only surfaces a
+// finding when the two sides differ by >=10 points (avoids over-interpreting noise from small
+// samples).
+function computeInductionImpactFindings(allSubs, matches, bintrackerRows){
+  const findings = [];
+  matches.forEach(match => {
+    const subsForTenant = allSubs.filter(r => r.tenantId === match.tenantId && r.timestamp);
+    if (!subsForTenant.length) return;
+    const cutoff = subsForTenant.reduce((max, r) => r.timestamp > max ? r.timestamp : max, subsForTenant[0].timestamp);
+    const cutoffDateStr = cutoff.slice(0, 10);
+    const who = bintrackerWho(match.tenantName, subsForTenant);
+
+    BINTRACKER_STREAMS.forEach(stream => {
+      const realRows = bintrackerRows.filter(r =>
+        r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.ourStream === stream && r.externalOnly === true);
+      const beforeRows = realRows.filter(r => r.collectDate < cutoffDateStr);
+      const afterRows = realRows.filter(r => r.collectDate >= cutoffDateStr);
+      if (beforeRows.length < 5 || afterRows.length < 5) return;
+
+      const beforePct = Math.round((beforeRows.filter(r => r.wasteOutcome === 'Recycled').length / beforeRows.length) * 100);
+      const afterPct = Math.round((afterRows.filter(r => r.wasteOutcome === 'Recycled').length / afterRows.length) * 100);
+      const gap = Math.abs(afterPct - beforePct);
+      if (gap < 10) return;
+
+      const streamLabel = streamNames[stream];
+      const M1 = beforeRows.length, M2 = afterRows.length;
+      const improved = afterPct > beforePct;
+      const large = gap >= 20;
+
+      if (improved){
+        findings.push({
+          headline: large
+            ? `${streamLabel}: real recycling improved significantly after the induction`
+            : `${streamLabel}: real recycling improved after the induction`,
+          detail: `${who}'s real ${streamLabel} collections were ${beforePct}% successfully recycled before their induction (${M1} loads), and ${afterPct}% after (${M2} loads) — a ${gap}-point improvement.`,
+        });
+      } else {
+        findings.push({
+          headline: `${streamLabel}: real recycling dropped after the induction`,
+          detail: `${who}'s real ${streamLabel} collections were ${beforePct}% successfully recycled before their induction (${M1} loads), and ${afterPct}% after (${M2} loads) — a ${gap}-point drop.`,
+          recommendation: "Worth checking whether something changed in this tenant's space (turnover, new bin setup, etc.) around this time.",
+        });
+      }
+    });
+  });
+  return findings;
+}
+
 async function generateReport(){
   const configError = document.getElementById('configError');
   configError.style.display = 'none';
@@ -839,6 +1065,30 @@ async function generateReport(){
       const byBuildingSection = document.getElementById('byBuildingSection');
       if (selectedBuildings.length > 1){
         byBuildingSection.style.display = 'block';
+
+        // Real-world data (Point 1, Phase C, revised) — fetched only for buildings mapped to
+        // Bintracker (bintrackerBuildingName set) AND only for the comparison(s) the admin actually
+        // checked in the config step above; this sub-block only ever appears inside the
+        // per-building loop below, so there's no point fetching it for a single-building report
+        // (which never reaches this branch at all).
+        const includeCurrent = document.getElementById('includeBintrackerCurrentCheck').checked;
+        const includeImpact = document.getElementById('includeBintrackerImpactCheck').checked;
+        const bintrackerBuildings = (includeCurrent || includeImpact) ? selectedBuildings.filter(b => b.bintrackerBuildingName) : [];
+        const bintrackerDataByBuilding = {};
+        if (bintrackerBuildings.length){
+          await Promise.all(bintrackerBuildings.map(async (b) => {
+            const [matches, rangedRows, allTimeRows, allSubs] = await Promise.all([
+              fetchConfirmedBintrackerMatches(b.id),
+              includeCurrent ? fetchBintrackerRowsInRange(b.id, fromVal, toVal) : Promise.resolve([]),
+              // Comparison #2's before/after split is anchored per-tenant, not to this report's own
+              // date range — an all-time fetch (no bounds), reusing the same helper.
+              includeImpact ? fetchBintrackerRowsInRange(b.id, '', '') : Promise.resolve([]),
+              includeImpact ? fetchAllSubmissionTimestamps(currentProgram.id, [b.id]) : Promise.resolve([]),
+            ]);
+            bintrackerDataByBuilding[b.id] = { matches, rangedRows, allTimeRows, allSubs };
+          }));
+        }
+
         document.getElementById('buildingBreakdown').innerHTML = buildingStats.map(b => {
           if (!b.rows){
             return `
@@ -855,6 +1105,37 @@ async function generateReport(){
             </div>
           `).join('') || '<p class="block-sub">No stream data in this range.</p>';
           const findings = computeSingleBuildingFindings(b.streamAgg, b.itemAgg);
+
+          // Each comparison is only rendered for a building mapped to Bintracker AND that produced
+          // at least one real finding FOR THAT comparison — silently omitted otherwise (graceful
+          // absence, per this document's own conventions: no "no real-world data available" line in
+          // a client-facing PDF). The two comparisons are independent — either, both, or neither can
+          // appear, per the two checkboxes above.
+          let bintrackerHtml = '';
+          const bintrackerInfo = bintrackerDataByBuilding[b.id];
+          if (bintrackerInfo && bintrackerInfo.matches.length){
+            const tenantRowsForBuilding = rows.filter(r => r.buildingId === b.id);
+            if (includeCurrent){
+              const bFindingsCurrent = computeCurrentStateFindings(tenantRowsForBuilding, bintrackerInfo.matches, bintrackerInfo.rangedRows);
+              if (bFindingsCurrent.length){
+                bintrackerHtml += `
+                  <h4>Real-world data: current state</h4>
+                  <p class="block-sub">Compares this building's induction results against real Bintracker collection data for tenants with a confirmed match, over this period. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Induction scores reflect only the people who completed the induction, not everyone who uses this tenant's waste streams - a mismatch may reflect limited induction participation as much as a real behavior gap. This reflects a snapshot of current data, not before/after impact.</p>
+                  <ul class="findings-list">${renderFindingsList(bFindingsCurrent)}</ul>`;
+              }
+            }
+            if (includeImpact){
+              const allSubsForBuilding = bintrackerInfo.allSubs.filter(r => r.buildingId === b.id);
+              const bFindingsImpact = computeInductionImpactFindings(allSubsForBuilding, bintrackerInfo.matches, bintrackerInfo.allTimeRows);
+              if (bFindingsImpact.length){
+                bintrackerHtml += `
+                  <h4>Real-world data: induction impact</h4>
+                  <p class="block-sub">Compares each tenant's real Bintracker collection data before and after their most recent induction completion, for tenants with a confirmed match. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Not limited to this report's period - the before/after split is anchored to each tenant's own most recent induction date.</p>
+                  <ul class="findings-list">${renderFindingsList(bFindingsImpact)}</ul>`;
+              }
+            }
+          }
+
           return `
             <div class="building-block">
               <p class="building-block-name">${esc(b.name)}</p>
@@ -868,6 +1149,7 @@ async function generateReport(){
               <div class="stream-chart">${bChart}</div>
               <h4>Key findings</h4>
               <ul class="findings-list">${renderFindingsList(findings)}</ul>
+              ${bintrackerHtml}
             </div>`;
         }).join('');
       } else {
