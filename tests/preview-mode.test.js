@@ -110,7 +110,17 @@ async function runFlow(page, seedEnv){
   await page.type('#idName', 'Preview Tester');
   await page.type('#idEmail', 'preview-tester@example.com');
   await page.click('#idForm button[type=submit]');
-  await new Promise(r => setTimeout(r, 300));
+  await page.waitForSelector('.bin-tab', { visible: true, timeout: 5000 });
+  // The "Begin the sort" card (and its button) now stays hidden - not just disabled - until
+  // every stream tab has been visited, so it has to actually be unlocked before it's clickable
+  // at all (mirrors the same dance already used in game-regression.test.js).
+  // Each tab click triggers a smooth-scroll to the detail section; a real Puppeteer .click()
+  // recalculates click coordinates against the (possibly still-animating) element position,
+  // which can land on the wrong spot mid-scroll. Dispatching the click directly via evaluate()
+  // sidesteps that entirely (same fix already needed for a similar throwaway mobile script).
+  const tabs = await page.$$('.bin-tab');
+  for (const tab of tabs){ await tab.evaluate(el => el.click()); await new Promise(r => setTimeout(r, 300)); }
+  await page.waitForFunction(() => !document.getElementById('startGameBtn').disabled, { timeout: 5000 });
   await page.click('#startGameBtn');
   await new Promise(r => setTimeout(r, 600)); // real code still calls recordAttemptStarted(); it's the isPreviewMode guard inside it that should no-op the write
 
