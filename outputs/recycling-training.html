@@ -83,7 +83,11 @@
   .id-field{display:flex; flex-direction:column; gap:6px; margin-bottom:18px;}
   .id-field span{font-family:var(--mono); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink-soft);}
   .id-field input, .id-field select{
-    font-family:var(--body); font-size:15px; padding:11px 14px; border:1.5px solid var(--line);
+    /* 16px, not 15 - iOS Safari auto-zooms the whole page when a focused input/select computes
+       under 16px, and that zoom persists after the field loses focus (through "Continue" and
+       into the main app) until the trainee manually pinches back out - the real cause of "page
+       looks too tight/zoomed in after registering" reported on a real device. */
+    font-family:var(--body); font-size:16px; padding:11px 14px; border:1.5px solid var(--line);
     background:var(--paper); border-radius:var(--radius); color:var(--ink); width:100%;
   }
   .id-field input:focus-visible, .id-field select:focus-visible{outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);}
@@ -160,14 +164,19 @@
     display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:2px;
     margin-top:36px; border:1px solid var(--line); background:var(--line);
   }
+  /* 5 tabs in a mobile 3-column grid leave one empty cell in the second row (3+2) - that empty
+     cell still renders the grid container's own line-colored background, showing as a stray
+     gray box. A first attempt made the 5th tab span the 2 remaining columns to fill it, but
+     that made E-Waste visually bigger/more prominent than every other stream, which reads as
+     its own mistake rather than a fix. Using ::after as a 6th, non-interactive grid item that
+     matches the PAGE's own background (not the grid's divider-line color) leaves every real
+     tab exactly the same size, with the leftover slot just reading as empty space instead of a
+     solid box. display:none by default so it never becomes a genuine (and disruptive) 6th
+     column on desktop's real 5-column grid - only switched on inside the mobile query below. */
+  .station::after{content:''; display:none;}
   @media (max-width:640px){
     .station{grid-template-columns:repeat(3,1fr);}
-    /* 5 tabs in a 3-column grid leaves one empty cell in the second row (3+2) - that empty
-       cell still renders the grid's own background, showing as a stray blank box. Letting the
-       5th tab span the 2 remaining columns fills the row completely instead. Demo mode (3
-       visible tabs) is unaffected - it sets its own column count via inline style, which wins
-       over this media query regardless (see the isDemoMode block in the script below). */
-    .bin-tab:nth-child(5){grid-column:span 2;}
+    .station::after{display:block; background:var(--paper);}
   }
   .bin-tab{
     background:var(--panel); padding:18px 10px 14px; cursor:pointer; border:none;
@@ -383,7 +392,8 @@
   }
   .email-result-panel p{margin:0; font-size:14px;}
   .email-result-panel input[type="email"]{
-    font-family:var(--body); font-size:15px; padding:11px 14px; border:1.5px solid var(--line);
+    /* 16px, not 15 - same iOS Safari auto-zoom-on-focus reason as .id-field input above. */
+    font-family:var(--body); font-size:16px; padding:11px 14px; border:1.5px solid var(--line);
     background:var(--paper); border-radius:var(--radius); color:var(--ink); width:100%;
   }
   .email-result-panel input[type="email"]:focus-visible{outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);}
