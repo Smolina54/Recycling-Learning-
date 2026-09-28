@@ -160,7 +160,15 @@
     display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:2px;
     margin-top:36px; border:1px solid var(--line); background:var(--line);
   }
-  @media (max-width:640px){.station{grid-template-columns:repeat(3,1fr);}}
+  @media (max-width:640px){
+    .station{grid-template-columns:repeat(3,1fr);}
+    /* 5 tabs in a 3-column grid leaves one empty cell in the second row (3+2) - that empty
+       cell still renders the grid's own background, showing as a stray blank box. Letting the
+       5th tab span the 2 remaining columns fills the row completely instead. Demo mode (3
+       visible tabs) is unaffected - it sets its own column count via inline style, which wins
+       over this media query regardless (see the isDemoMode block in the script below). */
+    .bin-tab:nth-child(5){grid-column:span 2;}
+  }
   .bin-tab{
     background:var(--panel); padding:18px 10px 14px; cursor:pointer; border:none;
     display:flex; flex-direction:column; align-items:center; gap:8px;
@@ -291,6 +299,16 @@
   .board-item .item-icon{width:40px; height:40px; display:flex; align-items:center; justify-content:center;}
   .board-item .item-icon svg{width:100%; height:100%;}
   .board-item .item-name{font-size:12.5px; font-weight:600; line-height:1.25;}
+  /* On mobile, the base minmax(120px,1fr) grid only ever fits 2 columns, leaving each card
+     much wider/taller than its actual content (icon + one short line of text) needs - reads as
+     oversized. 3 tighter columns with a smaller icon and less padding fits the same information
+     far more compactly, without touching the desktop layout at all. */
+  @media (max-width:640px){
+    .item-board{grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px;}
+    .board-item{padding:10px 6px 8px; gap:6px;}
+    .board-item .item-icon{width:30px; height:30px;}
+    .board-item .item-name{font-size:11px;}
+  }
   .board-item.dragging{cursor:grabbing; box-shadow:0 10px 22px rgba(30,42,34,0.22); z-index:50;}
   .board-item.drop-wrong{animation:item-shake .5s ease; border-color:var(--gw);}
   .board-item.locked{cursor:default;}
@@ -1764,6 +1782,13 @@ try {
       text = `<span><b>Correct.</b> ${item.explain}</span>`;
     }
     gameFeedback.innerHTML = iconHtml + text;
+    // On mobile the item board can be taller than the viewport, so the feedback (which sits
+    // below the whole board in document flow) can render off-screen after a drop near the top
+    // of the board - a real trainee who doesn't know to scroll down would simply never see it.
+    // Auto-scrolling it into view removes that failure mode entirely; block:'nearest' is a
+    // no-op when it's already visible (e.g. on desktop, where the board usually fits on screen).
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    gameFeedback.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'nearest' });
   }
 
   function collectIntoBin(card, item){
