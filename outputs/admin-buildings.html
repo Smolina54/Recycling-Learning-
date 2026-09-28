@@ -341,6 +341,7 @@
     <div class="folder-tabs">
       <button class="folder-tab active" id="tabActiveBuildingsBtn">Buildings</button>
       <button class="folder-tab" id="tabArchivedBuildingsBtn">Archived buildings <span id="archivedCountBadge"></span></button>
+      <button class="folder-tab" id="tabBintrackerSyncBtn">Bintracker Sync</button>
     </div>
 
     <div id="activeBuildingsPane">
@@ -365,6 +366,24 @@
     <div id="archivedBuildingsPane" style="display:none;">
       <p class="block-sub" style="margin-bottom:16px;">Buildings archived from the Buildings tab. Restore one to bring it back, or delete it permanently to erase it - and all of its induction history - for good.</p>
       <div id="archivedBuildingsList"></div>
+    </div>
+
+    <div id="bintrackerSyncPane" style="display:none;">
+      <div class="report-block">
+        <h3>Check for new buildings</h3>
+        <p class="block-sub">Looks across every building Bintracker knows about (last 30 days of collections) and lists any name not yet mapped to one of this app's own buildings.</p>
+        <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+          <button class="btn" id="discoverBuildingsBtn">Check for new buildings</button>
+        </div>
+        <p class="block-sub" id="discoverBuildingsStatus" style="margin-top:10px;"></p>
+        <div id="discoveredBuildingsList"></div>
+      </div>
+
+      <div class="report-block">
+        <h3>Synchronize a building's tenants</h3>
+        <p class="block-sub">Only buildings with a Bintracker mapping saved (in the Buildings tab) appear here. Synchronizing compares the last 30 days of Bintracker collections against this building's real tenant list - nothing is changed until you review and act on each item.</p>
+        <div id="bintrackerSyncBuildingsList"></div>
+      </div>
     </div>
   </section>
 </div>
@@ -418,6 +437,24 @@ try {
     };
     window.__testSignIn('esgtradeflex@gmail.com', 'test-password-123')
       .catch(err => console.error('Local auto sign-in failed', err));
+    // Test-only seam for the Bintracker Sync tab (Workstream 12): syncBintrackerTenants's real
+    // result is never persisted anywhere (deliberately - see the plan's "no new Firestore
+    // collection" instruction), so unlike the Phase B match-review UI (which reads bintrackerRows/
+    // bintrackerTenantMatches straight from Firestore and can be tested by seeding those directly),
+    // there's no Firestore doc a test can seed to drive the New/Missing/Mismatch review UI. This
+    // lets tests/admin-buildings-bintrackersync.test.js inject a realistic result shape (as if a
+    // real syncBintrackerTenants call had just returned) without needing a live Bintracker network
+    // call or a real Functions-emulator round trip. Only defined under ?emulator=1 - never present
+    // in production.
+    window.__testSetBintrackerSyncResult = (buildingId, data) => {
+      bintrackerSyncResultsByBuildingId.set(buildingId, {
+        newTenants: (data.newTenants || []).map(t => ({ ...t, selected: false, imported: false })),
+        missingTenants: (data.missingTenants || []).map(t => ({ ...t, dismissed: false, deleted: false, deleteConfirmOpen: false, deleteTypedName: '' })),
+        levelMismatches: (data.levelMismatches || []).map(m => ({ ...m, dismissed: false, updated: false })),
+        dateRange: data.dateRange || { fromDate: '2026-01-01', toDate: '2026-01-31' },
+      });
+      renderBintrackerSyncBuildingsList();
+    };
     // Cross-page links (the settings sidebar) are plain hrefs with no query string — without
     // this, clicking one drops out of ?emulator=1 entirely on the next page (real Firebase, no
     // auto sign-in) instead of staying in the local test session.
@@ -679,12 +716,25 @@ const bintrackerMatchesByBuildingId = new Map(); // buildingId -> Map(tenantId -
 const bintrackerLoadedForBuildingId = new Set(); // buildings we've already fetched rows+matches for in this session
 let bintrackerChangeOpenKey = null; // `${buildingId}__${tenantId}` of the tenant whose manual picker is open, or null
 
+// ---- Bintracker Sync tab (Workstream 12: building/tenant catalog sync) ----
+// No new Firestore collection backs any of this - discoverBintrackerBuildings/syncBintrackerTenants
+// are both pure read/diff Cloud Functions, so everything here is in-memory only, gone on reload.
+let discoveredBuildingNames = []; // last "Check for new buildings" result
+let discoverBuildingsInFlight = false;
+let pendingBintrackerNameForNewBuilding = null; // set by "Add this building" below, read by addBuildingBtn's own handler
+let bintrackerSyncInFlightBuildingId = null; // building whose "Synchronize" call is in flight
+// buildingId -> { newTenants, missingTenants, levelMismatches, dateRange } - each item also carries
+// local-only UI state (selected/dismissed/imported/updated/deleted/deleteConfirmOpen/deleteTypedName)
+// added when the result first lands, mutated in place as the admin acts on each row.
+const bintrackerSyncResultsByBuildingId = new Map();
+
 function refreshBuildingsView(){
   const term = buildingSearchTerm.trim().toLowerCase();
   const filtered = term ? buildingsCache.filter(b => b.name.toLowerCase().includes(term)) : buildingsCache;
   renderBuildingsList(filtered);
   document.getElementById('archivedCountBadge').textContent = archivedBuildingsCache.length ? `(${archivedBuildingsCache.length})` : '';
   renderArchivedBuildingsList(archivedBuildingsCache);
+  renderBintrackerSyncBuildingsList();
 }
 
 async function loadMasterBuildings(){
@@ -1026,6 +1076,156 @@ function renderArchivedBuildingsList(buildings){
   }).join('');
 }
 
+// ---------------- Bintracker Sync tab (Workstream 12) ----------------
+function renderDiscoveredBuildingsList(){
+  const container = document.getElementById('discoveredBuildingsList');
+  if (!discoveredBuildingNames.length){
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = `
+    <ul class="tenant-list">
+      ${discoveredBuildingNames.map(name => `
+        <li>
+          <span class="tenant-name">${esc(name)}</span>
+          <span class="tenant-row-actions">
+            <button type="button" class="btn secondary add-discovered-building-btn" data-name="${esc(name)}">Add this building</button>
+          </span>
+        </li>
+      `).join('')}
+    </ul>`;
+}
+
+// One building's inline diff panel - new tenants (checkboxes + Import selected), missing tenants
+// (Keep/Delete, Delete reusing the exact same type-the-name confirm pattern as the Archived
+// buildings tab's own permanent-delete panel), and level mismatches (Update/Ignore). Every row
+// disappears from view once acted on (imported/deleted/updated) or dismissed (kept/ignored) -
+// nothing here is persisted except an explicit Import/Update/Delete action, so "kept"/"ignored"
+// simply means "don't act on it this time" - it can resurface on the next Synchronize.
+function renderBintrackerSyncResultHtml(building, result){
+  const visibleNew = result.newTenants.filter(t => !t.imported);
+  const visibleMissing = result.missingTenants.filter(t => !t.dismissed && !t.deleted);
+  const visibleMismatches = result.levelMismatches.filter(m => !m.dismissed && !m.updated);
+  return `
+    <div class="bintracker-sync-result" data-building-id="${esc(building.id)}" style="margin-top:16px; padding-top:16px; border-top:1px dashed var(--line);">
+      <p class="block-sub">Compared against the last 30 days of Bintracker collections (${esc(result.dateRange.fromDate)} to ${esc(result.dateRange.toDate)}).</p>
+
+      <p class="generate-link-title"><strong>New tenants found</strong></p>
+      ${visibleNew.length ? `
+        <div class="import-candidates">
+          ${visibleNew.map(t => `
+            <div class="import-row" data-new-index="${result.newTenants.indexOf(t)}">
+              <input type="checkbox" class="new-tenant-import-checkbox"${t.selected ? ' checked' : ''}>
+              <span class="tenant-name">${esc(t.bintrackerTenantRaw)}</span>
+              <span class="tenant-levels">${esc(t.primaryLocations.join(', ') || '(no location seen)')}</span>
+            </div>
+          `).join('')}
+        </div>
+        <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+          <button type="button" class="btn import-new-tenants-btn">Import selected →</button>
+        </div>
+      ` : '<p class="block-sub">None - every Bintracker tenant/location pair seen matches an existing tenant.</p>'}
+
+      <p class="generate-link-title" style="margin-top:20px;"><strong>Tenants not seen in the last 30 days</strong></p>
+      ${visibleMissing.length ? `
+        <ul class="tenant-list">
+          ${visibleMissing.map(t => `
+            <li data-tenant-id="${esc(t.tenantId)}">
+              <span class="tenant-name">${esc(t.tenantName)}</span>
+              <span class="tenant-row-actions">
+                <button type="button" class="btn secondary keep-missing-tenant-btn">Keep</button>
+                <button type="button" class="btn secondary danger-btn delete-missing-tenant-btn">Delete</button>
+              </span>
+              ${t.deleteConfirmOpen ? `
+                <div class="permanent-delete-panel" style="width:100%; margin-top:10px;">
+                  <p class="app-modal-message" style="margin:0 0 12px;">This permanently deletes "${esc(t.tenantName)}" and ALL of its induction history - submissions and attempts. This cannot be undone.</p>
+                  <div class="filter-row">
+                    <label class="filter-field"><span>Type the tenant name to confirm</span><input type="text" class="tenant-delete-confirm-input" placeholder="${esc(t.tenantName)}" value="${esc(t.deleteTypedName || '')}"></label>
+                  </div>
+                  <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+                    <button type="button" class="btn secondary danger-btn tenant-delete-confirm-btn"${t.deleteTypedName === t.tenantName ? '' : ' disabled'}>Delete permanently</button>
+                    <button type="button" class="btn secondary tenant-delete-cancel-btn">Cancel</button>
+                  </div>
+                  <p class="block-sub tenant-delete-status" style="margin-top:10px;"></p>
+                </div>
+              ` : ''}
+            </li>
+          `).join('')}
+        </ul>
+      ` : '<p class="block-sub">None - every active tenant was seen in the last 30 days.</p>'}
+
+      <p class="generate-link-title" style="margin-top:20px;"><strong>Level mismatches</strong></p>
+      ${visibleMismatches.length ? `
+        <ul class="tenant-list">
+          ${visibleMismatches.map(m => `
+            <li data-tenant-id="${esc(m.tenantId)}">
+              <span class="tenant-name">${esc(m.tenantName)}</span>
+              <span class="tenant-levels">Stored: ${esc(m.currentLevels.join(', ') || '(none)')} — Bintracker also shows: ${esc(m.newLevels.join(', '))}</span>
+              <span class="tenant-row-actions">
+                <button type="button" class="btn update-level-mismatch-btn">Update</button>
+                <button type="button" class="btn secondary ignore-level-mismatch-btn">Ignore</button>
+              </span>
+            </li>
+          `).join('')}
+        </ul>
+      ` : '<p class="block-sub">None - every matched tenant\'s stored level(s) already cover what Bintracker showed.</p>'}
+    </div>`;
+}
+
+// Only ever shows buildings with a bintrackerBuildingName already saved (graceful-absence, same
+// principle used everywhere else in this app's Bintracker features - a building not tracked in
+// Bintracker simply doesn't appear here, not an error).
+function renderBintrackerSyncBuildingsList(){
+  const container = document.getElementById('bintrackerSyncBuildingsList');
+  if (!container) return; // tab markup not in the DOM yet on the very first render call
+  const mappedBuildings = buildingsCache.filter(b => Boolean(b.bintrackerBuildingName));
+  if (!mappedBuildings.length){
+    container.innerHTML = '<p class="block-sub">No buildings have a Bintracker mapping saved yet - set one from a building\'s row in the Buildings tab.</p>';
+    return;
+  }
+  container.innerHTML = mappedBuildings.map(b => {
+    const isSyncing = bintrackerSyncInFlightBuildingId === b.id;
+    const result = bintrackerSyncResultsByBuildingId.get(b.id);
+    return `
+      <div class="report-block building-row" data-building-id="${esc(b.id)}">
+        <div class="building-header-row">
+          <h3>${esc(b.name)}</h3>
+          <div class="building-header-actions">
+            <button type="button" class="btn secondary sync-tenants-btn"${isSyncing ? ' disabled' : ''}>${isSyncing ? 'Synchronizing…' : 'Synchronize'}</button>
+          </div>
+        </div>
+        ${result ? renderBintrackerSyncResultHtml(b, result) : ''}
+      </div>`;
+  }).join('');
+}
+
+function renderBintrackerSyncPane(){
+  renderDiscoveredBuildingsList();
+  renderBintrackerSyncBuildingsList();
+}
+
+async function runBintrackerSync(buildingId){
+  bintrackerSyncInFlightBuildingId = buildingId;
+  renderBintrackerSyncBuildingsList();
+  try {
+    const syncBintrackerTenants = httpsCallable(functions, 'syncBintrackerTenants', { timeout: 300000 });
+    const result = await syncBintrackerTenants({ buildingId });
+    const data = result.data || {};
+    bintrackerSyncResultsByBuildingId.set(buildingId, {
+      newTenants: (data.newTenants || []).map(t => ({ ...t, selected: false, imported: false })),
+      missingTenants: (data.missingTenants || []).map(t => ({ ...t, dismissed: false, deleted: false, deleteConfirmOpen: false, deleteTypedName: '' })),
+      levelMismatches: (data.levelMismatches || []).map(m => ({ ...m, dismissed: false, updated: false })),
+      dateRange: data.dateRange || {},
+    });
+  } catch (err){
+    console.error('Failed to synchronize Bintracker tenants:', err);
+    await showAlert(err.message || 'Failed to synchronize - check the console for details.');
+  } finally {
+    bintrackerSyncInFlightBuildingId = null;
+    renderBintrackerSyncBuildingsList();
+  }
+}
+
 // Building-name column value from a "collection point" style export (e.g. "KPMG - Level 36 -
 // Office") combined with its own "Primary Location" column (e.g. "Level 36") — groups by the
 // part of Name before that level, deduping levels, so multiple rows/sub-areas for one tenant
@@ -1155,7 +1355,14 @@ document.getElementById('addBuildingBtn').addEventListener('click', async () => 
   if (!name){ status.textContent = 'Enter a building name first.'; return; }
   status.textContent = 'Adding…';
   try {
-    const newBuildingId = await generateUniqueSlugAndCreate('buildings', name, { name });
+    const buildingData = { name };
+    // Workstream 12: "Add this building" on the Bintracker Sync tab pre-fills this same input
+    // with a discovered Bintracker building name and sets this flag - only actually applies the
+    // mapping if the name still matches exactly what was pre-filled (the admin may have edited it
+    // before submitting, in which case assuming it's still the same Bintracker building would be wrong).
+    const applyPendingBintrackerName = pendingBintrackerNameForNewBuilding && pendingBintrackerNameForNewBuilding === name;
+    if (applyPendingBintrackerName) buildingData.bintrackerBuildingName = name;
+    const newBuildingId = await generateUniqueSlugAndCreate('buildings', name, buildingData);
     // Every building does Recycling by default, same as before programs existed — so a new
     // building is auto-enrolled here rather than requiring a manual step every single time.
     await setDoc(doc(db, 'enrollments', `recycling-sorting__${newBuildingId}`), {
@@ -1163,7 +1370,10 @@ document.getElementById('addBuildingBtn').addEventListener('click', async () => 
       createdAt: serverTimestamp(),
     });
     nameInput.value = '';
-    status.textContent = `Added "${name}".`;
+    pendingBintrackerNameForNewBuilding = null;
+    status.textContent = applyPendingBintrackerName
+      ? `Added "${name}" and mapped it to Bintracker.`
+      : `Added "${name}".`;
     expandedBuildingIds.add(newBuildingId); // open it up right away — you almost always want to add tenants next
     await loadMasterBuildings();
   } catch (err){
@@ -1177,17 +1387,211 @@ document.getElementById('buildingSearchInput').addEventListener('input', (e) => 
   refreshBuildingsView();
 });
 
-document.getElementById('tabActiveBuildingsBtn').addEventListener('click', () => {
-  document.getElementById('tabActiveBuildingsBtn').classList.add('active');
-  document.getElementById('tabArchivedBuildingsBtn').classList.remove('active');
-  document.getElementById('activeBuildingsPane').style.display = '';
-  document.getElementById('archivedBuildingsPane').style.display = 'none';
+function showBuildingsTab(which){
+  document.getElementById('tabActiveBuildingsBtn').classList.toggle('active', which === 'active');
+  document.getElementById('tabArchivedBuildingsBtn').classList.toggle('active', which === 'archived');
+  document.getElementById('tabBintrackerSyncBtn').classList.toggle('active', which === 'sync');
+  document.getElementById('activeBuildingsPane').style.display = which === 'active' ? '' : 'none';
+  document.getElementById('archivedBuildingsPane').style.display = which === 'archived' ? '' : 'none';
+  document.getElementById('bintrackerSyncPane').style.display = which === 'sync' ? '' : 'none';
+}
+document.getElementById('tabActiveBuildingsBtn').addEventListener('click', () => showBuildingsTab('active'));
+document.getElementById('tabArchivedBuildingsBtn').addEventListener('click', () => showBuildingsTab('archived'));
+document.getElementById('tabBintrackerSyncBtn').addEventListener('click', () => {
+  showBuildingsTab('sync');
+  renderBintrackerSyncPane();
 });
-document.getElementById('tabArchivedBuildingsBtn').addEventListener('click', () => {
-  document.getElementById('tabArchivedBuildingsBtn').classList.add('active');
-  document.getElementById('tabActiveBuildingsBtn').classList.remove('active');
-  document.getElementById('archivedBuildingsPane').style.display = '';
-  document.getElementById('activeBuildingsPane').style.display = 'none';
+
+document.getElementById('discoverBuildingsBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('discoverBuildingsBtn');
+  const status = document.getElementById('discoverBuildingsStatus');
+  if (discoverBuildingsInFlight) return;
+  discoverBuildingsInFlight = true;
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  status.textContent = '';
+  try {
+    const discoverBintrackerBuildings = httpsCallable(functions, 'discoverBintrackerBuildings', { timeout: 300000 });
+    const result = await discoverBintrackerBuildings({});
+    discoveredBuildingNames = (result.data && result.data.discoveredBuildingNames) || [];
+    status.textContent = discoveredBuildingNames.length
+      ? `Found ${discoveredBuildingNames.length} building name${discoveredBuildingNames.length === 1 ? '' : 's'} not yet mapped.`
+      : 'No new buildings found - every Bintracker building name is already mapped.';
+  } catch (err){
+    console.error('Failed to check for new Bintracker buildings:', err);
+    status.textContent = err.message || 'Failed to check - check the console for details.';
+  } finally {
+    discoverBuildingsInFlight = false;
+    btn.disabled = false;
+    btn.textContent = 'Check for new buildings';
+    renderDiscoveredBuildingsList();
+  }
+});
+
+document.getElementById('discoveredBuildingsList').addEventListener('click', (e) => {
+  const addBtn = e.target.closest('.add-discovered-building-btn');
+  if (!addBtn) return;
+  const name = addBtn.dataset.name;
+  pendingBintrackerNameForNewBuilding = name;
+  showBuildingsTab('active');
+  const nameInput = document.getElementById('newBuildingName');
+  nameInput.value = name;
+  nameInput.focus();
+  document.getElementById('buildingsStatus').textContent = `Ready to add "${name}" - click "+ Add building" to create it and map it to Bintracker.`;
+});
+
+document.getElementById('bintrackerSyncBuildingsList').addEventListener('click', async (e) => {
+  const syncBtn = e.target.closest('.sync-tenants-btn');
+  if (syncBtn){
+    const buildingId = syncBtn.closest('.building-row').dataset.buildingId;
+    await runBintrackerSync(buildingId);
+    return;
+  }
+
+  const importNewBtn = e.target.closest('.import-new-tenants-btn');
+  if (importNewBtn){
+    const buildingId = importNewBtn.closest('.bintracker-sync-result').dataset.buildingId;
+    const result = bintrackerSyncResultsByBuildingId.get(buildingId);
+    const toImport = result ? result.newTenants.filter(t => t.selected && !t.imported) : [];
+    if (!toImport.length){ await showAlert('Tick at least one new tenant to import first.'); return; }
+    try {
+      const batch = writeBatch(db);
+      toImport.forEach(t => {
+        batch.set(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), {
+          name: t.bintrackerTenantRaw,
+          levels: t.primaryLocations || [],
+        });
+      });
+      await batch.commit();
+      toImport.forEach(t => { t.imported = true; });
+      await loadMasterBuildings();
+      renderBintrackerSyncBuildingsList();
+    } catch (err){
+      console.error('Failed to import new tenants:', err);
+      await showAlert('Failed to import - check the console for details.');
+    }
+    return;
+  }
+
+  const keepBtn = e.target.closest('.keep-missing-tenant-btn');
+  if (keepBtn){
+    const buildingId = keepBtn.closest('.bintracker-sync-result').dataset.buildingId;
+    const tenantId = keepBtn.closest('li').dataset.tenantId;
+    const result = bintrackerSyncResultsByBuildingId.get(buildingId);
+    const t = result && result.missingTenants.find(x => x.tenantId === tenantId);
+    if (t) t.dismissed = true;
+    renderBintrackerSyncBuildingsList();
+    return;
+  }
+
+  const openDeleteMissingBtn = e.target.closest('.delete-missing-tenant-btn');
+  if (openDeleteMissingBtn){
+    const buildingId = openDeleteMissingBtn.closest('.bintracker-sync-result').dataset.buildingId;
+    const tenantId = openDeleteMissingBtn.closest('li').dataset.tenantId;
+    const result = bintrackerSyncResultsByBuildingId.get(buildingId);
+    const t = result && result.missingTenants.find(x => x.tenantId === tenantId);
+    if (t){ t.deleteConfirmOpen = true; t.deleteTypedName = ''; }
+    renderBintrackerSyncBuildingsList();
+    return;
+  }
+
+  const cancelDeleteMissingBtn = e.target.closest('.tenant-delete-cancel-btn');
+  if (cancelDeleteMissingBtn){
+    const buildingId = cancelDeleteMissingBtn.closest('.bintracker-sync-result').dataset.buildingId;
+    const tenantId = cancelDeleteMissingBtn.closest('li').dataset.tenantId;
+    const result = bintrackerSyncResultsByBuildingId.get(buildingId);
+    const t = result && result.missingTenants.find(x => x.tenantId === tenantId);
+    if (t){ t.deleteConfirmOpen = false; t.deleteTypedName = ''; }
+    renderBintrackerSyncBuildingsList();
+    return;
+  }
+
+  const confirmDeleteMissingBtn = e.target.closest('.tenant-delete-confirm-btn');
+  if (confirmDeleteMissingBtn && !confirmDeleteMissingBtn.disabled){
+    const buildingId = confirmDeleteMissingBtn.closest('.bintracker-sync-result').dataset.buildingId;
+    const li = confirmDeleteMissingBtn.closest('li');
+    const tenantId = li.dataset.tenantId;
+    const result = bintrackerSyncResultsByBuildingId.get(buildingId);
+    const t = result && result.missingTenants.find(x => x.tenantId === tenantId);
+    if (!t) return;
+    const statusEl = li.querySelector('.tenant-delete-status');
+    confirmDeleteMissingBtn.disabled = true;
+    confirmDeleteMissingBtn.textContent = 'Deleting…';
+    try {
+      const deleteTenantPermanently = httpsCallable(functions, 'deleteTenantPermanently', { timeout: 300000 });
+      const deleteResult = await deleteTenantPermanently({ buildingId, tenantId, confirmName: t.deleteTypedName });
+      t.deleted = true;
+      await showAlert(
+        `Deleted "${deleteResult.data.tenantName}" permanently.\n\n` +
+        `${deleteResult.data.deletedCounts.submissions} submissions, ${deleteResult.data.deletedCounts.attempts} attempts.`
+      );
+      await loadMasterBuildings();
+      renderBintrackerSyncBuildingsList();
+    } catch (err){
+      console.error('Failed to permanently delete tenant:', err);
+      if (statusEl) statusEl.textContent = err.message || 'Failed to delete - check the console for details.';
+      confirmDeleteMissingBtn.disabled = false;
+      confirmDeleteMissingBtn.textContent = 'Delete permanently';
+    }
+    return;
+  }
+
+  const updateMismatchBtn = e.target.closest('.update-level-mismatch-btn');
+  if (updateMismatchBtn){
+    const buildingId = updateMismatchBtn.closest('.bintracker-sync-result').dataset.buildingId;
+    const tenantId = updateMismatchBtn.closest('li').dataset.tenantId;
+    const result = bintrackerSyncResultsByBuildingId.get(buildingId);
+    const m = result && result.levelMismatches.find(x => x.tenantId === tenantId);
+    if (!m) return;
+    const newLevels = [...new Set([...(m.currentLevels || []), ...(m.newLevels || [])])];
+    try {
+      await updateDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { levels: newLevels });
+      m.updated = true;
+      await loadMasterBuildings();
+      renderBintrackerSyncBuildingsList();
+    } catch (err){
+      console.error('Failed to update tenant levels:', err);
+      await showAlert('Failed to update - check the console for details.');
+    }
+    return;
+  }
+
+  const ignoreMismatchBtn = e.target.closest('.ignore-level-mismatch-btn');
+  if (ignoreMismatchBtn){
+    const buildingId = ignoreMismatchBtn.closest('.bintracker-sync-result').dataset.buildingId;
+    const tenantId = ignoreMismatchBtn.closest('li').dataset.tenantId;
+    const result = bintrackerSyncResultsByBuildingId.get(buildingId);
+    const m = result && result.levelMismatches.find(x => x.tenantId === tenantId);
+    if (m) m.dismissed = true;
+    renderBintrackerSyncBuildingsList();
+    return;
+  }
+});
+
+document.getElementById('bintrackerSyncBuildingsList').addEventListener('change', (e) => {
+  const checkbox = e.target.closest('.new-tenant-import-checkbox');
+  if (!checkbox) return;
+  const buildingId = checkbox.closest('.bintracker-sync-result').dataset.buildingId;
+  const index = Number(checkbox.closest('.import-row').dataset.newIndex);
+  const result = bintrackerSyncResultsByBuildingId.get(buildingId);
+  if (result && result.newTenants[index]) result.newTenants[index].selected = checkbox.checked;
+});
+
+// Same "don't re-render on every keystroke" approach as the Archived buildings tab's own
+// permanent-delete-confirm-input handler above - just toggles the sibling Delete button instead
+// of rebuilding the whole list (which would drop focus mid-type).
+document.getElementById('bintrackerSyncBuildingsList').addEventListener('input', (e) => {
+  const input = e.target.closest('.tenant-delete-confirm-input');
+  if (!input) return;
+  const buildingId = input.closest('.bintracker-sync-result').dataset.buildingId;
+  const li = input.closest('li');
+  const tenantId = li.dataset.tenantId;
+  const result = bintrackerSyncResultsByBuildingId.get(buildingId);
+  const t = result && result.missingTenants.find(x => x.tenantId === tenantId);
+  if (!t) return;
+  t.deleteTypedName = input.value;
+  const confirmBtn = li.querySelector('.tenant-delete-confirm-btn');
+  confirmBtn.disabled = !(input.value === t.tenantName);
 });
 
 document.getElementById('archivedBuildingsList').addEventListener('click', async (e) => {
@@ -1787,6 +2191,15 @@ if (auth){
       bintrackerLoadedForBuildingId.clear();
       bintrackerChangeOpenKey = null;
       refreshingBintrackerBuildingId = null;
+      discoveredBuildingNames = [];
+      discoverBuildingsInFlight = false;
+      pendingBintrackerNameForNewBuilding = null;
+      bintrackerSyncInFlightBuildingId = null;
+      bintrackerSyncResultsByBuildingId.clear();
+      document.getElementById('discoveredBuildingsList').innerHTML = '';
+      document.getElementById('discoverBuildingsStatus').textContent = '';
+      document.getElementById('bintrackerSyncBuildingsList').innerHTML = '';
+      showBuildingsTab('active');
     }
   });
 }

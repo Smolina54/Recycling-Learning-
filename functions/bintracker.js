@@ -172,6 +172,93 @@ function findBestMatch(ourName, candidateNames) {
   return null;
 }
 
+// ---- Workstream 12: building/tenant catalog sync — pure diff helpers ----
+// Both functions below take ALREADY-FETCHED raw Bintracker rows (never touch the network
+// themselves) and diff them against already-loaded Firestore data the caller supplies - same
+// "separate the fetch from the diff" split as computeRecyclingLevelPct above, done specifically
+// so tests/functions-bintrackersync.test.js can exercise the actual diff logic with realistic
+// seeded row shapes, with no real Bintracker network call and no Functions/Firestore emulator
+// needed for these two functions in isolation.
+
+// discoverBintrackerBuildings: distinct `building` values from a building-unscoped Collections
+// pull, minus any Bintracker building name already mapped to one of the app's own buildings.
+// Compares via normalizeForMatching (not raw ===) so a saved mapping that differs only in
+// whitespace/case/punctuation from the live API value still counts as "already mapped" - the
+// mapping is meant to be an exact name per admin-buildings.html's own instructions, but the two
+// could easily drift after being typed by hand in two different places over time.
+function diffDiscoveredBuildingNames(rawRows, existingBintrackerBuildingNames) {
+  const existingNormalized = new Set(
+    (existingBintrackerBuildingNames || []).map(normalizeForMatching).filter(Boolean)
+  );
+  const seen = new Map(); // normalized name -> first-seen raw name
+  for (const row of rawRows || []) {
+    const raw = row && row.building;
+    if (!raw) continue;
+    const norm = normalizeForMatching(raw);
+    if (!norm || existingNormalized.has(norm) || seen.has(norm)) continue;
+    seen.set(norm, raw);
+  }
+  return [...seen.values()];
+}
+
+// syncBintrackerTenants: diffs distinct (tenant, primaryLocation) pairs seen in a building's last-
+// 30-days Collections rows against that building's REAL, already-active tenants subcollection.
+// `existingTenants` must already be filtered to active-only (mirrors admin-buildings.html's own
+// `.filter(t => t.data().active !== false)` for the same reason - an archived tenant is meant to
+// stay hidden, not resurface here as "missing" or a level-mismatch candidate).
+// Matching direction mirrors admin-buildings.html's existing Phase B review UI exactly:
+// findBestMatch(tenant.name, distinctRawRoles) - the app's own tenant name is `ourName`, the raw
+// Bintracker strings are the candidates - so this reuses the identical confidence/floor behavior
+// admins already see and trust from that screen, not a mirror-image of it.
+function diffBintrackerTenants(rawRows, existingTenants) {
+  const pairsByNormRaw = new Map(); // normalized raw tenant -> { raw, locations: Set<string> }
+  for (const row of rawRows || []) {
+    const tenantRaw = row && row.tenant;
+    if (!tenantRaw) continue;
+    const norm = normalizeForMatching(tenantRaw);
+    if (!norm) continue;
+    if (!pairsByNormRaw.has(norm)) pairsByNormRaw.set(norm, { raw: tenantRaw, locations: new Set() });
+    const loc = row.primaryLocation;
+    if (loc) pairsByNormRaw.get(norm).locations.add(loc);
+  }
+  const distinctRawTenantNames = [...pairsByNormRaw.values()].map((v) => v.raw);
+
+  const matchedNormRaws = new Set();
+  const missingTenants = [];
+  const levelMismatches = [];
+
+  for (const tenant of existingTenants || []) {
+    const match = distinctRawTenantNames.length ? findBestMatch(tenant.name, distinctRawTenantNames) : null;
+    if (!match) {
+      missingTenants.push({ tenantId: tenant.id, tenantName: tenant.name, levels: tenant.levels || [] });
+      continue;
+    }
+    const matchedNorm = normalizeForMatching(match.candidate);
+    matchedNormRaws.add(matchedNorm);
+    const seenLocations = [...pairsByNormRaw.get(matchedNorm).locations];
+    const tenantLevels = new Set(tenant.levels || []);
+    const newLevels = seenLocations.filter((loc) => !tenantLevels.has(loc));
+    if (newLevels.length) {
+      levelMismatches.push({
+        tenantId: tenant.id,
+        tenantName: tenant.name,
+        currentLevels: tenant.levels || [],
+        bintrackerTenantRaw: match.candidate,
+        confidence: match.confidence,
+        newLevels,
+      });
+    }
+  }
+
+  const newTenants = [];
+  for (const [norm, { raw, locations }] of pairsByNormRaw) {
+    if (matchedNormRaws.has(norm)) continue;
+    newTenants.push({ bintrackerTenantRaw: raw, primaryLocations: [...locations] });
+  }
+
+  return { newTenants, missingTenants, levelMismatches };
+}
+
 module.exports = {
   BASE_URL,
   fetchBintrackerCollections,
@@ -182,6 +269,8 @@ module.exports = {
   RECYCLABLE_STREAMS,
   MIN_ROWS_FOR_RECYCLING_LEVEL,
   computeRecyclingLevelPct,
+  diffDiscoveredBuildingNames,
+  diffBintrackerTenants,
   // exported for the isolated signing unit test - not used by other modules
   _oauth1Header: oauth1Header,
 };

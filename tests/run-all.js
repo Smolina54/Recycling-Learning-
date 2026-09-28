@@ -55,6 +55,8 @@ const SUITES = [
   { name: 'test:functions-delete-building', file: 'functions-deletebuildingpermanently.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
   { name: 'test:bintracker-unit', file: 'bintracker-unit.test.js' },
   { name: 'test:functions-bintracker', file: 'functions-refreshbintrackerdata.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
+  { name: 'test:functions-bintrackersync', file: 'functions-bintrackersync.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
+  { name: 'test:admin-buildings-bintrackersync', file: 'admin-buildings-bintrackersync.test.js' },
 ];
 
 async function main(){

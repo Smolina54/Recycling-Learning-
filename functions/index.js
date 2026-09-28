@@ -17,7 +17,10 @@ const nodemailer = require('nodemailer');
 const path = require('path');
 const crypto = require('crypto');
 const { catalog } = require('./catalog');
-const { fetchBintrackerCollections, mapWasteTypeToStream, computeRecyclingLevelPct } = require('./bintracker');
+const {
+  fetchBintrackerCollections, mapWasteTypeToStream, computeRecyclingLevelPct,
+  diffDiscoveredBuildingNames, diffBintrackerTenants,
+} = require('./bintracker');
 
 // Co-located with Firestore, which already lives in australia-southeast2 (Melbourne) — moved
 // here from the platform's us-central1 default on 2026-09-23 for data residency (Tradeflex is
@@ -699,6 +702,157 @@ exports.refreshBintrackerData = onCall(
     };
   }
 );
+
+// ---- Workstream 12: building/tenant catalog sync ----
+// Keeps the app's OWN buildings/tenants catalog current using real Bintracker data as a
+// suggestion source an admin reviews - never a silent overwrite. No new Firestore collection: all
+// 3 functions below either do a pure read/diff (nothing persisted) or a single, explicit,
+// admin-confirmed delete - there's nothing here that needs history the way the induction-vs-real-
+// data comparison feature's bintrackerRows/bintrackerTenantMatches do.
+// Same 30-day window used for both "check for new buildings" and "synchronize this building" -
+// collections happen daily, so 30 days gives ample margin without risking MAX_PAGES/timeout on an
+// unscoped, all-buildings pull.
+function last30DayRange() {
+  const toDate = new Date();
+  const fromDate = new Date(toDate);
+  fromDate.setDate(fromDate.getDate() - 30);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  return { fromDate: fmt(fromDate), toDate: fmt(toDate) };
+}
+
+// discoverBintrackerBuildings — calls the Collections API with `request.building` omitted (see
+// fetchBintrackerCollections's own comment), so it queries across every building the credentials
+// can see, then surfaces any distinct `building` value not yet mapped to one of this app's own
+// buildings via bintrackerBuildingName. Pure read - no Firestore writes.
+exports.discoverBintrackerBuildings = onCall(
+  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300 },
+  async (request) => {
+    await assertIsAdmin(request.auth);
+
+    const { fromDate, toDate } = last30DayRange();
+    const rawRows = await fetchBintrackerCollections({
+      // `building` deliberately omitted - queries every building the credentials can see.
+      collectDateFrom: fromDate,
+      collectDateTo: toDate,
+      appId: BINTRACKER_APP_ID.value(),
+      appKey: BINTRACKER_APP_KEY.value(),
+    });
+
+    const buildingsSnap = await admin.firestore().collection('buildings').get();
+    const existingBintrackerBuildingNames = buildingsSnap.docs
+      .map((d) => d.data().bintrackerBuildingName)
+      .filter(Boolean);
+
+    const discoveredBuildingNames = diffDiscoveredBuildingNames(rawRows, existingBintrackerBuildingNames);
+    return { discoveredBuildingNames };
+  }
+);
+
+// syncBintrackerTenants — fetches the last 30 days of Collections for one building's mapped
+// name, and diffs the distinct (tenant, primaryLocation) pairs seen against that building's REAL,
+// active tenants subcollection using the shared fuzzy-matching helper (diffBintrackerTenants,
+// functions/bintracker.js). Pure read/diff - no Firestore writes at all. Every admin action on the
+// result (import a new tenant, delete a missing one, update a level) is a separate, explicit
+// follow-up: import/update are plain client-side Firestore writes the admin's own browser already
+// has permission to make (see firestore.rules' buildings/{id}/tenants write rule); only the
+// delete needs its own Cloud Function (deleteTenantPermanently, below), since submissions/attempts
+// both have `allow delete: if false` for every client, admins included.
+exports.syncBintrackerTenants = onCall(
+  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300 },
+  async (request) => {
+    await assertIsAdmin(request.auth);
+
+    const { buildingId } = request.data || {};
+    if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
+      throw new HttpsError('invalid-argument', 'A valid building id is required.');
+    }
+
+    const buildingRef = admin.firestore().doc(`buildings/${buildingId}`);
+    const buildingSnap = await buildingRef.get();
+    if (!buildingSnap.exists) throw new HttpsError('not-found', 'No building found for that id.');
+    const bintrackerBuildingName = buildingSnap.data().bintrackerBuildingName;
+    if (!bintrackerBuildingName) {
+      throw new HttpsError('failed-precondition', 'No Bintracker mapping set for this building yet.');
+    }
+
+    const { fromDate, toDate } = last30DayRange();
+    const rawRows = await fetchBintrackerCollections({
+      building: bintrackerBuildingName,
+      collectDateFrom: fromDate,
+      collectDateTo: toDate,
+      appId: BINTRACKER_APP_ID.value(),
+      appKey: BINTRACKER_APP_KEY.value(),
+    });
+
+    const tenantsSnap = await buildingRef.collection('tenants').get();
+    const existingTenants = tenantsSnap.docs
+      .filter((d) => d.data().active !== false)
+      .map((d) => ({ id: d.id, name: d.data().name || '', levels: d.data().levels || [] }));
+
+    const { newTenants, missingTenants, levelMismatches } = diffBintrackerTenants(rawRows, existingTenants);
+    return { newTenants, missingTenants, levelMismatches, dateRange: { fromDate, toDate } };
+  }
+);
+
+// Same chunked delete-in-batches idiom as deleteAllMatchingBuildingId above, scoped by tenantId
+// instead of buildingId. tenantIds are always crypto.randomUUID() values (see
+// admin-buildings.html's add-tenant/import-from-Excel handlers), so a single-field equality query
+// is unambiguous across the whole submissions/attempts collections without also filtering by
+// buildingId.
+async function deleteAllMatchingTenantId(collectionName, tenantId) {
+  const db = admin.firestore();
+  let deleted = 0;
+  for (;;) {
+    const snap = await db.collection(collectionName).where('tenantId', '==', tenantId).limit(400).get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    deleted += snap.docs.length;
+  }
+  return deleted;
+}
+
+// deleteTenantPermanently — the real, irreversible delete behind the Bintracker Sync tab's
+// "Delete" action on a tenant Bintracker hasn't seen in 30 days. Admin-only, name-confirmed
+// server-side exactly like deleteBuildingPermanently above - but deliberately does NOT require
+// the tenant to be inactive first (unlike that function's archive-first gate on a building): this
+// is invoked from a dedicated, already-deliberate sync/audit action that already has its own
+// name-confirmation step, so an extra archive-first gate would add friction without adding real
+// safety here (2026-09-28 design decision, confirmed with the user - not an oversight).
+exports.deleteTenantPermanently = onCall({ timeoutSeconds: 300 }, async (request) => {
+  await assertIsAdmin(request.auth);
+
+  const { buildingId, tenantId, confirmName } = request.data || {};
+  if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
+    throw new HttpsError('invalid-argument', 'A valid building id is required.');
+  }
+  if (typeof tenantId !== 'string' || tenantId.length === 0 || tenantId.length > 200) {
+    throw new HttpsError('invalid-argument', 'A valid tenant id is required.');
+  }
+
+  const tenantRef = admin.firestore().doc(`buildings/${buildingId}/tenants/${tenantId}`);
+  const tenantSnap = await tenantRef.get();
+  if (!tenantSnap.exists) {
+    throw new HttpsError('not-found', 'No tenant found for that id.');
+  }
+  const tenant = tenantSnap.data();
+
+  const realName = String(tenant.name || '').trim();
+  if (String(confirmName || '').trim() !== realName) {
+    throw new HttpsError('failed-precondition', 'Typed name does not match. Nothing was deleted.');
+  }
+
+  // Children before the parent tenant doc - same retriable-on-crash reasoning as
+  // deleteBuildingPermanently's own ordering.
+  const deletedCounts = {
+    submissions: await deleteAllMatchingTenantId('submissions', tenantId),
+    attempts: await deleteAllMatchingTenantId('attempts', tenantId),
+  };
+  await tenantRef.delete();
+
+  return { ok: true, tenantName: realName, deletedCounts };
+});
 
 // Exported purely for tests/functions-refreshbintrackerdata.test.js to call directly against the
 // Firestore emulator (seeded bintrackerRows/bintrackerTenantMatches, no real Bintracker network

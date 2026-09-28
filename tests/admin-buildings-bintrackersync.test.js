@@ -1,0 +1,380 @@
+// Verifies outputs/admin-buildings.html's Bintracker Sync tab (Workstream 12: building/tenant
+// catalog sync). Kept as its own dedicated file, same reasoning as
+// tests/admin-buildings-bintracker.test.js's own header comment: admin-buildings-page.test.js is
+// already the largest Puppeteer suite in this project and covers a different concern (plain
+// building/tenant CRUD).
+//
+// This suite only starts firestore+auth (no Functions emulator — same deliberate choice as
+// admin-buildings-bintracker.test.js and admin-buildings-page.test.js's own "Delete permanently"
+// check), so:
+//   - the real discoverBintrackerBuildings/syncBintrackerTenants/deleteTenantPermanently calls are
+//     all expected to fail gracefully (tested explicitly below) - none of this suite's assertions
+//     depend on a real Bintracker network call or a live Functions emulator round trip;
+//   - the New tenants/Missing tenants/Level mismatches review UI itself is driven by
+//     window.__testSetBintrackerSyncResult (an emulator-mode-only test seam admin-buildings.html
+//     exposes specifically for this - see its own comment there), which injects a realistic
+//     syncBintrackerTenants result shape directly, the same "seed what a real call would have
+//     produced, skip the network" approach as the sibling suite. Unlike that suite's
+//     bintrackerRows/bintrackerTenantMatches (real Firestore collections it can seed directly),
+//     syncBintrackerTenants's result is NEVER persisted anywhere (Workstream 12 deliberately adds
+//     no new Firestore collection), so there is no Firestore doc this test could seed instead.
+// The actual pure diff logic (diffDiscoveredBuildingNames/diffBintrackerTenants) is covered with
+// realistic seeded row shapes, no network/emulator at all, by tests/functions-bintrackersync.test.js,
+// which also covers deleteTenantPermanently's real cascade-delete end to end (including proving no
+// archive-first gate is required) against the real Functions emulator - this suite only proves the
+// page wires all of that into a real, clickable UI correctly.
+// Run: npm run test:admin-buildings-bintrackersync
+const path = require('path');
+const url = require('url');
+const fs = require('fs');
+const puppeteer = require('puppeteer-core');
+const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
+const { doc, setDoc, getDocs, collection, query, where } = require('firebase/firestore');
+
+const EDGE_PATH = process.env.TEST_BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+const BUILDINGS_PATH = path.join(__dirname, '..', 'outputs', 'admin-buildings.html');
+const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
+const BUILDINGS_URL = `${url.pathToFileURL(BUILDINGS_PATH).href}?emulator=1`;
+
+const results = [];
+function check(label, cond, extra){ results.push({ label, ok: Boolean(cond), extra: extra || '' }); }
+
+async function findRowByName(page, rowSelector, name){
+  return page.evaluateHandle((sel, n) => {
+    return [...document.querySelectorAll(sel)].find(r => r.querySelector('h3') && r.querySelector('h3').textContent === n);
+  }, rowSelector, name).then(h => h.asElement());
+}
+
+async function findTenantLi(row, tenantName){
+  const lis = await row.$$('li');
+  for (const li of lis){
+    const nameSpan = await li.$('.tenant-name');
+    if (!nameSpan) continue;
+    const text = await nameSpan.evaluate(el => el.textContent);
+    if (text === tenantName) return li;
+  }
+  return null;
+}
+
+// Seeds one building with NO Bintracker mapping (proves graceful absence from the Synchronize
+// list) and one WITH a mapping + 4 real tenants exercising every review-action combination: Acme
+// Legal (Update path), Ignore Co (Ignore path), Keep Co (Keep path), Delete Co (Delete path). The
+// actual syncBintrackerTenants diff result referencing these tenant ids is injected later via
+// window.__testSetBintrackerSyncResult, not produced by a real API call.
+async function seedTestData(){
+  const testEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  const suffix = Date.now();
+  const unmappedBuildingId = 'sync-tower-no-bintracker-' + suffix;
+  const unmappedBuildingName = 'Sync Tower No Bintracker ' + suffix;
+  const mappedBuildingId = 'sync-tower-bintracker-' + suffix;
+  const mappedBuildingName = 'Sync Tower Bintracker ' + suffix;
+  const acmeId = 'acme-legal-' + suffix;
+  const ignoreCoId = 'ignore-co-' + suffix;
+  const keepCoId = 'keep-co-' + suffix;
+  const deleteCoId = 'delete-co-' + suffix;
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+
+    await setDoc(doc(db, 'buildings', unmappedBuildingId), { name: unmappedBuildingName });
+    await setDoc(doc(db, 'buildings', unmappedBuildingId, 'tenants', 'only-tenant-' + suffix), {
+      name: 'Only Tenant', levels: ['Level 1'], emails: [],
+    });
+
+    await setDoc(doc(db, 'buildings', mappedBuildingId), { name: mappedBuildingName, bintrackerBuildingName: 'Bintracker Sync Test Tower' });
+    await setDoc(doc(db, 'buildings', mappedBuildingId, 'tenants', acmeId), { name: 'Acme Legal', levels: ['Level 5'], emails: [] });
+    await setDoc(doc(db, 'buildings', mappedBuildingId, 'tenants', ignoreCoId), { name: 'Ignore Co', levels: ['Level 3'], emails: [] });
+    await setDoc(doc(db, 'buildings', mappedBuildingId, 'tenants', keepCoId), { name: 'Keep Co', levels: ['Level 2'], emails: [] });
+    await setDoc(doc(db, 'buildings', mappedBuildingId, 'tenants', deleteCoId), { name: 'Delete Co', levels: ['Level 9'], emails: [] });
+  });
+
+  return {
+    testEnv, unmappedBuildingId, unmappedBuildingName,
+    mappedBuildingId, mappedBuildingName, acmeId, ignoreCoId, keepCoId, deleteCoId,
+  };
+}
+
+async function readTenantsForBuilding(buildingId){
+  const testEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  let tenants = [];
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const snap = await getDocs(collection(context.firestore(), 'buildings', buildingId, 'tenants'));
+    tenants = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  });
+  await testEnv.cleanup();
+  return tenants;
+}
+
+async function main(){
+  const browser = await puppeteer.launch({ executablePath: EDGE_PATH, headless: true });
+  const page = await browser.newPage();
+  const consoleErrors = [];
+  page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+  page.on('pageerror', (err) => consoleErrors.push('pageerror: ' + err.message));
+  page.on('dialog', (d) => { consoleErrors.push('unexpected dialog: ' + d.message()); d.dismiss(); });
+
+  try {
+    await runFlow(page);
+  } catch (err) {
+    console.error('CRASHED — dumping diagnostics:', err.message);
+    console.error('--- results so far ---');
+    for (const r of results){ console.error(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.extra ? ' :: ' + r.extra : ''}`); }
+    await page.screenshot({ path: path.join(__dirname, '..', 'debug-crash.png') }).catch(() => {});
+    await browser.close();
+    process.exit(1);
+  }
+
+  // Expected graceful-failure noise from the real (unreachable, in this suite) Cloud Functions -
+  // same reasoning as admin-buildings-bintracker.test.js's own "Refresh Bintracker data" check.
+  const unexpectedErrors = consoleErrors.filter(e =>
+    !e.includes('Failed to load resource') && !e.includes('400')
+    && !e.includes('discoverBintrackerBuildings') && !e.includes('syncBintrackerTenants') && !e.includes('deleteTenantPermanently')
+    && !e.includes('CORS policy') && !e.includes('Failed to check for new Bintracker buildings')
+    && !e.includes('Failed to synchronize Bintracker tenants') && !e.includes('Failed to permanently delete tenant'));
+  check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
+
+  await browser.close();
+
+  console.log('\n--- RESULTS ---');
+  let allOk = true;
+  for (const r of results){
+    console.log(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.extra ? ' :: ' + r.extra : ''}`);
+    if (!r.ok) allOk = false;
+  }
+  process.exit(allOk ? 0 : 1);
+}
+
+async function runFlow(page){
+  const {
+    unmappedBuildingId, unmappedBuildingName,
+    mappedBuildingId, mappedBuildingName, acmeId, ignoreCoId, keepCoId, deleteCoId,
+  } = await seedTestData();
+
+  await page.goto(BUILDINGS_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => document.getElementById('buildingsSection') && getComputedStyle(document.getElementById('buildingsSection')).display !== 'none',
+    { timeout: 10000 }
+  );
+
+  // Same in-app-modal auto-responder as the sibling Bintracker suite (Workstream 11 replaced
+  // window.alert()/confirm() with a real DOM overlay).
+  await page.evaluate(() => {
+    window.__alertCalls = [];
+    const overlay = document.getElementById('appModalOverlay');
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('open')) return;
+      const message = document.getElementById('appModalMessage').textContent;
+      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
+      window.__alertCalls.push(message);
+      buttons[buttons.length - 1].click();
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  });
+
+  // Wait for both seeded buildings to show up in the plain Buildings tab first (proves the seed
+  // landed and the page's normal load path works) before switching tabs.
+  await page.waitForFunction(
+    (n1, n2) => {
+      const names = [...document.querySelectorAll('.building-row h3')].map(el => el.textContent);
+      return names.includes(n1) && names.includes(n2);
+    },
+    { timeout: 8000 }, unmappedBuildingName, mappedBuildingName
+  );
+
+  // --- Switch to the Bintracker Sync tab ---
+  await page.click('#tabBintrackerSyncBtn');
+  check('clicking the "Bintracker Sync" tab makes it active and shows its pane',
+    await page.evaluate(() => document.getElementById('tabBintrackerSyncBtn').classList.contains('active')
+      && getComputedStyle(document.getElementById('bintrackerSyncPane')).display !== 'none'
+      && getComputedStyle(document.getElementById('activeBuildingsPane')).display === 'none'));
+
+  // --- Graceful absence: a building with no bintrackerBuildingName never appears in the
+  // Synchronize list ---
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('#bintrackerSyncBuildingsList .building-row h3')].some(el => el.textContent === name),
+    { timeout: 8000 }, mappedBuildingName
+  );
+  const namesInSyncList = await page.evaluate(() => [...document.querySelectorAll('#bintrackerSyncBuildingsList .building-row h3')].map(el => el.textContent));
+  check('the Bintracker Sync tab lists the mapped building', namesInSyncList.includes(mappedBuildingName), JSON.stringify(namesInSyncList));
+  check('...and does NOT list the unmapped building at all (graceful absence)', !namesInSyncList.includes(unmappedBuildingName), JSON.stringify(namesInSyncList));
+
+  // --- "Check for new buildings" fails gracefully with no reachable Cloud Function ---
+  await page.click('#discoverBuildingsBtn');
+  await page.waitForFunction(
+    () => document.getElementById('discoverBuildingsStatus').textContent.length > 0,
+    { timeout: 8000 }
+  );
+  const discoverStatusText = await page.$eval('#discoverBuildingsStatus', el => el.textContent);
+  check('a failed "Check for new buildings" call shows a status message instead of crashing', discoverStatusText.length > 0, discoverStatusText);
+  const discoverBtnAfter = await page.$eval('#discoverBuildingsBtn', el => ({ text: el.textContent, disabled: el.disabled }));
+  check('the "Check for new buildings" button resets (not stuck on "Checking…") after the failure',
+    discoverBtnAfter.text === 'Check for new buildings' && !discoverBtnAfter.disabled, JSON.stringify(discoverBtnAfter));
+
+  // --- Clicking "Synchronize" with no reachable Cloud Function also fails gracefully ---
+  let mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
+  const alertCountBeforeSync = await page.evaluate(() => window.__alertCalls.length);
+  await mappedRow.$eval('.sync-tenants-btn', el => el.click());
+  await page.waitForFunction((n) => window.__alertCalls.length > n, { timeout: 8000 }, alertCountBeforeSync);
+  check('a failed "Synchronize" call shows an error alert instead of crashing', true);
+  mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
+  const syncBtnAfterFailure = await mappedRow.$eval('.sync-tenants-btn', el => ({ text: el.textContent, disabled: el.disabled }));
+  check('the "Synchronize" button resets to normal (not stuck on "Synchronizing…") after the failure',
+    syncBtnAfterFailure.text === 'Synchronize' && !syncBtnAfterFailure.disabled, JSON.stringify(syncBtnAfterFailure));
+
+  // --- Inject a realistic syncBintrackerTenants result via the test-only seam, and drive the
+  // resulting New/Missing/Mismatch review UI for real ---
+  await page.evaluate((buildingId, ids) => {
+    window.__testSetBintrackerSyncResult(buildingId, {
+      newTenants: [
+        { bintrackerTenantRaw: 'New Startup Pty Ltd', primaryLocations: ['Level 12'] },
+      ],
+      missingTenants: [
+        { tenantId: ids.keepCoId, tenantName: 'Keep Co', levels: ['Level 2'] },
+        { tenantId: ids.deleteCoId, tenantName: 'Delete Co', levels: ['Level 9'] },
+      ],
+      levelMismatches: [
+        { tenantId: ids.acmeId, tenantName: 'Acme Legal', currentLevels: ['Level 5'], bintrackerTenantRaw: 'Acme Legal', newLevels: ['Level 6'] },
+        { tenantId: ids.ignoreCoId, tenantName: 'Ignore Co', currentLevels: ['Level 3'], bintrackerTenantRaw: 'Ignore Co', newLevels: ['Level 4'] },
+      ],
+      dateRange: { fromDate: '2026-08-01', toDate: '2026-08-31' },
+    });
+  }, mappedBuildingId, { acmeId, ignoreCoId, keepCoId, deleteCoId });
+
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.bintracker-sync-result')].length > 0, { timeout: 8000 }
+  );
+  mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
+  const resultPanelText = await mappedRow.$eval('.bintracker-sync-result', el => el.textContent);
+  check('the injected result shows the date range compared', resultPanelText.includes('2026-08-01') && resultPanelText.includes('2026-08-31'), resultPanelText);
+  check('...the new tenant candidate', resultPanelText.includes('New Startup Pty Ltd') && resultPanelText.includes('Level 12'));
+  check('...both missing tenants', resultPanelText.includes('Keep Co') && resultPanelText.includes('Delete Co'));
+  check('...both level mismatches', resultPanelText.includes('Acme Legal') && resultPanelText.includes('Ignore Co') && resultPanelText.includes('Level 6') && resultPanelText.includes('Level 4'));
+
+  // --- New tenants: importing with nothing checked is rejected with a clear alert ---
+  const alertCountBeforeEmptyImport = await page.evaluate(() => window.__alertCalls.length);
+  await mappedRow.$eval('.import-new-tenants-btn', el => el.click());
+  await page.waitForFunction((n) => window.__alertCalls.length > n, { timeout: 8000 }, alertCountBeforeEmptyImport);
+  const alertsAfterEmptyImport = await page.evaluate((n) => window.__alertCalls.slice(n), alertCountBeforeEmptyImport);
+  check('"Import selected" with no checkbox ticked shows a clear alert instead of writing garbage',
+    alertsAfterEmptyImport.some(a => a.includes('Tick at least one')), JSON.stringify(alertsAfterEmptyImport));
+
+  // --- New tenants: tick the checkbox and import for real ---
+  mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
+  await mappedRow.$eval('.new-tenant-import-checkbox', (el) => {
+    el.checked = true;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await mappedRow.$eval('.import-new-tenants-btn', el => el.click());
+  await page.waitForFunction(
+    () => {
+      const panel = document.querySelector('.bintracker-sync-result');
+      return panel && panel.textContent.includes('every Bintracker tenant/location pair seen matches an existing tenant');
+    },
+    { timeout: 8000 }
+  );
+  check('after importing, the "New tenants found" section shows the empty-state message', true);
+  const tenantsAfterImport = await readTenantsForBuilding(mappedBuildingId);
+  const imported = tenantsAfterImport.find(t => t.name === 'New Startup Pty Ltd');
+  check('a real tenant doc was written to Firestore with the Bintracker raw name/location',
+    Boolean(imported) && Array.isArray(imported.levels) && imported.levels.includes('Level 12'), JSON.stringify(imported));
+
+  // --- Missing tenants: Keep just dismisses it, no Firestore change ---
+  mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
+  const keepCoLi = await findTenantLi(mappedRow, 'Keep Co');
+  await keepCoLi.$eval('.keep-missing-tenant-btn', el => el.click());
+  await page.waitForFunction(
+    () => {
+      const panel = document.querySelector('.bintracker-sync-result');
+      return panel && !panel.textContent.includes('Keep Co');
+    },
+    { timeout: 8000 }
+  );
+  check('clicking "Keep" removes Keep Co from the missing-tenants view', true);
+  const tenantsAfterKeep = await readTenantsForBuilding(mappedBuildingId);
+  check('...and Keep Co\'s real tenant doc is untouched (Keep is a no-op)',
+    tenantsAfterKeep.some(t => t.id === keepCoId && t.name === 'Keep Co'), JSON.stringify(tenantsAfterKeep));
+
+  // --- Missing tenants: Delete opens the type-the-name confirm panel, mirroring the Archived
+  // buildings tab's own permanent-delete pattern ---
+  mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
+  const deleteCoLi = await findTenantLi(mappedRow, 'Delete Co');
+  await deleteCoLi.$eval('.delete-missing-tenant-btn', el => el.click());
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.tenant-delete-confirm-input')].length > 0, { timeout: 8000 }
+  );
+  mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
+  let deleteCoLiOpen = await findTenantLi(mappedRow, 'Delete Co');
+  check('the Delete confirm panel\'s button starts disabled', await deleteCoLiOpen.$eval('.tenant-delete-confirm-btn', el => el.disabled));
+
+  await deleteCoLiOpen.$eval('.tenant-delete-confirm-input', el => {
+    el.value = 'Not The Real Name';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  check('typing the WRONG name keeps the confirm button disabled',
+    await deleteCoLiOpen.$eval('.tenant-delete-confirm-btn', el => el.disabled));
+
+  await deleteCoLiOpen.$eval('.tenant-delete-confirm-input', el => {
+    el.value = 'Delete Co';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  check('typing the CORRECT name enables the confirm button',
+    !(await deleteCoLiOpen.$eval('.tenant-delete-confirm-btn', el => el.disabled)));
+
+  // No Functions emulator in this suite (same deliberate choice as admin-buildings-page.test.js's
+  // own "Delete permanently" building check) - the real cascade delete itself is fully covered,
+  // end to end, by tests/functions-bintrackersync.test.js. This only proves the call is attempted
+  // and fails gracefully rather than crashing or silently doing nothing.
+  await deleteCoLiOpen.$eval('.tenant-delete-confirm-btn', el => el.click());
+  await page.waitForFunction(
+    () => {
+      const statusEls = [...document.querySelectorAll('.tenant-delete-status')];
+      return statusEls.some(el => el.textContent.length > 0);
+    },
+    { timeout: 8000 }
+  );
+  check('a failed tenant delete call shows a status message instead of crashing or silently doing nothing', true);
+  const tenantsAfterFailedDelete = await readTenantsForBuilding(mappedBuildingId);
+  check('...and Delete Co\'s real tenant doc survives the failed call (nothing deleted client-side)',
+    tenantsAfterFailedDelete.some(t => t.id === deleteCoId), JSON.stringify(tenantsAfterFailedDelete));
+
+  // --- Level mismatches: Update writes the new level onto the real tenant doc ---
+  mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
+  const acmeLi = await findTenantLi(mappedRow, 'Acme Legal');
+  await acmeLi.$eval('.update-level-mismatch-btn', el => el.click());
+  await page.waitForFunction(
+    () => {
+      const panel = document.querySelector('.bintracker-sync-result');
+      return panel && !panel.textContent.includes('Bintracker also shows: Level 6');
+    },
+    { timeout: 8000 }
+  );
+  check('clicking "Update" removes Acme Legal from the level-mismatch view', true);
+  const tenantsAfterUpdate = await readTenantsForBuilding(mappedBuildingId);
+  const acmeAfter = tenantsAfterUpdate.find(t => t.id === acmeId);
+  check('...and Acme Legal\'s real tenant doc now includes the new level, keeping the old one too',
+    acmeAfter && acmeAfter.levels.includes('Level 5') && acmeAfter.levels.includes('Level 6'), JSON.stringify(acmeAfter));
+
+  // --- Level mismatches: Ignore just dismisses it, no Firestore change ---
+  mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
+  const ignoreCoLi = await findTenantLi(mappedRow, 'Ignore Co');
+  await ignoreCoLi.$eval('.ignore-level-mismatch-btn', el => el.click());
+  await page.waitForFunction(
+    () => {
+      const panel = document.querySelector('.bintracker-sync-result');
+      return panel && panel.textContent.includes('every matched tenant\'s stored level(s) already cover what Bintracker showed');
+    },
+    { timeout: 8000 }
+  );
+  check('clicking "Ignore" removes Ignore Co from the level-mismatch view, leaving it empty', true);
+  const tenantsAfterIgnore = await readTenantsForBuilding(mappedBuildingId);
+  const ignoreCoAfter = tenantsAfterIgnore.find(t => t.id === ignoreCoId);
+  check('...and Ignore Co\'s real tenant doc is untouched (Ignore is a no-op)',
+    ignoreCoAfter && JSON.stringify(ignoreCoAfter.levels) === JSON.stringify(['Level 3']), JSON.stringify(ignoreCoAfter));
+}
+
+main().catch((err) => { console.error('Test harness crashed:', err); process.exit(1); });
