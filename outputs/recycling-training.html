@@ -498,7 +498,7 @@
         <span>Level / Floor</span>
         <select id="idLevel" name="level" required></select>
       </label>
-      <button class="btn" type="submit">Continue →</button>
+      <button class="btn" type="submit">Continue</button>
     </form>
     <p class="hero-sub" style="font-size:12px; opacity:.7; margin-top:16px;">Your name and email are recorded against this building/tenant/level only to confirm training completion, and are visible to your building's training coordinator. They aren't used for anything else.</p>
   </div>
@@ -591,7 +591,7 @@
         </div>
       </div>
       <div class="tip"><span class="lb">💡</span><span>General Waste is the most expensive core waste stream in the building. If this bin is filling up fast, it's usually a sign that recyclables are ending up in the wrong place.</span></div>
-      <div class="detail-nav"><span></span><button class="btn secondary next-stream">Next: Mixed Recycling →</button></div>
+      <div class="detail-nav"><span></span><button class="btn secondary next-stream">Next: Mixed Recycling</button></div>
     </div>
 
     <div class="detail-panel" data-stream="mr">
@@ -628,7 +628,7 @@
         </div>
       </div>
       <div class="tip"><span class="lb">💡</span><span>A single unrinsed container can contaminate the containers around it. "Empty and dry" beats "spotless" - a quick shake-out is enough.</span></div>
-      <div class="detail-nav"><span></span><button class="btn secondary next-stream">Next: Paper &amp; Cardboard →</button></div>
+      <div class="detail-nav"><span></span><button class="btn secondary next-stream">Next: Paper &amp; Cardboard</button></div>
     </div>
 
     <div class="detail-panel" data-stream="pc">
@@ -664,7 +664,7 @@
         </div>
       </div>
       <div class="tip"><span class="lb">💡</span><span>Flatten boxes before binning them. A folded box takes a fraction of the space and means the bin gets used more efficiently.</span></div>
-      <div class="detail-nav"><span></span><button class="btn secondary next-stream">Next: Organics →</button></div>
+      <div class="detail-nav"><span></span><button class="btn secondary next-stream">Next: Organics</button></div>
     </div>
 
     <div class="detail-panel" data-stream="og">
@@ -701,7 +701,7 @@
         </div>
       </div>
       <div class="tip"><span class="lb">💡</span><span>Keep it simple: if it can be eaten, it can go in the organics bin.</span></div>
-      <div class="detail-nav"><span></span><button class="btn secondary next-stream">Next: E-Waste →</button></div>
+      <div class="detail-nav"><span></span><button class="btn secondary next-stream">Next: E-Waste</button></div>
     </div>
 
     <div class="detail-panel" data-stream="ew">
@@ -735,7 +735,7 @@
         </div>
       </div>
       <div class="tip"><span class="lb">💡</span><span>A single battery in the wrong bin can start a fire in a waste truck. If you're not sure where the e-waste bin is on your floor/building, ask Building Management.</span></div>
-      <div class="detail-nav"><span></span><button class="btn" id="toGameBtn">Take the sorting challenge →</button></div>
+      <div class="detail-nav"><span></span><button class="btn" id="toGameBtn">Take the sorting challenge</button></div>
     </div>
 
   </div>
@@ -751,7 +751,7 @@
     <p class="hero-sub">Five rounds, one stream at a time. Each round drops 10 items on the board - only some belong in that round's bin. Drag in the ones that do; leave the rest where they are.</p>
     <div class="quiz-meta"><span><b>5</b> phases</span><span><b>~4 min</b></span><span>Pass mark: <b>75%</b></span></div>
     <p class="game-lock-status" id="gameLockStatus"></p>
-    <button class="btn" id="startGameBtn" disabled>Begin the sort →</button>
+    <button class="btn" id="startGameBtn" disabled>Begin the sort</button>
   </div>
 
   <div class="game-stage" id="gameStage">
@@ -772,7 +772,7 @@
     <div class="item-board" id="itemBoard"></div>
 
     <div class="feedback" id="gameFeedback"></div>
-    <div class="quiz-controls"><button class="btn" id="nextPhaseBtn" style="display:none;">Next phase →</button></div>
+    <div class="quiz-controls"><button class="btn" id="nextPhaseBtn" style="display:none;">Next phase</button></div>
   </div>
 
   <div class="results" id="results">
@@ -1065,6 +1065,18 @@ try {
       if (!enrollmentSnap.exists() || enrollmentSnap.data().active === false){ showInvalidLink(); return; }
       const enrollment = enrollmentSnap.data();
 
+      // The permanent ?b= whole-building link can now expire too (Workstream 13) - lives on
+      // this same enrollment doc (not a links doc) specifically so the ?b= URL itself, and the
+      // QR code/printed flyer built from it, never have to change just to renew it; extending
+      // access is just updating this one date field. Admin Preview is exempt from THIS check
+      // only (still subject to the exists/active check above) - same "preview never blocked by
+      // real-session restrictions" principle this file already applies elsewhere (preview mode
+      // never writes real Firestore data either), so an admin can keep inspecting/demoing the
+      // induction even after the public-facing link has been left to lapse.
+      if (!isPreviewMode && enrollment.expiresAt && enrollment.expiresAt.toMillis() <= Date.now()){
+        showInvalidLink('expired'); return;
+      }
+
       siteContext.buildingId = buildingId;
       siteContext.buildingName = buildingSnap.data().name || '';
       document.getElementById('idBuildingNameInline').textContent = siteContext.buildingName;
@@ -1271,10 +1283,10 @@ try {
       const navBtn = document.querySelector(`.detail-panel[data-stream="${s}"] .detail-nav button`);
       if (!navBtn) return;
       if (i < streams.length - 1){
-        navBtn.textContent = `Next: ${streamNames[streams[i+1]]} →`;
+        navBtn.textContent = `Next: ${streamNames[streams[i+1]]}`;
         navBtn.onclick = () => showStream(streams[i+1]);
       } else {
-        navBtn.textContent = 'Take the sorting challenge →';
+        navBtn.textContent = 'Take the sorting challenge';
         navBtn.classList.remove('secondary'); // matches the real final panel's primary-button styling
         navBtn.onclick = () => document.getElementById('gameSection').scrollIntoView({behavior:'smooth', block:'start'});
       }
@@ -1881,7 +1893,7 @@ try {
     phaseLocked = true;
     itemBoard.querySelectorAll('.board-item').forEach(card => card.classList.add('locked'));
     nextPhaseBtn.style.display = 'inline-flex';
-    nextPhaseBtn.textContent = phaseIndex === streams.length - 1 ? 'See results →' : 'Next phase →';
+    nextPhaseBtn.textContent = phaseIndex === streams.length - 1 ? 'See results' : 'Next phase';
   }
 
   function handleDrop(card, item){

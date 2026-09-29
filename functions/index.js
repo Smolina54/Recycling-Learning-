@@ -21,6 +21,7 @@ const {
   fetchBintrackerCollections, mapWasteTypeToStream, computeRecyclingLevelPct,
   diffDiscoveredBuildingNames, diffBintrackerTenants,
 } = require('./bintracker');
+const { buildFlyerPdf } = require('./flyer');
 
 // Co-located with Firestore, which already lives in australia-southeast2 (Melbourne) — moved
 // here from the platform's us-central1 default on 2026-09-23 for data residency (Tradeflex is
@@ -248,6 +249,86 @@ exports.sendInductionEmail = onCall(
     await checkRateLimit(request.auth.token.email);
     const { subject, html, text } = buildInductionEmailContent(payload);
     await sendViaSmtp({ to: payload.to, subject, html, text, attachments: EMAIL_LOGO_ATTACHMENTS });
+    return { ok: true };
+  }
+);
+
+// sendDistributionFlyer — Workstream 13, Part 2: a "distribution kit" for the building manager,
+// not a bare flyer-only email. Sent to the building's own managerEmails and reuses the exact
+// same branded induction-invitation body already built/Outlook-tested for sendInductionEmail
+// above (buildInductionEmailContent) - no new body copy to write or approve. The only two things
+// unique to this send: the subject line, and the printable A5 flyer PDF (buildFlyerPdf,
+// functions/flyer.js) attached on top. Same onCall+assertIsAdmin+checkRateLimit template as
+// sendInductionEmail, and shares its rate-limit bucket (one shared per-admin budget for
+// induction-related sends, not a separate one per feature).
+//
+// Payload trust level matches sendInductionEmail's own validatePayload (format-checked only, no
+// server-side program lookup - buildingId/programFile/programName are all values this app itself
+// generated, e.g. currentProgram.file/name from the programs catalog and a real building id) -
+// consistent with the existing function, not a stricter one-off. What DOES get freshly re-read
+// from Firestore here, never trusted from the client, is the building's real name and
+// managerEmails - same "never trust client-supplied name/emails" principle
+// deleteBuildingPermanently applies to its own confirmName check further down.
+function validateFlyerPayload(data) {
+  const { buildingId, programFile, programName } = data || {};
+  // BUILDING_ID_PATTERN is declared further down (shared with deleteBuildingPermanently/
+  // refreshBintrackerData) - a plain module-scope const, already initialized by the time any
+  // exported onCall handler actually runs, since the whole module finishes loading first.
+  if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
+    throw new HttpsError('invalid-argument', 'A valid building id is required.');
+  }
+  if (typeof programFile !== 'string' || !programFile || programFile.length > MAX_NAME_LENGTH) {
+    throw new HttpsError('invalid-argument', 'A program file is required.');
+  }
+  if (typeof programName !== 'string' || !programName || programName.length > MAX_NAME_LENGTH) {
+    throw new HttpsError('invalid-argument', 'A program name is required.');
+  }
+  return { buildingId, programFile, programName };
+}
+
+// The platform's default Hosting URL for this project - the same one every page in this app
+// links back to (see outputs/*.html's own "esg-1-98f35.web.app/.firebaseapp.com" comments). Not
+// its own secret/config value since there's only ever been one deployment target.
+const PUBLIC_BASE_URL = 'https://esg-1-98f35.web.app/';
+
+exports.sendDistributionFlyer = onCall(
+  { secrets: [SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER_MAILBOX], maxInstances: 3, concurrency: 5 },
+  async (request) => {
+    await assertIsAdmin(request.auth);
+    const { buildingId, programFile, programName } = validateFlyerPayload(request.data);
+    await checkRateLimit(request.auth.token.email);
+
+    const buildingSnap = await admin.firestore().doc(`buildings/${buildingId}`).get();
+    if (!buildingSnap.exists) {
+      throw new HttpsError('not-found', 'No building found for that id.');
+    }
+    const building = buildingSnap.data();
+    const buildingName = building.name || '(untitled)';
+    const managerEmails = building.managerEmails || [];
+    // Graceful absence, same as every other email feature in this app - no manager contacts
+    // saved yet means there's genuinely nobody to send this to.
+    if (managerEmails.length === 0) {
+      throw new HttpsError('failed-precondition', 'This building has no manager contact emails saved yet.');
+    }
+
+    // The exact same whole-building link shown in the panel (pageBaseUrl() + currentProgram.file
+    // + '?b=' + buildingId, admin-distribution.html), built server-side from the platform's own
+    // Hosting URL instead of trusting a client-supplied link string.
+    const link = `${PUBLIC_BASE_URL}${programFile}?b=${buildingId}`;
+    const { html, text } = buildInductionEmailContent({ buildingName, programName, link });
+    const subject = `Recycling induction & distribution flyer - ${buildingName}`;
+    const flyerPdf = await buildFlyerPdf({ buildingName, link });
+
+    await sendViaSmtp({
+      to: managerEmails,
+      subject,
+      html,
+      text,
+      attachments: [
+        ...EMAIL_LOGO_ATTACHMENTS,
+        { filename: `${buildingName} - distribution flyer.pdf`, content: flyerPdf, contentType: 'application/pdf' },
+      ],
+    });
     return { ok: true };
   }
 );

@@ -2444,9 +2444,59 @@ var qrcode = function() {
   .building-link-text{
     font-family:var(--mono); font-size:12px; background:var(--paper); border:1px solid var(--line);
     padding:8px 12px; border-radius:var(--radius); overflow-x:auto; white-space:nowrap; max-width:100%;
+    /* flex:1 + min-width:0 - without min-width:0, a flex item's default min-width:auto refuses to
+       shrink below its content's own width, and white-space:nowrap makes that content width the
+       FULL unwrapped link text (often long) - so it never actually shares the row with the QR
+       sibling, it just wraps onto its own line despite .building-link-row's flex+wrap CSS being
+       otherwise correct. min-width:0 lets this box respect the row's real available width and
+       scroll internally (overflow-x:auto) instead. */
+    flex:1; min-width:0;
   }
-  .building-qr{width:120px; height:120px; margin-bottom:16px;}
+  /* Nested inside .building-link-row (Workstream 13) as a sibling of the link text, not a
+     separate element stacked below it - flex-shrink:0 keeps it from being squeezed by the link
+     text's own overflow-x:auto when space is tight. */
+  .building-qr{width:120px; height:120px; flex-shrink:0;}
   .building-qr svg{width:100%; height:100%;}
+  /* "Show addresses"/"Hide addresses" disclosure toggle (Workstream 13) - a plain reveal, same
+     concept as the building row's own ▸/▾ expand-collapse toggle, not a new UI pattern. Used in
+     both the "Whole-building link" section (Email flyer) and "Generate tenant link" (Send via
+     email). */
+  .addresses-toggle{display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;}
+  .addresses-reveal{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
+  .expiry-status-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+
+  /* ---------- Printable Distribution QR flyer (physical building signage) ----------
+     Sits as a direct child of <body> (see the markup near the end of this file), hidden on
+     screen and shown only via @media print below - a "print just this element" approach (hide
+     every other body child, reveal only this one) rather than a separate iframe/document like
+     client-report.html's multi-page Paged.js flow needs; a single static page has no pagination
+     concerns, so the simpler approach is the right one here. */
+  #flyerPrintOverlay{display:none;}
+  .flyer-print-page{
+    max-width:340px; margin:0 auto; background:var(--paper); border:1px solid var(--line);
+    border-radius:6px; padding:28px 26px; text-align:center;
+  }
+  .flyer-print-page .brand-row{justify-content:center; margin-bottom:22px;}
+  .flyer-print-page .brand-row img{height:38px;}
+  .flyer-kicker{font-family:var(--body); font-weight:500; font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--forest-dark); margin:0 0 10px;}
+  .flyer-title{font-family:var(--display); font-weight:700; font-size:18px; margin:0 0 6px;}
+  .flyer-sub{font-size:13px; color:var(--ink-soft); margin:0 0 20px;}
+  .flyer-qr{width:200px; height:200px; margin:0 auto 18px; background:#fff; border:1px solid var(--line); border-radius:4px; padding:10px;}
+  .flyer-qr svg{width:100%; height:100%;}
+  .flyer-footer{font-family:var(--mono); font-size:10.5px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft); margin:0;}
+  @media print{
+    body > *:not(#flyerPrintOverlay){display:none !important;}
+    #flyerPrintOverlay{display:flex !important; align-items:center; justify-content:center; min-height:100vh;}
+    /* Physical A5 sizing (real poster dimensions, not just "a small card on whatever paper the
+       printer defaults to") - the QR at ~55mm scans comfortably from close range (near a bin, in
+       a lobby). @page size/margin is NOT set here - this file already has an unrelated whole-
+       screen print stylesheet with its own @page rule further down, and @page rules aren't
+       scopeable by any selector/class, so the two would silently fight over which one wins by
+       source order. openFlyerPrint() instead injects/removes this one's own @page rule via a
+       temporary <style> tag right around the actual window.print() call - see that function. */
+    .flyer-print-page{width:118mm; max-width:118mm; padding:10mm 8mm;}
+    .flyer-qr{width:55mm; height:55mm; margin:0 auto 8mm;}
+  }
   .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
   .building-row:has(> .building-header-row:only-child) .building-header-row,
   .distribution-building-row:has(> .building-header-row:only-child) .building-header-row{margin-bottom:0;}
@@ -2742,6 +2792,24 @@ var qrcode = function() {
   </div>
 </div>
 
+<!-- Printable Distribution QR flyer (physical building signage) - see its CSS above for the
+     "hide every other body child, print only this one" mechanism. Populated by openFlyerPrint()
+     right before window.print() is called. -->
+<div id="flyerPrintOverlay">
+  <div class="flyer-print-page">
+    <div class="brand-row">
+      <img src="branding/tradeflex-logo.png" alt="Tradeflex - Integrated facilities services">
+      <div class="brand-divider"></div>
+      <img src="branding/futuregreen-logo.png" alt="FutureGreen - Tradeflex Sustainability Program">
+    </div>
+    <p class="flyer-kicker" id="flyerKickerText"></p>
+    <p class="flyer-title">Help us sort it right.</p>
+    <p class="flyer-sub">Scan the code to complete a quick recycling induction on your phone - takes about 5 minutes, no app needed.</p>
+    <div class="flyer-qr" id="flyerQrContainer"></div>
+    <p class="flyer-footer" id="flyerFooterText"></p>
+  </div>
+</div>
+
 <div class="page-shell" id="pageShell">
 <div class="wrap">
   <header class="top">
@@ -2763,8 +2831,8 @@ var qrcode = function() {
   <div class="upload-zone" id="authZone">
     <p id="authStatus">Loading…</p>
     <div class="upload-actions">
-      <button class="btn" id="signInBtn" style="display:none;">Sign in with Google →</button>
-      <button class="btn secondary" id="showEmailSignInBtn" style="display:none;">Sign in with email →</button>
+      <button class="btn" id="signInBtn" style="display:none;">Sign in with Google</button>
+      <button class="btn secondary" id="showEmailSignInBtn" style="display:none;">Sign in with email</button>
     </div>
     <form id="emailSignInForm" style="display:none; margin-top:16px;">
       <div class="filter-row">
@@ -2772,7 +2840,7 @@ var qrcode = function() {
         <label class="filter-field"><span>Password</span><input type="password" id="emailSignInPassword" autocomplete="current-password" required></label>
       </div>
       <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
-        <button class="btn secondary" type="submit">Sign in →</button>
+        <button class="btn secondary" type="submit">Sign in</button>
       </div>
     </form>
   </div>
@@ -2792,7 +2860,7 @@ var qrcode = function() {
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, collection, getDocs, getDoc, doc, setDoc, updateDoc, query, where, serverTimestamp, connectFirestoreEmulator
+  getFirestore, collection, getDocs, getDoc, doc, setDoc, updateDoc, deleteField, query, where, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
@@ -2921,6 +2989,9 @@ let currentProgram = null; // set once loadProgram() resolves against the `progr
 // expandedEnrolledBuildingIds) — with several buildings enrolled, showing every one's link,
 // QR code, and full link-generation form expanded at once made the page unreadably long.
 const expandedDistributionBuildingIds = new Set();
+// Whole-building link's expiry edit-in-place state (Workstream 13) - one building's editor open
+// at a time, same shape as admin-buildings.html's own editingTenant.
+let editingExpiryBuildingId = null;
 
 async function loadProgram(){
   if (!REQUESTED_PROGRAM_ID) return null;
@@ -2977,6 +3048,10 @@ async function loadDistributionData(){
         .map(t => ({ id: t.id, name: t.data().name || '', emails: t.data().emails || [] })),
       managerEmails: d.data().managerEmails || [],
       links: linksByBuilding[d.id] || [],
+      // The whole-building link's own expiry (Workstream 13) - lives on the enrollment doc
+      // itself, not a links doc, so the same durable ?b= URL never has to be reprinted/reposted
+      // just to renew it (see the plan's own reasoning, recorded in the plan file).
+      expiresAtMs: enrollment.expiresAt && typeof enrollment.expiresAt.toMillis === 'function' ? enrollment.expiresAt.toMillis() : null,
     };
   }));
 }
@@ -2992,11 +3067,51 @@ function renderQrCode(buildingId, link){
   renderQrInto(document.querySelector(`#distributionList [data-building-id="${buildingId}"] .building-qr`), link);
 }
 
-// Tenant-scoped and/or time-limited alternative to the plain whole-building link above — two
-// independent, optional choices (lock to one tenant, and/or set an expiry), not a package deal,
-// per the multi-program plan. Generating always creates a new links doc; "Revoke" is a soft
-// edit (expiresAt set to now), never a delete, so a revoked link's record stays fully
-// inspectable.
+// Printable Distribution QR flyer (physical building signage) - see #flyerPrintOverlay's CSS/
+// markup above. Only ever for the whole-building link (never a tenant-scoped one) - a lobby/
+// floor poster is meant for the whole building, not one specific tenant.
+function openFlyerPrint(buildingName, link){
+  document.getElementById('flyerKickerText').textContent = `${buildingName} · Waste Management Program`;
+  document.getElementById('flyerFooterText').textContent = buildingName;
+  renderQrInto(document.getElementById('flyerQrContainer'), link);
+
+  // A5, not whatever the browser's own print default is - a real poster size, not a small card
+  // on a full Letter/A4 sheet. Injected only for this one print call (removed on afterprint)
+  // rather than declared statically, since this file's OWN separate whole-screen print
+  // stylesheet (further down) already has its own @page rule - @page isn't scopeable by any
+  // selector, so two static @page rules would just fight over source order regardless of which
+  // content is actually visible.
+  const pageStyle = document.createElement('style');
+  pageStyle.id = 'flyerPageSizeOverride';
+  pageStyle.textContent = '@media print { @page { size: A5; margin: 0; } }';
+  document.head.appendChild(pageStyle);
+  const cleanup = () => { pageStyle.remove(); window.removeEventListener('afterprint', cleanup); };
+  window.addEventListener('afterprint', cleanup);
+
+  window.print();
+}
+
+// A plain reveal toggle for a contact-address list - real addresses shown as plain, selectable
+// text only once clicked (not always-visible), same interaction concept as the building row's
+// own ▸/▾ expand/collapse toggle. Used both here (tenant-scoped "Send via email") and in
+// renderWholeBuildingLinkHtml below (the new "Email flyer"). No app-level state needed - the
+// button's own click handler toggles the adjacent .addresses-reveal span directly (see the
+// show-addresses-btn branch further down), same "swap text, nothing else to track" convention
+// already used by .send-email-btn's own loading states.
+function renderAddressesToggleHtml(emails){
+  return `
+    <span class="addresses-toggle">
+      <button class="btn secondary show-addresses-btn" data-addresses="${esc(emails.join(', '))}">Show addresses</button>
+      <span class="addresses-reveal" hidden></span>
+    </span>`;
+}
+
+// Tenant-scoped and/or time-limited link generator ("Generate tenant link" - renamed from
+// "Generate a distribution link", Workstream 13: the tenant lock is no longer optional, see
+// renderWholeBuildingLinkHtml above for the permanent, non-expiring whole-building
+// alternative this form used to also be able to produce via its now-removed "Whole building (no
+// tenant lock)" option). Generating always creates a new links doc; "Revoke" is a soft edit
+// (expiresAt set to now), never a delete, so a revoked link's record stays fully inspectable.
 function renderDistributionLinksHtml(b){
   const activeLinksHtml = b.links.length
     ? b.links.map(l => {
@@ -3004,7 +3119,9 @@ function renderDistributionLinksHtml(b){
         // b.tenants is filtered to active tenants only — a tenant-scoped link whose tenant was
         // later soft-deleted must not be mislabeled as "Whole building" (a different, wrong
         // claim about what the link actually does; the link doc itself is still tenant-locked,
-        // only the display was wrong).
+        // only the display was wrong). A handful of pre-Workstream-13 links may still carry no
+        // tenantId at all (from back when this form could generate those too) - still shown
+        // correctly here for backward compatibility, just no longer produceable from this form.
         const tenant = l.tenantId ? b.tenants.find(t => t.id === l.tenantId) : null;
         const scopeText = !l.tenantId ? 'Whole building' : (tenant ? esc(tenant.name) : 'Tenant removed (link still locked to it)');
         const expiryText = l.expiresAtMs ? `expires ${new Date(l.expiresAtMs).toLocaleDateString('en-GB')}` : 'no expiry';
@@ -3016,31 +3133,26 @@ function renderDistributionLinksHtml(b){
         return `
           <li data-link-id="${esc(l.id)}">
             <span class="tenant-name">${scopeText} - <span class="block-sub">${expiryText}</span></span>
-            <button class="btn secondary copy-link-btn" data-link="${linkUrl}">Copy link →</button>
-            ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-building-name="${esc(b.name)}" data-program-name="${esc(currentProgram.name)}" data-link="${esc(linkUrl)}">Send via email →</button>
-            <button class="btn secondary copy-link-btn" data-link="${esc(contactEmails.join('; '))}">Copy addresses →</button>` : ''}
+            <button class="btn secondary copy-link-btn" data-link="${linkUrl}">Copy link</button>
+            ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-building-name="${esc(b.name)}" data-program-name="${esc(currentProgram.name)}" data-link="${esc(linkUrl)}">Send via email</button>
+            ${renderAddressesToggleHtml(contactEmails)}` : ''}
             <button class="btn secondary revoke-link-btn danger-btn">Revoke</button>
           </li>`;
       }).join('')
     : '<li class="block-sub">No tenant-scoped or expiring links generated yet.</li>';
   return `
     <div class="report-block generate-link-block">
-      <p class="generate-link-title"><strong>Generate a distribution link</strong></p>
-      <p class="block-sub">Lock it to one tenant and/or give it an expiry - leave either at its default to skip that restriction.</p>
+      <p class="generate-link-title"><strong>Generate tenant link</strong></p>
+      <p class="block-sub">Locked to one tenant, with an optional expiry - leave the date blank to skip that restriction.</p>
       <div class="filter-row">
         <label class="filter-field"><span>Tenant</span>
           <select class="new-link-tenant">
-            <option value="">Whole building (no tenant lock)</option>
+            <option value="" disabled selected>Select a tenant…</option>
             ${b.tenants.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}
           </select>
         </label>
-        <label class="filter-field"><span>Expires</span>
-          <select class="new-link-expiry">
-            <option value="">Never</option>
-            <option value="1">In 1 day</option>
-            <option value="7">In 7 days</option>
-            <option value="30">In 30 days</option>
-          </select>
+        <label class="filter-field filter-field-date"><span>Expires</span>
+          <input type="date" class="new-link-expiry">
         </label>
       </div>
       <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
@@ -3048,6 +3160,57 @@ function renderDistributionLinksHtml(b){
       </div>
       <p class="block-sub generate-link-status" style="margin-top:8px;"></p>
       <ul class="tenant-list">${activeLinksHtml}</ul>
+    </div>
+  `;
+}
+
+// Whole-building link's expiry, shown as a view/edit-in-place status line (Workstream 13) -
+// mirrors admin-buildings.html's own tenant edit-in-place convention (a view row with a "Change"/
+// "Edit" button, swapped for an editable row with Save/Cancel). Lives on the enrollment doc
+// itself (see loadDistributionData's own comment on why), a real date picker (left empty = never
+// expires), not the old preset Never/1/7/30-day dropdown.
+function renderWholeBuildingExpiryHtml(b){
+  if (editingExpiryBuildingId === b.id){
+    const dateValue = b.expiresAtMs ? new Date(b.expiresAtMs).toISOString().slice(0, 10) : '';
+    return `
+      <div class="building-edit-row expiry-edit-row">
+        <label class="filter-field filter-field-date"><span>Expires</span>
+          <input type="date" class="whole-building-expiry-input" value="${dateValue}">
+        </label>
+        <button class="btn save-expiry-btn">Save</button>
+        <button class="btn secondary cancel-expiry-btn">Cancel</button>
+      </div>`;
+  }
+  const expiryText = b.expiresAtMs ? `Expires: ${new Date(b.expiresAtMs).toLocaleDateString('en-GB')}` : 'Expires: Never';
+  return `
+    <p class="expiry-status-row">
+      <span>${expiryText}</span>
+      <button class="btn secondary change-expiry-btn">Change</button>
+    </p>`;
+}
+
+// "Whole-building link" section (Workstream 13 redesign) - the permanent ?b= link, its QR (now
+// a sibling of the link text inside .building-link-row, not a separate element stacked below
+// it), its own expiry status/editor, then every link-related action in one row: Copy link,
+// Preview, Print flyer, and (only when this building has saved manager contacts) Email flyer +
+// the Show/Hide addresses toggle.
+function renderWholeBuildingLinkHtml(b, link){
+  return `
+    <div class="report-block whole-building-link-block">
+      <p class="generate-link-title"><strong>Whole-building link</strong></p>
+      <p class="block-sub">A single permanent link for the whole building - print it as a flyer, post its QR code, or email it as a distribution kit to the building's managers.</p>
+      <div class="building-link-row">
+        <div class="building-qr" data-link="${link}"></div>
+        <code class="building-link-text">${link}</code>
+      </div>
+      ${renderWholeBuildingExpiryHtml(b)}
+      <div class="print-row" style="justify-content:flex-start; margin-top:10px; align-items:center;">
+        <button class="btn secondary copy-link-btn" data-link="${link}">Copy link</button>
+        <button class="btn secondary preview-link-btn" data-link="${link}">Preview</button>
+        <button class="btn secondary print-flyer-btn" data-link="${link}" data-building-name="${esc(b.name)}">Print flyer</button>
+        ${b.managerEmails.length ? `<button class="btn secondary email-flyer-btn" data-building-id="${esc(b.id)}">Email flyer</button>` : ''}
+      </div>
+      ${b.managerEmails.length ? renderAddressesToggleHtml(b.managerEmails) : ''}
     </div>
   `;
 }
@@ -3061,13 +3224,11 @@ function renderDistributionList(buildings){
   container.innerHTML = buildings.map(b => {
     const link = `${pageBaseUrl()}${currentProgram.file}?b=${b.id}`;
     const isExpanded = expandedDistributionBuildingIds.has(b.id);
+    // Purely identification + expand/collapse from here on (Workstream 13) - every action button
+    // that used to live here moved down into "Whole-building link" below.
     const headerHtml = `<div class="building-header-row">
       <button type="button" class="building-toggle-btn" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
       <h3>${esc(b.name)}</h3>
-      <div class="building-header-actions">
-        <button class="btn secondary copy-link-btn" data-link="${link}">Copy link →</button>
-        <button class="btn secondary preview-link-btn" data-link="${link}">Preview →</button>
-      </div>
     </div>`;
     if (!isExpanded){
       return `<div class="report-block distribution-building-row" data-building-id="${b.id}">${headerHtml}</div>`;
@@ -3075,10 +3236,7 @@ function renderDistributionList(buildings){
     return `
     <div class="report-block distribution-building-row" data-building-id="${b.id}">
       ${headerHtml}
-      <div class="building-link-row">
-        <code class="building-link-text">${link}</code>
-      </div>
-      <div class="building-qr" data-link="${link}"></div>
+      ${renderWholeBuildingLinkHtml(b, link)}
       ${renderDistributionLinksHtml(b)}
     </div>
   `;
@@ -3109,14 +3267,21 @@ document.getElementById('distributionList').addEventListener('click', async (e) 
     const block = generateLinkBtn.closest('.generate-link-block');
     const row = generateLinkBtn.closest('.distribution-building-row');
     const buildingId = row.dataset.buildingId;
-    const tenantId = block.querySelector('.new-link-tenant').value || null;
-    const expiryDays = block.querySelector('.new-link-expiry').value;
+    const tenantId = block.querySelector('.new-link-tenant').value;
+    // A tenant lock is no longer optional here (Workstream 13 - the "Whole building (no tenant
+    // lock)" option was removed from this form; that capability now lives in the separate,
+    // permanent whole-building link above) - force an actual choice, same "no silent default"
+    // principle the id-gate's own tenant/level selects already use.
+    if (!tenantId){ await showAlert('Select a tenant first.'); return; }
+    const expiryDate = block.querySelector('.new-link-expiry').value;
     const status = block.querySelector('.generate-link-status');
     status.textContent = 'Generating…';
     try {
       const linkId = crypto.randomUUID();
       const linkDoc = { programId: currentProgram.id, buildingId, tenantId, createdAt: serverTimestamp() };
-      if (expiryDays) linkDoc.expiresAt = new Date(Date.now() + Number(expiryDays) * 24 * 60 * 60 * 1000);
+      // Expires at the END of the chosen day (23:59:59 local time) - a manager picking a date
+      // means "valid through that day", not "expires the instant that day begins".
+      if (expiryDate) linkDoc.expiresAt = new Date(`${expiryDate}T23:59:59`);
       await setDoc(doc(db, 'links', linkId), linkDoc);
       status.textContent = 'Link generated.';
       await refreshDistributionView();
@@ -3142,6 +3307,59 @@ document.getElementById('distributionList').addEventListener('click', async (e) 
     } catch (err){
       console.error('Failed to revoke link:', err);
       await showAlert('Failed to revoke - check the console for details.');
+    }
+    return;
+  }
+
+  // ---- Whole-building link expiry: view/edit-in-place (Workstream 13) ----
+  const changeExpiryBtn = e.target.closest('.change-expiry-btn');
+  if (changeExpiryBtn){
+    editingExpiryBuildingId = changeExpiryBtn.closest('.distribution-building-row').dataset.buildingId;
+    refreshDistributionView();
+    return;
+  }
+
+  const cancelExpiryBtn = e.target.closest('.cancel-expiry-btn');
+  if (cancelExpiryBtn){
+    editingExpiryBuildingId = null;
+    refreshDistributionView();
+    return;
+  }
+
+  const saveExpiryBtn = e.target.closest('.save-expiry-btn');
+  if (saveExpiryBtn){
+    const row = saveExpiryBtn.closest('.distribution-building-row');
+    const buildingId = row.dataset.buildingId;
+    const dateValue = row.querySelector('.whole-building-expiry-input').value;
+    try {
+      const enrollmentRef = doc(db, 'enrollments', `${currentProgram.id}__${buildingId}`);
+      // Same "expires at the end of the chosen day" convention as the tenant-link generator
+      // above - and an empty date means never expires, so the field is removed outright rather
+      // than left as some sentinel value the id-gate would have to also know to ignore.
+      await updateDoc(enrollmentRef, { expiresAt: dateValue ? new Date(`${dateValue}T23:59:59`) : deleteField() });
+      editingExpiryBuildingId = null;
+      await refreshDistributionView();
+    } catch (err){
+      console.error('Failed to update expiry:', err);
+      await showAlert('Failed to save - check the console for details.');
+    }
+    return;
+  }
+
+  // "Show addresses"/"Hide addresses" - a plain, local reveal toggle (no network call, no app-
+  // level state to track) shared by both places it appears (the whole-building "Email flyer"
+  // action and the tenant-scoped "Send via email" action).
+  const showAddressesBtn = e.target.closest('.show-addresses-btn');
+  if (showAddressesBtn){
+    const revealSpan = showAddressesBtn.closest('.addresses-toggle').querySelector('.addresses-reveal');
+    if (revealSpan.hidden){
+      revealSpan.textContent = showAddressesBtn.dataset.addresses;
+      revealSpan.hidden = false;
+      showAddressesBtn.textContent = 'Hide addresses';
+    } else {
+      revealSpan.hidden = true;
+      revealSpan.textContent = '';
+      showAddressesBtn.textContent = 'Show addresses';
     }
     return;
   }
@@ -3176,8 +3394,14 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  const printFlyerBtn = e.target.closest('.print-flyer-btn');
+  if (printFlyerBtn){
+    openFlyerPrint(printFlyerBtn.dataset.buildingName, printFlyerBtn.dataset.link);
+    return;
+  }
+
   // Calls the sendInductionEmail Cloud Function (SMTP AUTH against Exchange Online — deployed
-  // and live as of 2026-09-22). "Copy addresses →" right next to this button stays as the manual
+  // and live as of 2026-09-22). "Show addresses" right next to this button stays as the manual
   // fallback for whenever the automated send fails (network issue, SMTP rejection, etc.).
   const sendEmailBtn = e.target.closest('.send-email-btn');
   if (sendEmailBtn){
@@ -3197,9 +3421,38 @@ document.addEventListener('click', async (e) => {
       setTimeout(() => { sendEmailBtn.textContent = original; sendEmailBtn.disabled = false; }, 2500);
     } catch (err){
       console.error('sendInductionEmail failed:', err);
-      await showAlert('Could not send automatically - use "Copy addresses" and send it yourself instead.');
+      await showAlert('Could not send automatically - use "Show addresses" and send it yourself instead.');
       sendEmailBtn.textContent = original;
       sendEmailBtn.disabled = false;
+    }
+    return;
+  }
+
+  // Calls the new sendDistributionFlyer Cloud Function (Workstream 13, Part 2) - same
+  // loading-state convention as "Send via email" above (button text swap, no separate state
+  // variable). Sends to the building's own saved manager contacts (this button only ever renders
+  // when at least one is saved - see renderWholeBuildingLinkHtml), never a client-supplied
+  // address list - the function re-reads both the building's real name and its managerEmails
+  // itself.
+  const emailFlyerBtn = e.target.closest('.email-flyer-btn');
+  if (emailFlyerBtn){
+    const original = emailFlyerBtn.textContent;
+    emailFlyerBtn.disabled = true;
+    emailFlyerBtn.textContent = 'Sending…';
+    try {
+      const sendDistributionFlyer = httpsCallable(functions, 'sendDistributionFlyer');
+      await sendDistributionFlyer({
+        buildingId: emailFlyerBtn.dataset.buildingId,
+        programFile: currentProgram.file,
+        programName: currentProgram.name,
+      });
+      emailFlyerBtn.textContent = 'Sent ✓';
+      setTimeout(() => { emailFlyerBtn.textContent = original; emailFlyerBtn.disabled = false; }, 2500);
+    } catch (err){
+      console.error('sendDistributionFlyer failed:', err);
+      await showAlert('Could not send automatically - use "Show addresses" and send it yourself instead.');
+      emailFlyerBtn.textContent = original;
+      emailFlyerBtn.disabled = false;
     }
     return;
   }

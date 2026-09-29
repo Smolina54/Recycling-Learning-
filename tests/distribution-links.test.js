@@ -3,6 +3,14 @@
 // the link carries one, blocks an expired link with a distinct message, and confirms a revoked
 // link (expiresAt moved to the past) stops working exactly like a naturally-expired one — both
 // the UX-level check in initIdGate() and the server-side enforcement in firestore.rules.
+//
+// Also verifies the OTHER expiry mechanism added by Workstream 13: the permanent ?b= whole-
+// building link's own expiresAt, which lives on the enrollment doc itself (not a links doc — see
+// admin-distribution.html's "Whole-building link" section and its own comment on why) — a
+// non-preview load must show the expired state once that date has passed, but Preview mode
+// (?preview=1) must be exempt from this one check specifically (still subject to the plain
+// exists/active check every link is subject to), so an admin can keep demoing/inspecting the
+// induction even after the public-facing link has been left to lapse.
 // Run: npm run test:links
 const path = require('path');
 const url = require('url');
@@ -19,6 +27,10 @@ const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
 const BUILDING_ID = 'test-tower-links';
 const TENANT_A = 'tenant-a-links';
 const TENANT_B = 'tenant-b-links';
+// A separate building/enrollment for the enrollment-level expiresAt check (Workstream 13) - kept
+// distinct from BUILDING_ID above so this doesn't interact with the ?l= link-level expiry cases.
+const BUILDING_ID_ENROLLMENT_EXPIRED = 'test-tower-enrollment-expired';
+const TENANT_ENROLLMENT_EXPIRED = 'tenant-enrollment-expired';
 
 const results = [];
 function check(label, cond, extra){ results.push({label, ok: Boolean(cond), extra: extra || ''}); }
@@ -39,6 +51,16 @@ async function seed(){
     await setDoc(doc(db, 'links', 'link-tenant-a'), { programId: 'recycling-sorting', buildingId: BUILDING_ID, tenantId: TENANT_A });
     await setDoc(doc(db, 'links', 'link-expired'), { programId: 'recycling-sorting', buildingId: BUILDING_ID, tenantId: null, expiresAt: new Date(Date.now() - 3600000) });
     await setDoc(doc(db, 'links', 'link-to-revoke'), { programId: 'recycling-sorting', buildingId: BUILDING_ID, tenantId: null, expiresAt: new Date(Date.now() + 3600000) });
+
+    // Workstream 13: the permanent ?b= link's OWN expiry, on the enrollment doc itself (not a
+    // links doc) - a building/enrollment/tenant set up exactly like a real one, except this
+    // enrollment's expiresAt is already in the past.
+    await setDoc(doc(db, 'buildings', BUILDING_ID_ENROLLMENT_EXPIRED), { name: 'Test Tower Enrollment Expired' });
+    await setDoc(doc(db, 'buildings', BUILDING_ID_ENROLLMENT_EXPIRED, 'tenants', TENANT_ENROLLMENT_EXPIRED), { name: 'Tenant Enrollment Expired', levels: ['Level 1'] });
+    await setDoc(doc(db, 'enrollments', `recycling-sorting__${BUILDING_ID_ENROLLMENT_EXPIRED}`), {
+      programId: 'recycling-sorting', buildingId: BUILDING_ID_ENROLLMENT_EXPIRED, itemOverrides: {},
+      expiresAt: new Date(Date.now() - 3600000),
+    });
   });
   return testEnv;
 }
@@ -55,6 +77,7 @@ async function main(){
     await runTenantLockedFlow(page, seedEnv);
     await runExpiredFlow(browser);
     await runRevokeFlow(browser, seedEnv);
+    await runEnrollmentExpiryFlow(browser);
   } catch (err) {
     console.error('CRASHED — dumping diagnostics:', err.message);
     await page.screenshot({ path: path.join(__dirname, '..', 'debug-crash.png') }).catch(() => {});
@@ -176,6 +199,31 @@ async function runRevokeFlow(browser, seedEnv){
   } catch (err){ deniedServerSide = false; }
   check('a direct write against the revoked link is rejected server-side, not just hidden by the UI', deniedServerSide);
   await rulesEnv.cleanup();
+}
+
+// Workstream 13: the whole-building link's own expiresAt lives on the enrollment doc, checked
+// in initIdGate() right after the existing exists/active check (see recycling-training.html) -
+// unlike a ?l= link's expiry, Preview mode (?preview=1) is deliberately exempt from THIS check
+// specifically, so an admin can keep demoing/inspecting the induction even after the public-
+// facing link has been left to lapse (still subject to the plain exists/active check, same as
+// every other case here).
+async function runEnrollmentExpiryFlow(browser){
+  const page1 = await browser.newPage();
+  await page1.goto(`${url.pathToFileURL(GAME_PATH).href}?b=${BUILDING_ID_ENROLLMENT_EXPIRED}&emulator=1`, { waitUntil: 'domcontentloaded' });
+  await new Promise(r => setTimeout(r, 1000));
+  check('a whole-building (?b=) link whose enrollment.expiresAt is already in the past shows the invalid-link fallback',
+    await page1.$eval('#idCardInvalid', el => getComputedStyle(el).display !== 'none').catch(() => false));
+  const headline1 = await page1.$eval('#idCardInvalidHeadline', el => el.textContent).catch(() => '');
+  check('...with a message that specifically says "expired", not the generic "not recognised" text',
+    headline1.toLowerCase().includes('no longer active'), headline1);
+  await page1.close();
+
+  const page2 = await browser.newPage();
+  await page2.goto(`${url.pathToFileURL(GAME_PATH).href}?b=${BUILDING_ID_ENROLLMENT_EXPIRED}&preview=1&emulator=1`, { waitUntil: 'domcontentloaded' });
+  await new Promise(r => setTimeout(r, 1000));
+  check('the SAME expired building/enrollment still succeeds in Preview mode (?preview=1) - admins are exempt from this specific check',
+    await page2.$eval('#idCardForm', el => getComputedStyle(el).display !== 'none').catch(() => false));
+  await page2.close();
 }
 
 main().catch((err) => { console.error('Test harness crashed:', err); process.exit(1); });

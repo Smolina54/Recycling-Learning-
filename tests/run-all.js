@@ -53,6 +53,7 @@ const SUITES = [
   { name: 'test:functions', file: 'functions-sendinductionemail.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
   { name: 'test:functions-result-email', file: 'functions-sendmyresultemail.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
   { name: 'test:functions-delete-building', file: 'functions-deletebuildingpermanently.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
+  { name: 'test:functions-distribution-flyer', file: 'functions-senddistributionflyer.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
   { name: 'test:bintracker-unit', file: 'bintracker-unit.test.js' },
   { name: 'test:functions-bintracker', file: 'functions-refreshbintrackerdata.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
   { name: 'test:functions-bintrackersync', file: 'functions-bintrackersync.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },

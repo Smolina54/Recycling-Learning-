@@ -458,8 +458,8 @@
   <div class="upload-zone" id="authZone">
     <p id="authStatus">Loading…</p>
     <div class="upload-actions">
-      <button class="btn" id="signInBtn" style="display:none;">Sign in with Google →</button>
-      <button class="btn secondary" id="showEmailSignInBtn" style="display:none;">Sign in with email →</button>
+      <button class="btn" id="signInBtn" style="display:none;">Sign in with Google</button>
+      <button class="btn secondary" id="showEmailSignInBtn" style="display:none;">Sign in with email</button>
     </div>
     <form id="emailSignInForm" style="display:none; margin-top:16px;">
       <div class="filter-row">
@@ -467,7 +467,7 @@
         <label class="filter-field"><span>Password</span><input type="password" id="emailSignInPassword" autocomplete="current-password" required></label>
       </div>
       <div class="print-row" style="justify-content:flex-start; margin-top:14px;">
-        <button class="btn secondary" type="submit">Sign in →</button>
+        <button class="btn secondary" type="submit">Sign in</button>
       </div>
     </form>
   </div>
@@ -1111,7 +1111,7 @@ function renderEnrolledBuildingsList(buildings){
       ${currentProgram.id === 'recycling-sorting' && Object.keys(b.itemOverrides || {}).length ? '<span class="custom-config-badge">Custom bins</span>' : ''}
       <div class="building-header-actions">
         ${currentProgram.id === 'recycling-sorting' ? '<button class="btn secondary configure-items-btn">Configure streams</button>' : ''}
-        <button class="btn secondary preview-link-btn" data-link="${previewLink}">Preview →</button>
+        <button class="btn secondary preview-link-btn" data-link="${previewLink}">Preview</button>
         <button class="btn secondary remove-enrollment-btn danger-btn">Remove from this induction</button>
       </div>
     </div>`;
