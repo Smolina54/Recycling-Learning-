@@ -2607,7 +2607,14 @@ var qrcode = function() {
     font-family:var(--mono); font-size:10px; letter-spacing:0.03em; text-transform:uppercase;
     color:var(--gw); border:1px solid var(--gw); padding:2px 6px; flex-shrink:0;
   }
-  .tenant-list .btn.secondary, .building-header-actions .btn, .building-edit-row .btn{padding:6px 14px; font-size:12.5px;}
+  /* The base .btn is sized for a page-level call to action (e.g. "Sign in", "+ Generate link")
+     — every ROW-level action button in this app (a tenant row, a generated link's own actions)
+     uses this smaller, outlined size instead, so a run of several buttons sitting side by side
+     next to a line of text reads as one consistent family. "Whole-building link"'s own action
+     row (Preview/Print flyer/Email flyer), its expiry Change button, and its Show/Hide addresses
+     toggle are the same kind of row-level action — they must match, not use the bigger CTA size. */
+  .tenant-list .btn.secondary, .building-header-actions .btn, .building-edit-row .btn,
+  .whole-building-link-block .btn{padding:6px 14px; font-size:12.5px;}
   .danger-btn{border-color:var(--gw) !important; color:var(--gw) !important;}
   .danger-btn:hover{background:var(--gw) !important; color:var(--paper) !important;}
   input[type=file]{display:none;}
@@ -3191,9 +3198,10 @@ function renderWholeBuildingExpiryHtml(b){
 
 // "Whole-building link" section (Workstream 13 redesign) - the permanent ?b= link, its QR (now
 // a sibling of the link text inside .building-link-row, not a separate element stacked below
-// it), its own expiry status/editor, then every link-related action in one row: Copy link,
-// Preview, Print flyer, and (only when this building has saved manager contacts) Email flyer +
-// the Show/Hide addresses toggle.
+// it, and already shown as plain selectable text - no separate "Copy link" button needed), its
+// own expiry status/editor, then every remaining link-related action in one row: Preview, Print
+// flyer, and (only when this building has saved manager contacts) Email flyer + the Show/Hide
+// addresses toggle.
 function renderWholeBuildingLinkHtml(b, link){
   return `
     <div class="report-block whole-building-link-block">
@@ -3205,7 +3213,6 @@ function renderWholeBuildingLinkHtml(b, link){
       </div>
       ${renderWholeBuildingExpiryHtml(b)}
       <div class="print-row" style="justify-content:flex-start; margin-top:10px; align-items:center;">
-        <button class="btn secondary copy-link-btn" data-link="${link}">Copy link</button>
         <button class="btn secondary preview-link-btn" data-link="${link}">Preview</button>
         <button class="btn secondary print-flyer-btn" data-link="${link}" data-building-name="${esc(b.name)}">Print flyer</button>
         ${b.managerEmails.length ? `<button class="btn secondary email-flyer-btn" data-building-id="${esc(b.id)}">Email flyer</button>` : ''}

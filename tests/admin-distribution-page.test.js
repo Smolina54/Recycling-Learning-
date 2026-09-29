@@ -333,23 +333,14 @@ async function runFlow(page){
   check('Preview opens the link with &preview=1 (and &emulator=1, since this test runs in emulator mode) appended',
     previewUrls.length === 1 && previewUrls[0] === `${linkText}&preview=1&emulator=1`, previewUrls.join(', '));
 
+  // The whole-building link no longer has its own "Copy link" button (Workstream 13 follow-up,
+  // 2026-09-29 — the link is already shown as plain selectable text right next to its QR code,
+  // so a dedicated copy button was redundant and dropped). The clipboard-copy mechanism itself
+  // is still real code shared with "Generate tenant link"'s own per-link Copy link button —
+  // exercised below, once a tenant-scoped link actually exists to copy.
   let clipboardGrantable = true;
   try { await page.browserContext().overridePermissions(distributionUrl('recycling-sorting'), ['clipboard-write', 'clipboard-read']); }
   catch (err) { clipboardGrantable = false; }
-
-  const copyBtn = await page.$(`${distributionSelector} .copy-link-btn`);
-  await copyBtn.click();
-  await new Promise(r => setTimeout(r, 300));
-  const clipboardText = clipboardGrantable
-    ? await page.evaluate(() => navigator.clipboard.readText()).catch(() => null)
-    : null;
-  if (clipboardText === linkText){
-    check('copy-link button actually copied the exact link to the clipboard', true, clipboardText);
-  } else {
-    const copyBtnText = await copyBtn.evaluate(el => el.textContent);
-    check('clipboard unavailable in this sandbox, but the app degraded gracefully (friendly alert, no crash) instead of copying',
-      copyBtnText.includes('Copied') || copyBtnText.includes('Copy link'), copyBtnText);
-  }
 
   // --- The tenant dropdown no longer offers a "Whole building (no tenant lock)" option
   // (Workstream 13 - that capability was removed; the permanent whole-building link above
@@ -401,6 +392,21 @@ async function runFlow(page){
   check('a tenant-scoped link for a tenant with NO saved email shows neither button',
     !(await northwindLinkLi.$('.send-email-btn')) && (await northwindLinkLi.$$('.copy-link-btn')).length === 1,
     await northwindLinkLi.evaluate(el => el.textContent));
+
+  const northwindCopyBtn = await northwindLinkLi.$('.copy-link-btn');
+  const northwindExpectedLink = await northwindCopyBtn.evaluate(el => el.dataset.link);
+  await northwindCopyBtn.click();
+  await new Promise(r => setTimeout(r, 300));
+  const northwindClipboardText = clipboardGrantable
+    ? await page.evaluate(() => navigator.clipboard.readText()).catch(() => null)
+    : null;
+  if (northwindClipboardText === northwindExpectedLink){
+    check('copy-link button actually copied the exact tenant-scoped link to the clipboard', true, northwindClipboardText);
+  } else {
+    const copyBtnText = await northwindCopyBtn.evaluate(el => el.textContent);
+    check('clipboard unavailable in this sandbox, but the app degraded gracefully (friendly alert, no crash) instead of copying',
+      copyBtnText.includes('Copied') || copyBtnText.includes('Copy link'), copyBtnText);
+  }
 
   const wholeBuildingRowText = await page.$eval(`${distributionSelector} .building-link-row`, el => el.textContent);
   check('the whole-building link row (no single tenant to address) never shows "Send via email"',
