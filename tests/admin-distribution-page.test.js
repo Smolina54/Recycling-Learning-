@@ -1,8 +1,8 @@
 // Verifies outputs/admin-distribution.html — the Distribution tab's own page since Workstream 2,
 // Phase 4 of the architecture roadmap (C:\Users\smolina\.claude\plans\graceful-roaming-shell.md):
 // whole-building link/QR/copy/preview, tenant-scoped/expiring link generation and revocation,
-// the "Send via email"/"Show addresses" distinction for tenants with vs. without a saved email,
-// the "no ?program=" fallback, and cross-page session persistence back to
+// the "Send via email" distinction for tenants with vs. without a saved email, bulk "Send to all
+// tenants" distribution, the "no ?program=" fallback, and cross-page session persistence back to
 // sorting-station-report.html. Building/tenant CRUD and induction registration are covered by
 // their own pages' tests (admin-buildings-page.test.js, admin-catalog-page.test.js) — this file
 // seeds everything it needs directly via Firestore instead of driving either UI.
@@ -26,7 +26,7 @@ function distributionUrl(programId){
 
 // One building enrolled in Recycling Sorting, with one tenant that has a saved email
 // (Widgetco) and one that doesn't (Northwind Consulting) — the reliable way to exercise both
-// the "Send via email"/"Show addresses" branch and the "neither button" branch.
+// the "Send via email" branch and the "neither button" branch.
 async function seedTestBuilding(){
   const testEnv = await initializeTestEnvironment({
     projectId: 'esg-1-98f35',
@@ -53,6 +53,16 @@ async function seedTestBuilding(){
       programId: 'recycling-sorting', buildingId, itemOverrides: {}, enabledTenantIds: null,
     });
     await setDoc(doc(db, 'buildings', noManagerBuildingId), { name: noManagerBuildingName });
+    // Two tenants here, isolated from the main building's Widgetco/Northwind flow (used
+    // elsewhere in this test for individual link-generation/revoke assertions), so the "Send to
+    // all tenants" bulk-distribution test (follow-up fix #8) can run its own clean two-run
+    // scenario without interfering with those.
+    await setDoc(doc(db, 'buildings', noManagerBuildingId, 'tenants', 'acme-' + Date.now()), {
+      name: 'Acme Co', levels: ['Level 5'], emails: ['acme-contact@example.com'],
+    });
+    await setDoc(doc(db, 'buildings', noManagerBuildingId, 'tenants', 'beta-' + Date.now()), {
+      name: 'Beta Corp', levels: ['Level 6'], emails: [],
+    });
     await setDoc(doc(db, 'enrollments', `recycling-sorting__${noManagerBuildingId}`), {
       programId: 'recycling-sorting', buildingId: noManagerBuildingId, itemOverrides: {}, enabledTenantIds: null,
     });
@@ -172,16 +182,25 @@ async function runFlow(page){
   // check) can inspect what it said. Installed here, before the FIRST click that can trigger the
   // modal (copy-link-btn's clipboard-unavailable fallback, below) — an alert left unanswered
   // leaves the overlay open and blocks every subsequent click in this flow.
+  // window.__cancelNextConfirm (set right before a click that should be answered "Cancel" instead
+  // of the usual "always confirm" default, e.g. the "Send to all tenants"/"Email flyer" Cancel
+  // checks below) is respected HERE, in this single observer, rather than via a second competing
+  // observer on the same element - two independent observers racing to click different buttons on
+  // the same mutation event is exactly the kind of flake that produced a real, confirmed test
+  // failure the first time this was tried with a second observer.
   await page.evaluate(() => {
     window.__confirmCalls = [];
     window.__alertCalls = [];
+    window.__cancelNextConfirm = false;
     const overlay = document.getElementById('appModalOverlay');
     new MutationObserver(() => {
       if (!overlay.classList.contains('open')) return;
       const message = document.getElementById('appModalMessage').textContent;
       const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
-      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); }
-      else { window.__confirmCalls.push(message); buttons[buttons.length - 1].click(); }
+      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); return; }
+      window.__confirmCalls.push(message);
+      if (window.__cancelNextConfirm) { window.__cancelNextConfirm = false; buttons[0].click(); }
+      else { buttons[buttons.length - 1].click(); }
     }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
   });
 
@@ -232,19 +251,21 @@ async function runFlow(page){
     flyerState.footerText === buildingName, flyerState.footerText);
   check('Print flyer renders its own QR code as a real SVG with content',
     Boolean(flyerState.qrSvg) && flyerState.qrSvg.length > 100, flyerState.qrSvg ? flyerState.qrSvg.length : 'none');
-  check('Print flyer injects its own A5 @page size override',
-    Boolean(flyerState.pageStyleContent) && flyerState.pageStyleContent.includes('size: A5'), flyerState.pageStyleContent);
+  check('Print flyer injects its own A4 @page size override',
+    Boolean(flyerState.pageStyleContent) && flyerState.pageStyleContent.includes('size: A4'), flyerState.pageStyleContent);
 
   // The injected @page override must clean itself up after printing, so it never leaks into
   // whatever print job runs next (this file's own separate whole-screen print feature included).
   await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
   await new Promise(r => setTimeout(r, 100));
   const pageStyleAfterPrint = await page.evaluate(() => document.getElementById('flyerPageSizeOverride'));
-  check('The A5 @page override is removed again after printing', pageStyleAfterPrint === null);
+  check('The A4 @page override is removed again after printing', pageStyleAfterPrint === null);
 
-  // --- Whole-building link expiry: view/edit-in-place with a real date picker (Workstream 13) ---
+  // --- Whole-building link expiry: view/edit-in-place with a real date picker (Workstream 13,
+  // follow-up fix #2 - the view-state text is now a plain <span class="expiry-status-text">
+  // living inside the shared .print-row action row, not a standalone wrapping <p>) ---
   check('the whole-building link shows "Expires: Never" by default (no expiresAt saved yet)',
-    (await page.$eval(`${distributionSelector} .expiry-status-row`, el => el.textContent)).includes('Expires: Never'));
+    (await page.$eval(`${distributionSelector} .expiry-status-text`, el => el.textContent)).includes('Expires: Never'));
   check('the expiry field is a real <input type=date>, not the old Never/1/7/30-day preset dropdown',
     (await page.$eval(`${distributionSelector} .generate-link-block .new-link-expiry`, el => el.tagName + ':' + el.type)) === 'INPUT:date');
 
@@ -254,8 +275,8 @@ async function runFlow(page){
   await page.evaluate((sel, val) => { document.querySelector(sel).value = val; },
     `${distributionSelector} .whole-building-expiry-input`, futureDate);
   await page.click(`${distributionSelector} .save-expiry-btn`);
-  await page.waitForSelector(`${distributionSelector} .expiry-status-row`);
-  const expiryTextAfterSave = await page.$eval(`${distributionSelector} .expiry-status-row`, el => el.textContent);
+  await page.waitForSelector(`${distributionSelector} .expiry-status-text`);
+  const expiryTextAfterSave = await page.$eval(`${distributionSelector} .expiry-status-text`, el => el.textContent);
   check('saving a future expiry date shows it back (view state, not "Never")',
     !expiryTextAfterSave.includes('Never') && expiryTextAfterSave.includes('Expires:'), expiryTextAfterSave);
 
@@ -264,8 +285,8 @@ async function runFlow(page){
   await page.waitForSelector(`${distributionSelector} .whole-building-expiry-input`);
   await page.evaluate((sel) => { document.querySelector(sel).value = ''; }, `${distributionSelector} .whole-building-expiry-input`);
   await page.click(`${distributionSelector} .cancel-expiry-btn`);
-  await page.waitForSelector(`${distributionSelector} .expiry-status-row`);
-  const expiryTextAfterCancel = await page.$eval(`${distributionSelector} .expiry-status-row`, el => el.textContent);
+  await page.waitForSelector(`${distributionSelector} .expiry-status-text`);
+  const expiryTextAfterCancel = await page.$eval(`${distributionSelector} .expiry-status-text`, el => el.textContent);
   check('Cancel discards the in-progress edit — the previously saved expiry is still shown',
     !expiryTextAfterCancel.includes('Never'), expiryTextAfterCancel);
 
@@ -274,11 +295,12 @@ async function runFlow(page){
   await page.waitForSelector(`${distributionSelector} .whole-building-expiry-input`);
   await page.evaluate((sel) => { document.querySelector(sel).value = ''; }, `${distributionSelector} .whole-building-expiry-input`);
   await page.click(`${distributionSelector} .save-expiry-btn`);
-  await page.waitForSelector(`${distributionSelector} .expiry-status-row`);
+  await page.waitForSelector(`${distributionSelector} .expiry-status-text`);
   check('saving an empty date clears the expiry back to "Never"',
-    (await page.$eval(`${distributionSelector} .expiry-status-row`, el => el.textContent)).includes('Expires: Never'));
+    (await page.$eval(`${distributionSelector} .expiry-status-text`, el => el.textContent)).includes('Expires: Never'));
 
-  // --- "Email flyer" + "Show addresses"/"Hide addresses" (Workstream 13, Part 2) ---
+  // --- "Email flyer" (Workstream 13, Part 2) - "Show addresses" is gone (follow-up fix #2);
+  // the recipient list now shows up in a confirm-before-send dialog instead. ---
   check('a building WITH saved managerEmails shows the "Email flyer" action',
     Boolean(await page.$(`${distributionSelector} .email-flyer-btn`)));
 
@@ -287,36 +309,77 @@ async function runFlow(page){
   await page.waitForSelector(`${noManagerSelector} .building-link-text`);
   check('a building with NO saved managerEmails does not show "Email flyer" at all',
     !(await page.$(`${noManagerSelector} .email-flyer-btn`)));
-  check('...nor the Show addresses toggle in the whole-building section (nothing to reveal)',
-    !(await page.$(`${noManagerSelector} .whole-building-link-block .show-addresses-btn`)));
 
-  const showAddressesBtn = await page.$(`${distributionSelector} .whole-building-link-block .show-addresses-btn`);
-  check('"Show addresses" starts collapsed (the reveal span is hidden)',
-    await page.$eval(`${distributionSelector} .whole-building-link-block .addresses-reveal`, el => el.hidden));
-  await showAddressesBtn.click();
-  const revealedText = await page.$eval(`${distributionSelector} .whole-building-link-block .addresses-reveal`, el => el.textContent);
-  check('clicking "Show addresses" reveals the real manager addresses as plain text',
-    revealedText.includes('manager1@example.com') && revealedText.includes('manager2@example.com'), revealedText);
-  check('...and flips its own label to "Hide addresses"',
-    (await showAddressesBtn.evaluate(el => el.textContent)) === 'Hide addresses');
-  await showAddressesBtn.click();
-  check('clicking it again collapses the reveal and restores the "Show addresses" label',
-    (await showAddressesBtn.evaluate(el => el.textContent)) === 'Show addresses'
-    && (await page.$eval(`${distributionSelector} .whole-building-link-block .addresses-reveal`, el => el.hidden)));
+  // --- "Send to all tenants" bulk-distribution (follow-up fix #8) - run against this second,
+  // otherwise-unused building (Acme Co has a saved email, Beta Corp doesn't) so it doesn't
+  // interfere with the main building's Widgetco/Northwind individual-link-generation tests below.
+  const confirmCountBeforeBulk = await page.evaluate(() => window.__confirmCalls.length);
+  await page.click(`${noManagerSelector} .send-all-tenants-btn`);
+  await new Promise(r => setTimeout(r, 300));
+  const bulkConfirmMessages = await page.evaluate((n) => window.__confirmCalls.slice(n), confirmCountBeforeBulk);
+  check('the bulk-send confirmation names who will be sent to and who will only get a link generated',
+    bulkConfirmMessages.some((m) => m.includes('Acme Co') && m.includes('send it now'))
+    && bulkConfirmMessages.some((m) => m.includes('Beta Corp') && m.includes('NOT send it')),
+    JSON.stringify(bulkConfirmMessages));
+  // Both tenants had no existing link, so both should now show up in "Generate tenant link"'s
+  // own list — no separate list/UI needed, per the user's own explicit requirement. Generous
+  // wait: this involves 2 sequential Firestore writes plus one (failing, since this suite
+  // doesn't start the Functions emulator) sendInductionEmail network attempt before the final
+  // refreshDistributionView() call resolves.
+  await new Promise(r => setTimeout(r, 2500));
+  const bulkLinksListText = await page.$eval(`${noManagerSelector} .generate-link-block .tenant-list`, el => el.textContent);
+  check('after "Send to all tenants", both tenants now appear in the tenant-scoped links list',
+    bulkLinksListText.includes('Acme Co') && bulkLinksListText.includes('Beta Corp'), bulkLinksListText);
+  const acmeLinkLi = await page.evaluateHandle((sel) => {
+    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Acme Co'));
+  }, noManagerSelector).then(h => h.asElement());
+  check('the tenant WITH a saved email (Acme Co) shows "Send via email" in the generated list',
+    Boolean(await acmeLinkLi.$('.send-email-btn')));
+  const betaLinkLi = await page.evaluateHandle((sel) => {
+    return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Beta Corp'));
+  }, noManagerSelector).then(h => h.asElement());
+  check('the tenant with NO saved email (Beta Corp) shows no "Send via email" in the generated list',
+    !(await betaLinkLi.$('.send-email-btn')));
 
-  // "Email flyer" loading-state behavior — this suite doesn't start the Functions emulator (only
-  // firestore,auth), so the real call to sendDistributionFlyer is expected to fail the same way
-  // "Send via email" above does (a network/CORS failure, not a validation bug) — same
-  // "Sending…" → alert → restore" convention, proven here the same way.
+  // Running it again immediately after must skip both (they now each have a valid link) and
+  // short-circuit with a plain "nothing to do" alert - no confirm dialog, no new links written.
+  const alertCountBeforeSecondBulk = await page.evaluate(() => window.__alertCalls.length);
+  const confirmCountBeforeSecondBulk = await page.evaluate(() => window.__confirmCalls.length);
+  await page.click(`${noManagerSelector} .send-all-tenants-btn`);
+  await new Promise(r => setTimeout(r, 300));
+  const alertsAfterSecondBulk = await page.evaluate((n) => window.__alertCalls.slice(n), alertCountBeforeSecondBulk);
+  const confirmsAfterSecondBulk = await page.evaluate((n) => window.__confirmCalls.slice(n), confirmCountBeforeSecondBulk);
+  check('running "Send to all tenants" again (everyone already covered) shows a plain "nothing to do" alert, no confirm dialog',
+    alertsAfterSecondBulk.some((a) => a.includes('already has a valid link')) && confirmsAfterSecondBulk.length === 0,
+    JSON.stringify({ alertsAfterSecondBulk, confirmsAfterSecondBulk }));
+
+  // Clicking Cancel on the confirm dialog must write/send nothing at all.
   const emailFlyerBtn = await page.$(`${distributionSelector} .email-flyer-btn`);
+  const confirmCountBeforeCancel = await page.evaluate(() => window.__confirmCalls.length);
+  await page.evaluate(() => { window.__cancelNextConfirm = true; });
+  await emailFlyerBtn.click();
+  await new Promise(r => setTimeout(r, 300));
+  const confirmMessagesForCancelCheck = await page.evaluate((n) => window.__confirmCalls.slice(n), confirmCountBeforeCancel);
+  check('the confirm dialog names the real recipient addresses before sending anything',
+    confirmMessagesForCancelCheck.some((m) => m.includes('manager1@example.com') && m.includes('manager2@example.com')),
+    JSON.stringify(confirmMessagesForCancelCheck));
+  check('clicking Cancel on the confirm dialog leaves the button in its normal state (nothing sent)',
+    (await emailFlyerBtn.evaluate((el) => el.textContent)) !== 'Sending…');
+
+  // "Email flyer" loading-state behavior (confirming this time, via the shared "always confirm"
+  // observer installed earlier) — this suite doesn't start the Functions emulator (only
+  // firestore,auth), so the real call to sendDistributionFlyer is expected to fail the same way
+  // "Send via email" above does (a network/CORS failure, not a validation bug). The transient
+  // "Sending…" state itself isn't checked here (same as "Send via email"'s own test above never
+  // checks it either) - in this sandbox, the confirm-then-attempt-then-fail-then-restore cycle can
+  // complete in well under 200ms (the connection fails almost instantly with no Functions emulator
+  // running), making a fixed-delay check for that specific transient state inherently racy.
   const alertCountBeforeFlyerSend = await page.evaluate(() => window.__alertCalls.length);
   await emailFlyerBtn.click();
-  const flyerSendingText = await emailFlyerBtn.evaluate(el => el.textContent);
-  check('"Email flyer" shows a "Sending…" loading state while the call is in flight', flyerSendingText === 'Sending…', flyerSendingText);
   await new Promise(r => setTimeout(r, 1500));
   const alertsAfterFlyerSend = await page.evaluate((n) => window.__alertCalls.slice(n), alertCountBeforeFlyerSend);
   check('clicking "Email flyer" before the Cloud Function is reachable fails gracefully with a clear alert',
-    alertsAfterFlyerSend.some(a => a.includes('Show addresses')), JSON.stringify(alertsAfterFlyerSend));
+    alertsAfterFlyerSend.some(a => a.includes('copy the link above')), JSON.stringify(alertsAfterFlyerSend));
   const emailFlyerTextAfterFailure = await emailFlyerBtn.evaluate(el => el.textContent);
   const emailFlyerDisabledAfterFailure = await emailFlyerBtn.evaluate(el => el.disabled);
   check('the "Email flyer" button resets to its original label and stays usable after a failed send',
@@ -371,18 +434,12 @@ async function runFlow(page){
   const widgetcoLinkLi = await page.evaluateHandle((sel) => {
     return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Widgetco'));
   }, distributionSelector).then(h => h.asElement());
-  check('a tenant-scoped link for a tenant WITH a saved email shows "Send via email" and the "Show addresses" toggle',
-    Boolean(await widgetcoLinkLi.$('.send-email-btn')) && Boolean(await widgetcoLinkLi.$('.show-addresses-btn')),
+  check('a tenant-scoped link for a tenant WITH a saved email shows "Send via email"',
+    Boolean(await widgetcoLinkLi.$('.send-email-btn')),
     await widgetcoLinkLi.evaluate(el => el.textContent));
-  const widgetcoShowAddressesBtn = await widgetcoLinkLi.$('.show-addresses-btn');
-  const widgetcoAddressesData = await widgetcoShowAddressesBtn.evaluate(el => el.dataset.addresses);
-  check('the "Show addresses" button carries the tenant\'s actual saved email in its data-addresses',
-    widgetcoAddressesData === 'widgetco-contact@example.com', widgetcoAddressesData);
-  await widgetcoShowAddressesBtn.click();
-  const widgetcoRevealText = await widgetcoLinkLi.$eval('.addresses-reveal', el => el.textContent);
-  check('clicking "Show addresses" on the tenant-scoped link reveals that tenant\'s real address, flips the label to "Hide addresses"',
-    widgetcoRevealText === 'widgetco-contact@example.com' && (await widgetcoShowAddressesBtn.evaluate(el => el.textContent)) === 'Hide addresses',
-    widgetcoRevealText);
+  const widgetcoSendBtnData = await widgetcoLinkLi.$eval('.send-email-btn', el => el.dataset.emails);
+  check('the "Send via email" button carries the tenant\'s actual saved email in its data-emails',
+    widgetcoSendBtnData === 'widgetco-contact@example.com', widgetcoSendBtnData);
 
   await generateTenantLink((await page.$$eval(`${distributionSelector} .new-link-tenant option`, opts =>
     (opts.find(o => o.textContent === 'Northwind Consulting') || {}).value)));
@@ -412,17 +469,23 @@ async function runFlow(page){
   check('the whole-building link row (no single tenant to address) never shows "Send via email"',
     !wholeBuildingRowText.includes('Send via email'), wholeBuildingRowText);
 
-  // --- "Send via email" fails gracefully (Cloud Function not deployed — needs Blaze + Entra ID) ---
+  // --- "Send via email" - confirm-before-send (follow-up fix #2), then fails gracefully
+  // (Cloud Function not deployed — needs Blaze + Entra ID) ---
+  const confirmCountBeforeSend = await page.evaluate(() => window.__confirmCalls.length);
   const alertCountBeforeSend = await page.evaluate(() => window.__alertCalls.length);
   const widgetcoLinkLiFresh = await page.evaluateHandle((sel) => {
     return [...document.querySelectorAll(`${sel} .tenant-list li`)].find(li => li.textContent.includes('Widgetco'));
   }, distributionSelector).then(h => h.asElement());
   const sendBtn = await widgetcoLinkLiFresh.$('.send-email-btn');
   await sendBtn.click();
+  await new Promise(r => setTimeout(r, 200)); // let the confirm dialog's own microtask chain settle
+  const confirmMessagesForSend = await page.evaluate((n) => window.__confirmCalls.slice(n), confirmCountBeforeSend);
+  check('"Send via email" shows a confirm dialog naming the real recipient address before sending',
+    confirmMessagesForSend.some((m) => m.includes('widgetco-contact@example.com')), JSON.stringify(confirmMessagesForSend));
   await new Promise(r => setTimeout(r, 1500));
   const alertsAfterSend = await page.evaluate((n) => window.__alertCalls.slice(n), alertCountBeforeSend);
   check('clicking "Send via email" before the Cloud Function is deployed fails gracefully with a clear alert',
-    alertsAfterSend.some(a => a.includes('Show addresses')), JSON.stringify(alertsAfterSend));
+    alertsAfterSend.some(a => a.includes('copy the link above')), JSON.stringify(alertsAfterSend));
   const sendBtnTextAfterFailure = await sendBtn.evaluate(el => el.textContent);
   const sendBtnDisabledAfterFailure = await sendBtn.evaluate(el => el.disabled);
   check('the "Send via email" button resets to its original label and stays usable after a failed send',

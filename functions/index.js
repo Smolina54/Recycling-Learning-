@@ -183,7 +183,7 @@ async function sendViaSmtp({ to, subject, text, html, attachments }) {
 // right place for one). Shares the exact same branded scaffold (and every Outlook-compatibility
 // lesson learned building buildResultEmailContent) as the trainee result email below.
 function buildInductionEmailContent({ buildingName, programName, link }) {
-  const subject = `Complete your ${programName} induction — ${buildingName}`;
+  const subject = `Complete your ${programName} induction - ${buildingName}`;
   const html = `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#F7F5EE" style="background:#F7F5EE; font-family:'Helvetica Neue',Arial,sans-serif;">
       <tr><td align="center" style="padding:24px 16px;">
@@ -199,8 +199,8 @@ function buildInductionEmailContent({ buildingName, programName, link }) {
           <tr>
             <td style="padding:32px;">
               <p style="margin:0 0 8px; font-size:15px; letter-spacing:0.4px; text-transform:uppercase; color:#2F6F4E; font-weight:bold;">${esc(programName)}</p>
-              <p style="margin:0 0 16px; font-size:20px; font-weight:bold; color:#1E2A22;">${esc(buildingName)} requires you to complete this induction</p>
-              <p style="margin:0 0 24px; font-size:15px; color:#1E2A22; line-height:1.5;">This is a required part of ${esc(buildingName)}'s waste management program.</p>
+              <p style="margin:0 0 16px; font-size:20px; font-weight:bold; color:#1E2A22;">${esc(buildingName)} invites you to complete this induction</p>
+              <p style="margin:0 0 24px; font-size:15px; color:#1E2A22; line-height:1.5;">This is an important part of ${esc(buildingName)}'s waste management program.</p>
               <!--[if mso]>
               <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="padding-bottom:20px;">
               <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${esc(link)}" style="height:44px;v-text-anchor:middle;width:220px;" arcsize="14%" strokecolor="#2F6F4E" fillcolor="#2F6F4E">
@@ -222,14 +222,14 @@ function buildInductionEmailContent({ buildingName, programName, link }) {
           </tr>
           <tr>
             <td style="padding:18px 32px; border-top:1px solid #DEDACB;">
-              <p style="margin:0; font-size:11px; color:#4A5850;">Tradeflex &middot; Integrated facilities services</p>
+              <p style="margin:0; font-size:11px; color:#4A5850;">Tradeflex &middot; Integrated Facilities Services</p>
             </td>
           </tr>
         </table>
       </td></tr>
     </table>
   `;
-  const text = `${buildingName} requires you to complete this induction.\n\nThis is a required part of ${buildingName}'s waste management program.\n\nStart here: ${link}\n\nThanks for helping keep ${buildingName} sorting waste correctly.`;
+  const text = `${buildingName} invites you to complete this induction.\n\nThis is an important part of ${buildingName}'s waste management program.\n\nStart here: ${link}\n\nThanks for helping keep ${buildingName} sorting waste correctly.`;
   return { subject, html, text };
 }
 
@@ -344,6 +344,11 @@ exports.sendDistributionFlyer = onCall(
 const RESULT_EMAIL_MAX_SENDS = 5;
 const STREAM_ORDER = ['gw', 'mr', 'pc', 'og', 'ew'];
 const STREAM_NAMES = { gw: 'General Waste', mr: 'Mixed Recycling', pc: 'Paper & Cardboard', og: 'Organics', ew: 'E-Waste' };
+// Follow-up fix #6 (2026-09-29): hand-copied from this app's own CSS tokens
+// (--gw/--mr/--pc/--og/--ew in recycling-training.html's :root) - a Cloud Function has no CSS to
+// read them from, so these are duplicated, not derived/shared (same pattern as functions/flyer.js
+// hand-copying its own color constants).
+const STREAM_COLORS = { gw: '#8C2F39', mr: '#C98E12', pc: '#2B5C8A', og: '#5C7A29', ew: '#5B4B8A' };
 const PASS_MARK = 75;
 
 function esc(str) {
@@ -399,16 +404,19 @@ function buildResultEmailContent(data) {
     `).join('');
   const streamText = streamRows.map((s) => `${s.name}: ${s.pct}%`).join('\n');
 
-  // No card background — just a green rule on the left of each item, sitting directly on the
+  // No card background — just a colored rule on the left of each item, sitting directly on the
   // cream card behind it (a solid white box per item read as too stark). Each item is its own
   // row in ONE outer table, with the gap between items as padding-bottom on the wrapping <td>
   // rather than margin-bottom on each item's own inner table — Outlook ignores margin on tables
   // (confirmed via a real send, 2026-09-23: items rendered with no gap and one continuous left
-  // border instead of one per item), but padding on a <td> is well supported.
+  // border instead of one per item), but padding on a <td> is well supported. Follow-up fix #6
+  // (2026-09-29): the rule color now matches each item's own waste stream (STREAM_COLORS) instead
+  // of being hardcoded green for every item, regardless of stream - a fallback to the old green
+  // covers the never-expected case of a missing/unrecognized stream code.
   const missedHtml = missed.length
     ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">${
         missed.map((it, i) => `
-          <tr><td style="border-left:3px solid #2F6F4E; padding-left:16px;">
+          <tr><td style="border-left:3px solid ${STREAM_COLORS[it.stream] || '#2F6F4E'}; padding-left:16px;">
             <p style="margin:0 0 4px; font-size:14px; font-weight:bold; color:#1E2A22;">${esc(it.name)}</p>
             <p style="margin:0; font-size:13px; color:#4A5850; line-height:1.4;">${esc(it.explain)}</p>
           </td></tr>
@@ -463,7 +471,7 @@ function buildResultEmailContent(data) {
           </tr>
           <tr>
             <td style="padding:18px 32px; border-top:1px solid #DEDACB;">
-              <p style="margin:0; font-size:11px; color:#4A5850;">Tradeflex &middot; Integrated facilities services</p>
+              <p style="margin:0; font-size:11px; color:#4A5850;">Tradeflex &middot; Integrated Facilities Services</p>
             </td>
           </tr>
         </table>

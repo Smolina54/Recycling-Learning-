@@ -2457,13 +2457,14 @@ var qrcode = function() {
      text's own overflow-x:auto when space is tight. */
   .building-qr{width:120px; height:120px; flex-shrink:0;}
   .building-qr svg{width:100%; height:100%;}
-  /* "Show addresses"/"Hide addresses" disclosure toggle (Workstream 13) - a plain reveal, same
-     concept as the building row's own ▸/▾ expand-collapse toggle, not a new UI pattern. Used in
-     both the "Whole-building link" section (Email flyer) and "Generate tenant link" (Send via
-     email). */
-  .addresses-toggle{display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;}
-  .addresses-reveal{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
-  .expiry-status-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  /* The expiry status text used to be a bare <p> (.expiry-status-row) with no font-size of its
+     own - it inherited the browser's default paragraph size (16px) plus the default paragraph
+     margin, both visibly out of proportion next to the buttons beside it (follow-up fix #2,
+     2026-09-29). It's now a plain <span> living directly inside the shared .print-row action row
+     (renderWholeBuildingExpiryViewHtml), so it just needs its own font-size matching this app's
+     established row-text scale - no margin reset needed, a <span> never had the UA paragraph
+     margin problem in the first place. */
+  .expiry-status-text{font-family:var(--body); font-size:13.5px; color:var(--ink);}
 
   /* ---------- Printable Distribution QR flyer (physical building signage) ----------
      Sits as a direct child of <body> (see the markup near the end of this file), hidden on
@@ -2476,26 +2477,32 @@ var qrcode = function() {
     max-width:340px; margin:0 auto; background:var(--paper); border:1px solid var(--line);
     border-radius:6px; padding:28px 26px; text-align:center;
   }
-  .flyer-print-page .brand-row{justify-content:center; margin-bottom:22px;}
-  .flyer-print-page .brand-row img{height:38px;}
-  .flyer-kicker{font-family:var(--body); font-weight:500; font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--forest-dark); margin:0 0 10px;}
-  .flyer-title{font-family:var(--display); font-weight:700; font-size:18px; margin:0 0 6px;}
-  .flyer-sub{font-size:13px; color:var(--ink-soft); margin:0 0 20px;}
-  .flyer-qr{width:200px; height:200px; margin:0 auto 18px; background:#fff; border:1px solid var(--line); border-radius:4px; padding:10px;}
+  /* Follow-up fix #4 (2026-09-29): scaled from A5 to A4. A4 and A5 share the exact same aspect
+     ratio (1:√2, both ISO 216 sizes) - A4's linear dimensions are precisely √2 (≈1.4142×) larger
+     than A5's, so every value below is the original A5 design's own value multiplied by that same
+     factor, preserving identical proportions rather than just adding more empty margin around the
+     old, smaller content. */
+  .flyer-print-page .brand-row{justify-content:center; margin-bottom:31px;}
+  .flyer-print-page .brand-row img{height:54px;}
+  .flyer-kicker{font-family:var(--body); font-weight:500; font-size:16px; letter-spacing:0.06em; text-transform:uppercase; color:var(--forest-dark); margin:0 0 14px;}
+  .flyer-title{font-family:var(--display); font-weight:700; font-size:26px; margin:0 0 8px;}
+  .flyer-sub{font-size:18px; color:var(--ink-soft); margin:0 0 28px;}
+  .flyer-qr{width:283px; height:283px; margin:0 auto 25px; background:#fff; border:1px solid var(--line); border-radius:4px; padding:14px;}
   .flyer-qr svg{width:100%; height:100%;}
-  .flyer-footer{font-family:var(--mono); font-size:10.5px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft); margin:0;}
+  .flyer-footer{font-family:var(--mono); font-size:15px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft); margin:0;}
   @media print{
     body > *:not(#flyerPrintOverlay){display:none !important;}
     #flyerPrintOverlay{display:flex !important; align-items:center; justify-content:center; min-height:100vh;}
-    /* Physical A5 sizing (real poster dimensions, not just "a small card on whatever paper the
-       printer defaults to") - the QR at ~55mm scans comfortably from close range (near a bin, in
-       a lobby). @page size/margin is NOT set here - this file already has an unrelated whole-
+    /* Physical A4 sizing (real poster dimensions, not just "a small card on whatever paper the
+       printer defaults to") - the QR at ~78mm (55mm x √2) scans comfortably from close range (near
+       a bin, in a lobby), same real-world distance the original A5 design was tuned for, just
+       scaled up. @page size/margin is NOT set here - this file already has an unrelated whole-
        screen print stylesheet with its own @page rule further down, and @page rules aren't
        scopeable by any selector/class, so the two would silently fight over which one wins by
        source order. openFlyerPrint() instead injects/removes this one's own @page rule via a
        temporary <style> tag right around the actual window.print() call - see that function. */
-    .flyer-print-page{width:118mm; max-width:118mm; padding:10mm 8mm;}
-    .flyer-qr{width:55mm; height:55mm; margin:0 auto 8mm;}
+    .flyer-print-page{width:167mm; max-width:167mm; padding:14mm 11mm;}
+    .flyer-qr{width:78mm; height:78mm; margin:0 auto 11mm;}
   }
   .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
   .building-row:has(> .building-header-row:only-child) .building-header-row,
@@ -3090,27 +3097,12 @@ function openFlyerPrint(buildingName, link){
   // content is actually visible.
   const pageStyle = document.createElement('style');
   pageStyle.id = 'flyerPageSizeOverride';
-  pageStyle.textContent = '@media print { @page { size: A5; margin: 0; } }';
+  pageStyle.textContent = '@media print { @page { size: A4; margin: 0; } }';
   document.head.appendChild(pageStyle);
   const cleanup = () => { pageStyle.remove(); window.removeEventListener('afterprint', cleanup); };
   window.addEventListener('afterprint', cleanup);
 
   window.print();
-}
-
-// A plain reveal toggle for a contact-address list - real addresses shown as plain, selectable
-// text only once clicked (not always-visible), same interaction concept as the building row's
-// own ▸/▾ expand/collapse toggle. Used both here (tenant-scoped "Send via email") and in
-// renderWholeBuildingLinkHtml below (the new "Email flyer"). No app-level state needed - the
-// button's own click handler toggles the adjacent .addresses-reveal span directly (see the
-// show-addresses-btn branch further down), same "swap text, nothing else to track" convention
-// already used by .send-email-btn's own loading states.
-function renderAddressesToggleHtml(emails){
-  return `
-    <span class="addresses-toggle">
-      <button class="btn secondary show-addresses-btn" data-addresses="${esc(emails.join(', '))}">Show addresses</button>
-      <span class="addresses-reveal" hidden></span>
-    </span>`;
 }
 
 // Tenant-scoped and/or time-limited link generator ("Generate tenant link" - renamed from
@@ -3119,6 +3111,9 @@ function renderAddressesToggleHtml(emails){
 // alternative this form used to also be able to produce via its now-removed "Whole building (no
 // tenant lock)" option). Generating always creates a new links doc; "Revoke" is a soft edit
 // (expiresAt set to now), never a delete, so a revoked link's record stays fully inspectable.
+// "Show addresses" was removed (follow-up fix #2) - the recipient list now shows up inside the
+// confirm-before-send dialog itself, right when it's actually relevant, instead of behind a
+// separate always-there disclosure toggle.
 function renderDistributionLinksHtml(b){
   const activeLinksHtml = b.links.length
     ? b.links.map(l => {
@@ -3141,8 +3136,7 @@ function renderDistributionLinksHtml(b){
           <li data-link-id="${esc(l.id)}">
             <span class="tenant-name">${scopeText} - <span class="block-sub">${expiryText}</span></span>
             <button class="btn secondary copy-link-btn" data-link="${linkUrl}">Copy link</button>
-            ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-building-name="${esc(b.name)}" data-program-name="${esc(currentProgram.name)}" data-link="${esc(linkUrl)}">Send via email</button>
-            ${renderAddressesToggleHtml(contactEmails)}` : ''}
+            ${emailsCsv ? `<button class="btn secondary send-email-btn" data-emails="${esc(emailsCsv)}" data-building-name="${esc(b.name)}" data-program-name="${esc(currentProgram.name)}" data-link="${esc(linkUrl)}">Send via email</button>` : ''}
             <button class="btn secondary revoke-link-btn danger-btn">Revoke</button>
           </li>`;
       }).join('')
@@ -3162,8 +3156,12 @@ function renderDistributionLinksHtml(b){
           <input type="date" class="new-link-expiry">
         </label>
       </div>
-      <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
+      <div class="print-row" style="justify-content:flex-start; margin-top:10px; align-items:center;">
         <button class="btn secondary generate-link-btn">+ Generate link</button>
+        <button class="btn secondary send-all-tenants-btn">Send to all tenants</button>
+        <label class="filter-field filter-field-date"><span>Expires</span>
+          <input type="date" class="bulk-send-expiry" title="Optional - applies to every link generated by 'Send to all tenants'">
+        </label>
       </div>
       <p class="block-sub generate-link-status" style="margin-top:8px;"></p>
       <ul class="tenant-list">${activeLinksHtml}</ul>
@@ -3175,34 +3173,40 @@ function renderDistributionLinksHtml(b){
 // mirrors admin-buildings.html's own tenant edit-in-place convention (a view row with a "Change"/
 // "Edit" button, swapped for an editable row with Save/Cancel). Lives on the enrollment doc
 // itself (see loadDistributionData's own comment on why), a real date picker (left empty = never
-// expires), not the old preset Never/1/7/30-day dropdown.
-function renderWholeBuildingExpiryHtml(b){
-  if (editingExpiryBuildingId === b.id){
-    const dateValue = b.expiresAtMs ? new Date(b.expiresAtMs).toISOString().slice(0, 10) : '';
-    return `
-      <div class="building-edit-row expiry-edit-row">
-        <label class="filter-field filter-field-date"><span>Expires</span>
-          <input type="date" class="whole-building-expiry-input" value="${dateValue}">
-        </label>
-        <button class="btn save-expiry-btn">Save</button>
-        <button class="btn secondary cancel-expiry-btn">Cancel</button>
-      </div>`;
-  }
+// expires), not the old preset Never/1/7/30-day dropdown. Split into two renderers (follow-up fix
+// #2): the edit-state stays its own standalone row; the view-state is now a bare fragment (no
+// wrapping <p>, which used to inherit the browser's default paragraph font-size/margin instead
+// of this app's own row-text scale) meant to be interpolated INSIDE the shared action row in
+// renderWholeBuildingLinkHtml below, not rendered as a separate line above it.
+function renderWholeBuildingExpiryEditHtml(b){
+  const dateValue = b.expiresAtMs ? new Date(b.expiresAtMs).toISOString().slice(0, 10) : '';
+  return `
+    <div class="building-edit-row expiry-edit-row">
+      <label class="filter-field filter-field-date"><span>Expires</span>
+        <input type="date" class="whole-building-expiry-input" value="${dateValue}">
+      </label>
+      <button class="btn save-expiry-btn">Save</button>
+      <button class="btn secondary cancel-expiry-btn">Cancel</button>
+    </div>`;
+}
+function renderWholeBuildingExpiryViewHtml(b){
   const expiryText = b.expiresAtMs ? `Expires: ${new Date(b.expiresAtMs).toLocaleDateString('en-GB')}` : 'Expires: Never';
   return `
-    <p class="expiry-status-row">
-      <span>${expiryText}</span>
-      <button class="btn secondary change-expiry-btn">Change</button>
-    </p>`;
+    <span class="expiry-status-text">${expiryText}</span>
+    <button class="btn secondary change-expiry-btn">Change</button>`;
 }
 
-// "Whole-building link" section (Workstream 13 redesign) - the permanent ?b= link, its QR (now
-// a sibling of the link text inside .building-link-row, not a separate element stacked below
-// it, and already shown as plain selectable text - no separate "Copy link" button needed), its
-// own expiry status/editor, then every remaining link-related action in one row: Preview, Print
-// flyer, and (only when this building has saved manager contacts) Email flyer + the Show/Hide
-// addresses toggle.
+// "Whole-building link" section (Workstream 13 redesign, follow-up fix #2) - the permanent ?b=
+// link, its QR (a sibling of the link text inside .building-link-row, not a separate element
+// stacked below it, and already shown as plain selectable text - no separate "Copy link" button
+// needed), then ONE action row holding the expiry status/Change button, Preview, Print flyer, and
+// (only when this building has saved manager contacts) Email flyer - all in one flex row that
+// wraps only by width, matching "Generate tenant link"'s own row-level button treatment exactly
+// (same .btn.secondary class, same compact size). "Show addresses" is gone (see
+// renderDistributionLinksHtml's own note above) - the recipient list now shows up in the
+// confirm-before-send dialog itself.
 function renderWholeBuildingLinkHtml(b, link){
+  const isEditingExpiry = editingExpiryBuildingId === b.id;
   return `
     <div class="report-block whole-building-link-block">
       <p class="generate-link-title"><strong>Whole-building link</strong></p>
@@ -3211,13 +3215,13 @@ function renderWholeBuildingLinkHtml(b, link){
         <div class="building-qr" data-link="${link}"></div>
         <code class="building-link-text">${link}</code>
       </div>
-      ${renderWholeBuildingExpiryHtml(b)}
+      ${isEditingExpiry ? renderWholeBuildingExpiryEditHtml(b) : ''}
       <div class="print-row" style="justify-content:flex-start; margin-top:10px; align-items:center;">
+        ${isEditingExpiry ? '' : renderWholeBuildingExpiryViewHtml(b)}
         <button class="btn secondary preview-link-btn" data-link="${link}">Preview</button>
         <button class="btn secondary print-flyer-btn" data-link="${link}" data-building-name="${esc(b.name)}">Print flyer</button>
-        ${b.managerEmails.length ? `<button class="btn secondary email-flyer-btn" data-building-id="${esc(b.id)}">Email flyer</button>` : ''}
+        ${b.managerEmails.length ? `<button class="btn secondary email-flyer-btn" data-building-id="${esc(b.id)}" data-emails="${esc(b.managerEmails.join(';'))}">Email flyer</button>` : ''}
       </div>
-      ${b.managerEmails.length ? renderAddressesToggleHtml(b.managerEmails) : ''}
     </div>
   `;
 }
@@ -3353,24 +3357,117 @@ document.getElementById('distributionList').addEventListener('click', async (e) 
     return;
   }
 
-  // "Show addresses"/"Hide addresses" - a plain, local reveal toggle (no network call, no app-
-  // level state to track) shared by both places it appears (the whole-building "Email flyer"
-  // action and the tenant-scoped "Send via email" action).
-  const showAddressesBtn = e.target.closest('.show-addresses-btn');
-  if (showAddressesBtn){
-    const revealSpan = showAddressesBtn.closest('.addresses-toggle').querySelector('.addresses-reveal');
-    if (revealSpan.hidden){
-      revealSpan.textContent = showAddressesBtn.dataset.addresses;
-      revealSpan.hidden = false;
-      showAddressesBtn.textContent = 'Hide addresses';
-    } else {
-      revealSpan.hidden = true;
-      revealSpan.textContent = '';
-      showAddressesBtn.textContent = 'Show addresses';
-    }
+  // ---- "Send to all tenants" — bulk-generate + bulk-send (follow-up fix #8) ----
+  const sendAllTenantsBtn = e.target.closest('.send-all-tenants-btn');
+  if (sendAllTenantsBtn){
+    await handleSendToAllTenants(sendAllTenantsBtn);
     return;
   }
 });
+
+// Turns a thrown sendInductionEmail/sendDistributionFlyer error into a short, actionable message
+// (follow-up fix #2, 2026-09-29) - "it has to say why it failed", and where the failure is a
+// missing prerequisite, suggest what to add and how, rather than a single generic string for
+// every failure. Matches against the real, finite set of HttpsError messages these two specific
+// Cloud Functions can actually throw (confirmed by reading every `throw new HttpsError(...)` in
+// functions/index.js) - anything else (e.g. a network/CORS failure, which is what actually
+// happens in this suite's own tests, since they don't start the Functions emulator) falls back to
+// the original generic copy.
+function explainSendFailure(err){
+  const msg = (err && err.message) || '';
+  if (msg.includes('no manager contact emails')){
+    return 'Could not send: this building has no manager contact emails saved yet. Add one in Building managers, then try again.';
+  }
+  if (msg.includes('mail server rejected')){
+    return 'Could not send: the mail server rejected the send. Try again in a moment, or copy the link above and send it yourself.';
+  }
+  if (msg.includes('Too many')){
+    // The rate-limit error's own message is already actionable ("...wait a few minutes and try
+    // again (limit: N per M minutes)") - show it directly rather than wrapping it further.
+    return `Could not send: ${msg}`;
+  }
+  return 'Could not send automatically - copy the link above and send it yourself instead.';
+}
+
+// "Send to all tenants" (follow-up fix #8, 2026-09-29) - the fast version of what an admin can
+// already do one tenant at a time via the tenant dropdown + "+ Generate link" + "Send via email".
+// Every link this writes is an ORDINARY links/{id} doc, identical in shape to the single-tenant
+// generator above - not a separate/parallel link type - so it shows up in "Generate tenant
+// link"'s own list the moment refreshDistributionView() re-fetches, with no new list/UI needed.
+async function handleSendToAllTenants(btn){
+  const block = btn.closest('.generate-link-block');
+  const row = btn.closest('.distribution-building-row');
+  const buildingId = row.dataset.buildingId;
+
+  // Re-fetch fresh rather than reuse whatever was last rendered - this is a consequential bulk
+  // action, so it should act on the current real state, not a possibly-stale snapshot.
+  const buildings = await loadDistributionData();
+  const b = buildings.find((x) => x.id === buildingId);
+  if (!b) { await showAlert('Could not find this building - try refreshing the page.'); return; }
+
+  const alreadyCovered = [];
+  const toSend = [];
+  const toGenerateOnly = [];
+  for (const t of b.tenants) {
+    if (b.links.some((l) => l.tenantId === t.id)) { alreadyCovered.push(t); continue; }
+    if (t.emails && t.emails.length) toSend.push(t); else toGenerateOnly.push(t);
+  }
+
+  if (!toSend.length && !toGenerateOnly.length) {
+    await showAlert('Every active tenant already has a valid link - nothing to generate.');
+    return;
+  }
+
+  const nameList = (tenants) => tenants.map((t) => t.name).join(', ');
+  const summaryParts = [];
+  if (toSend.length) summaryParts.push(`Will generate a link and send it now: ${nameList(toSend)}`);
+  if (toGenerateOnly.length) summaryParts.push(`Will generate a link but NOT send it (no saved email): ${nameList(toGenerateOnly)}`);
+  if (alreadyCovered.length) summaryParts.push(`Will be skipped (already has a valid link): ${nameList(alreadyCovered)}`);
+  const confirmed = await showConfirm(`${summaryParts.join('\n')}\n\nContinue?`);
+  if (!confirmed) return;
+
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+
+  const expiryDate = block.querySelector('.bulk-send-expiry').value;
+  const sendInductionEmail = httpsCallable(functions, 'sendInductionEmail');
+  const sent = [];
+  const failed = [];
+  try {
+    for (const t of [...toSend, ...toGenerateOnly]) {
+      const linkId = crypto.randomUUID();
+      const linkDoc = { programId: currentProgram.id, buildingId, tenantId: t.id, createdAt: serverTimestamp() };
+      if (expiryDate) linkDoc.expiresAt = new Date(`${expiryDate}T23:59:59`);
+      await setDoc(doc(db, 'links', linkId), linkDoc);
+
+      if (t.emails && t.emails.length) {
+        const link = `${pageBaseUrl()}${currentProgram.file}?l=${linkId}`;
+        try {
+          // Sent sequentially, not via Promise.all - a burst of concurrent SMTP connections is
+          // exactly the scaling risk already flagged elsewhere in this project (Point 2's post-
+          // deploy audit), and this bulk action is precisely the scenario that concern was about.
+          await sendInductionEmail({ to: t.emails, buildingName: b.name, programName: currentProgram.name, link });
+          sent.push(t.name);
+        } catch (err) {
+          console.error(`sendInductionEmail failed for tenant ${t.name}:`, err);
+          failed.push(`${t.name} (${explainSendFailure(err)})`);
+        }
+      }
+    }
+  } finally {
+    btn.textContent = original;
+    btn.disabled = false;
+  }
+
+  const resultParts = [];
+  if (sent.length) resultParts.push(`Sent: ${sent.join(', ')}`);
+  if (toGenerateOnly.length) resultParts.push(`Generated, not sent (no saved email): ${nameList(toGenerateOnly)}`);
+  if (failed.length) resultParts.push(`Failed to send: ${failed.join('; ')}`);
+  if (alreadyCovered.length) resultParts.push(`Skipped (already covered): ${nameList(alreadyCovered)}`);
+  await showAlert(resultParts.join('\n'));
+  await refreshDistributionView();
+}
 
 // Shared, stateless — used by Distribution's own Preview/Copy/Send-email buttons. Attached
 // once at document level rather than duplicated per row (same pattern as
@@ -3408,15 +3505,18 @@ document.addEventListener('click', async (e) => {
   }
 
   // Calls the sendInductionEmail Cloud Function (SMTP AUTH against Exchange Online — deployed
-  // and live as of 2026-09-22). "Show addresses" right next to this button stays as the manual
-  // fallback for whenever the automated send fails (network issue, SMTP rejection, etc.).
+  // and live as of 2026-09-22). A confirm-before-send step (follow-up fix #2) shows the real
+  // recipient addresses right when they're actually relevant, replacing the old always-visible
+  // "Show addresses" toggle - clicking Cancel here writes/sends nothing at all.
   const sendEmailBtn = e.target.closest('.send-email-btn');
   if (sendEmailBtn){
+    const to = sendEmailBtn.dataset.emails.split(';').filter(Boolean);
+    const confirmedSend = await showConfirm(`This will be sent to: ${to.join(', ')}. Send it?`);
+    if (!confirmedSend) return;
     const original = sendEmailBtn.textContent;
     sendEmailBtn.disabled = true;
     sendEmailBtn.textContent = 'Sending…';
     try {
-      const to = sendEmailBtn.dataset.emails.split(';').filter(Boolean);
       const sendInductionEmail = httpsCallable(functions, 'sendInductionEmail');
       await sendInductionEmail({
         to,
@@ -3428,7 +3528,7 @@ document.addEventListener('click', async (e) => {
       setTimeout(() => { sendEmailBtn.textContent = original; sendEmailBtn.disabled = false; }, 2500);
     } catch (err){
       console.error('sendInductionEmail failed:', err);
-      await showAlert('Could not send automatically - use "Show addresses" and send it yourself instead.');
+      await showAlert(explainSendFailure(err));
       sendEmailBtn.textContent = original;
       sendEmailBtn.disabled = false;
     }
@@ -3437,12 +3537,16 @@ document.addEventListener('click', async (e) => {
 
   // Calls the new sendDistributionFlyer Cloud Function (Workstream 13, Part 2) - same
   // loading-state convention as "Send via email" above (button text swap, no separate state
-  // variable). Sends to the building's own saved manager contacts (this button only ever renders
-  // when at least one is saved - see renderWholeBuildingLinkHtml), never a client-supplied
-  // address list - the function re-reads both the building's real name and its managerEmails
-  // itself.
+  // variable), and the same confirm-before-send step. Sends to the building's own saved manager
+  // contacts (this button only ever renders when at least one is saved - see
+  // renderWholeBuildingLinkHtml), never a client-supplied address list - the function re-reads
+  // both the building's real name and its managerEmails itself; the confirm dialog's own address
+  // list is just for the admin's benefit, not what's actually sent.
   const emailFlyerBtn = e.target.closest('.email-flyer-btn');
   if (emailFlyerBtn){
+    const flyerTo = emailFlyerBtn.dataset.emails.split(';').filter(Boolean);
+    const confirmedFlyerSend = await showConfirm(`This will be sent to: ${flyerTo.join(', ')}. Send it?`);
+    if (!confirmedFlyerSend) return;
     const original = emailFlyerBtn.textContent;
     emailFlyerBtn.disabled = true;
     emailFlyerBtn.textContent = 'Sending…';
@@ -3457,7 +3561,7 @@ document.addEventListener('click', async (e) => {
       setTimeout(() => { emailFlyerBtn.textContent = original; emailFlyerBtn.disabled = false; }, 2500);
     } catch (err){
       console.error('sendDistributionFlyer failed:', err);
-      await showAlert('Could not send automatically - use "Show addresses" and send it yourself instead.');
+      await showAlert(explainSendFailure(err));
       emailFlyerBtn.textContent = original;
       emailFlyerBtn.disabled = false;
     }
