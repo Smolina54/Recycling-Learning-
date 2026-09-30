@@ -147,8 +147,18 @@
     background:var(--line); padding:3px 9px; border-radius:20px; flex-shrink:0;
   }
   .building-header-actions{display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;}
-  .building-managers-block{margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--line);}
-  .building-managers-block .btn{padding:6px 14px; font-size:12.5px;}
+  /* Follow-up fix (2026-09-30): every distinct function inside an expanded building row (Building
+     managers, Bintracker mapping, Tenants, Add tenant, Export/import) gets its own clearly bordered
+     sub-card instead of just a thin divider line between some of them and nothing at all between
+     others - same nested-report-block-on-report-block pattern already proven to read as visually
+     distinct sections in admin-distribution.html's "Whole-building link"/"Generate tenant link". */
+  .building-sub-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:20px 22px; margin-bottom:16px;
+  }
+  .building-sub-card:last-child{margin-bottom:0;}
+  .building-sub-card > .generate-link-title:first-child{margin-top:0;}
+  .building-sub-card .btn{padding:6px 14px; font-size:12.5px;}
   .managers-saved-note{color:var(--forest-dark); font-size:12.5px; font-weight:500;}
   .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
   .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
@@ -455,6 +465,15 @@ try {
       });
       renderBintrackerSyncBuildingsList();
     };
+    // Same reasoning as __testSetBintrackerSyncResult above, for discoverBintrackerBuildings
+    // (also real-network-only, no Firestore doc to seed instead) - lets
+    // tests/admin-buildings-bintrackersync.test.js drive the "Check for new buildings" review UI
+    // (expand/collapse, tenant checkboxes, editable name, one-click "Add this building") with a
+    // realistic response shape, without a live Bintracker network call.
+    window.__testSetDiscoveredBuildings = (data) => {
+      discoveredBuildings = data || [];
+      renderDiscoveredBuildingsList();
+    };
     // Cross-page links (the settings sidebar) are plain hrefs with no query string — without
     // this, clicking one drops out of ?emulator=1 entirely on the next page (real Firebase, no
     // auto sign-in) instead of staying in the local test session.
@@ -719,9 +738,16 @@ let bintrackerChangeOpenKey = null; // `${buildingId}__${tenantId}` of the tenan
 // ---- Bintracker Sync tab (Workstream 12: building/tenant catalog sync) ----
 // No new Firestore collection backs any of this - discoverBintrackerBuildings/syncBintrackerTenants
 // are both pure read/diff Cloud Functions, so everything here is in-memory only, gone on reload.
-let discoveredBuildingNames = []; // last "Check for new buildings" result
+// Follow-up fix (2026-09-30): each entry is now {name, tenants: [{bintrackerTenantRaw,
+// primaryLocations}]} instead of a bare name string - the server already has each discovered
+// building's own tenant rows in memory (from the same fetch used to discover the building names
+// themselves), so it returns them too, letting the admin pick which tenants to bring in AT THE
+// SAME MOMENT they add the building, in one single action, instead of a separate later
+// "Synchronize" trip to a different tab.
+let discoveredBuildings = []; // last "Check for new buildings" result
 let discoverBuildingsInFlight = false;
-let pendingBintrackerNameForNewBuilding = null; // set by "Add this building" below, read by addBuildingBtn's own handler
+let expandedDiscoveredBuildingNames = new Set(); // keyed by the real Bintracker name (unique per discoverBintrackerBuildings' own dedup)
+let addDiscoveredBuildingInFlight = null; // the Bintracker name currently mid "Add this building"
 let bintrackerSyncInFlightBuildingId = null; // building whose "Synchronize" call is in flight
 // buildingId -> { newTenants, missingTenants, levelMismatches, dateRange } - each item also carries
 // local-only UI state (selected/dismissed/imported/updated/deleted/deleteConfirmOpen/deleteTypedName)
@@ -771,7 +797,7 @@ function isBuildingExpanded(b){
 // otherwise has no single obvious contact to send that kind of link to.
 function renderBuildingManagersHtml(b){
   return `
-    <div class="building-managers-block">
+    <div class="building-sub-card">
       <p class="generate-link-title"><strong>Building managers</strong></p>
       <p class="block-sub">Contacts for this building itself, not tied to any one tenant - used when sending a whole-building induction link via email.</p>
       ${renderEmailsEditorHtml(b.managerEmails, 'building-managers-emails-editor')}
@@ -790,7 +816,7 @@ function renderBintrackerMappingHtml(b){
   const isRefreshing = refreshingBintrackerBuildingId === b.id;
   const counts = lastBintrackerRefreshCountsByBuildingId.get(b.id);
   return `
-    <div class="building-managers-block">
+    <div class="building-sub-card">
       <p class="generate-link-title"><strong>Bintracker mapping</strong></p>
       <p class="block-sub">Must match this building's name exactly as registered in Bintracker. Leave blank if this building isn't tracked in Bintracker.</p>
       <div class="filter-row">
@@ -995,8 +1021,12 @@ function renderBuildingsList(buildings){
       ${headerHtml}
       ${renderBuildingManagersHtml(b)}
       ${renderBintrackerMappingHtml(b)}
-      <ul class="tenant-list">${tenantsHtml}</ul>
-      <p class="block-sub contacts-coverage-note">${withEmail} of ${b.tenants.length} tenants have a contact email saved.</p>
+      <div class="building-sub-card">
+        <p class="generate-link-title"><strong>Tenants</strong></p>
+        <ul class="tenant-list">${tenantsHtml}</ul>
+        <p class="block-sub contacts-coverage-note">${withEmail} of ${b.tenants.length} tenants have a contact email saved.</p>
+      </div>
+      <div class="building-sub-card">
       <p class="generate-link-title"><strong>Add tenant</strong></p>
       <p class="block-sub">Add a new tenant to this building - its name, the level(s) it occupies, and an optional contact email for sending induction links later.</p>
       <div class="filter-row">
@@ -1012,6 +1042,8 @@ function renderBuildingsList(buildings){
         </label>
       </div>
       <div class="import-review" style="display:none;"></div>
+      </div>
+      <div class="building-sub-card">
       <p class="generate-link-title"><strong>Export or import tenant contacts</strong></p>
       <p class="block-sub">Download a spreadsheet pre-filled with every tenant's name and saved email(s) - edit it and re-upload to update contact emails in bulk, instead of one tenant at a time.</p>
       <div class="print-row" style="justify-content:flex-start; margin-top:10px;">
@@ -1022,6 +1054,7 @@ function renderBuildingsList(buildings){
         </label>
       </div>
       <div class="import-contacts-review" style="display:none;"></div>
+      </div>
     </div>
   `;
   }).join('');
@@ -1077,22 +1110,58 @@ function renderArchivedBuildingsList(buildings){
 }
 
 // ---------------- Bintracker Sync tab (Workstream 12) ----------------
+// Follow-up fix (2026-09-30): each discovered building is now its own expandable ▸/▾ row (same
+// accordion pattern as the main Buildings list), showing its own tenants (with checkboxes to pick
+// which to bring in) and an editable "app name" field - all in clearly separated sub-cards so this
+// doesn't read as one undifferentiated block. Clicking "Add this building" creates the building
+// AND its checked tenants in one action, with no further tab-switching or confirmation needed.
 function renderDiscoveredBuildingsList(){
   const container = document.getElementById('discoveredBuildingsList');
-  if (!discoveredBuildingNames.length){
+  if (!discoveredBuildings.length){
     container.innerHTML = '';
     return;
   }
   container.innerHTML = `
     <ul class="tenant-list">
-      ${discoveredBuildingNames.map(name => `
-        <li>
-          <span class="tenant-name">${esc(name)}</span>
-          <span class="tenant-row-actions">
-            <button type="button" class="btn secondary add-discovered-building-btn" data-name="${esc(name)}">Add this building</button>
-          </span>
-        </li>
-      `).join('')}
+      ${discoveredBuildings.map(b => {
+        const isExpanded = expandedDiscoveredBuildingNames.has(b.name);
+        const isAdding = addDiscoveredBuildingInFlight === b.name;
+        return `
+        <li class="discovered-building-row" data-bintracker-name="${esc(b.name)}">
+          <div class="building-header-row" style="width:100%;">
+            <button type="button" class="building-toggle-btn" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
+            <span class="tenant-name">${esc(b.name)}</span>
+            <span class="building-tenant-count">${b.tenants.length} tenant${b.tenants.length === 1 ? '' : 's'} found</span>
+          </div>
+          ${isExpanded ? `
+            <div class="building-sub-card">
+              <p class="generate-link-title"><strong>Name in this app</strong></p>
+              <p class="block-sub">Only affects how WE display this building - it stays linked to Bintracker's own record ("${esc(b.name)}") no matter what you call it here.</p>
+              <input type="text" class="discovered-building-name-input filter-field" value="${esc(b.name)}">
+            </div>
+            <div class="building-sub-card">
+              <p class="generate-link-title"><strong>Tenants found</strong></p>
+              <p class="block-sub">Pick which ones to bring in now - you can always add the rest later from the Buildings tab.</p>
+              ${b.tenants.length ? `
+                <ul class="tenant-list">
+                  ${b.tenants.map((t, ti) => `
+                    <li>
+                      <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                        <input type="checkbox" class="discovered-tenant-checkbox" data-tenant-index="${ti}" checked>
+                        <span class="tenant-name">${esc(t.bintrackerTenantRaw)}</span>
+                        <span class="tenant-levels">${esc((t.primaryLocations || []).join(', '))}</span>
+                      </label>
+                    </li>
+                  `).join('')}
+                </ul>
+              ` : '<p class="block-sub">No tenants found for this building in the last 30 days.</p>'}
+            </div>
+            <div class="print-row" style="justify-content:flex-start;">
+              <button type="button" class="btn add-discovered-building-btn"${isAdding ? ' disabled' : ''}>${isAdding ? 'Adding…' : 'Add this building'}</button>
+            </div>
+          ` : ''}
+        </li>`;
+      }).join('')}
     </ul>`;
 }
 
@@ -1355,14 +1424,11 @@ document.getElementById('addBuildingBtn').addEventListener('click', async () => 
   if (!name){ status.textContent = 'Enter a building name first.'; return; }
   status.textContent = 'Adding…';
   try {
-    const buildingData = { name };
-    // Workstream 12: "Add this building" on the Bintracker Sync tab pre-fills this same input
-    // with a discovered Bintracker building name and sets this flag - only actually applies the
-    // mapping if the name still matches exactly what was pre-filled (the admin may have edited it
-    // before submitting, in which case assuming it's still the same Bintracker building would be wrong).
-    const applyPendingBintrackerName = pendingBintrackerNameForNewBuilding && pendingBintrackerNameForNewBuilding === name;
-    if (applyPendingBintrackerName) buildingData.bintrackerBuildingName = name;
-    const newBuildingId = await generateUniqueSlugAndCreate('buildings', name, buildingData);
+    // Bintracker-discovered buildings no longer flow through this form at all (follow-up fix,
+    // 2026-09-30) - "Add this building" in the Bintracker Sync tab now creates the building AND
+    // its mapping AND its checked tenants directly, in one action, without ever touching this
+    // plain name-only form.
+    const newBuildingId = await generateUniqueSlugAndCreate('buildings', name, { name });
     // Every building does Recycling by default, same as before programs existed — so a new
     // building is auto-enrolled here rather than requiring a manual step every single time.
     await setDoc(doc(db, 'enrollments', `recycling-sorting__${newBuildingId}`), {
@@ -1370,10 +1436,7 @@ document.getElementById('addBuildingBtn').addEventListener('click', async () => 
       createdAt: serverTimestamp(),
     });
     nameInput.value = '';
-    pendingBintrackerNameForNewBuilding = null;
-    status.textContent = applyPendingBintrackerName
-      ? `Added "${name}" and mapped it to Bintracker.`
-      : `Added "${name}".`;
+    status.textContent = `Added "${name}".`;
     expandedBuildingIds.add(newBuildingId); // open it up right away — you almost always want to add tenants next
     await loadMasterBuildings();
   } catch (err){
@@ -1413,9 +1476,9 @@ document.getElementById('discoverBuildingsBtn').addEventListener('click', async 
   try {
     const discoverBintrackerBuildings = httpsCallable(functions, 'discoverBintrackerBuildings', { timeout: 300000 });
     const result = await discoverBintrackerBuildings({});
-    discoveredBuildingNames = (result.data && result.data.discoveredBuildingNames) || [];
-    status.textContent = discoveredBuildingNames.length
-      ? `Found ${discoveredBuildingNames.length} building name${discoveredBuildingNames.length === 1 ? '' : 's'} not yet mapped.`
+    discoveredBuildings = (result.data && result.data.discoveredBuildings) || [];
+    status.textContent = discoveredBuildings.length
+      ? `Found ${discoveredBuildings.length} building name${discoveredBuildings.length === 1 ? '' : 's'} not yet mapped.`
       : 'No new buildings found - every Bintracker building name is already mapped.';
   } catch (err){
     console.error('Failed to check for new Bintracker buildings:', err);
@@ -1428,16 +1491,66 @@ document.getElementById('discoverBuildingsBtn').addEventListener('click', async 
   }
 });
 
-document.getElementById('discoveredBuildingsList').addEventListener('click', (e) => {
+document.getElementById('discoveredBuildingsList').addEventListener('click', async (e) => {
+  const toggleBtn = e.target.closest('.building-toggle-btn');
+  if (toggleBtn){
+    const name = toggleBtn.closest('.discovered-building-row').dataset.bintrackerName;
+    if (expandedDiscoveredBuildingNames.has(name)) expandedDiscoveredBuildingNames.delete(name);
+    else expandedDiscoveredBuildingNames.add(name);
+    renderDiscoveredBuildingsList();
+    return;
+  }
+
+  // Follow-up fix (2026-09-30): creates the building AND its checked tenants in one action, right
+  // here in the Bintracker Sync tab - no tab-switching, no second confirmation. bintrackerBuildingName
+  // is always the ORIGINAL discovered name (never the edited display name below), so the mapping
+  // stays correct regardless of what the admin renames this building to for our own display.
   const addBtn = e.target.closest('.add-discovered-building-btn');
-  if (!addBtn) return;
-  const name = addBtn.dataset.name;
-  pendingBintrackerNameForNewBuilding = name;
-  showBuildingsTab('active');
-  const nameInput = document.getElementById('newBuildingName');
-  nameInput.value = name;
-  nameInput.focus();
-  document.getElementById('buildingsStatus').textContent = `Ready to add "${name}" - click "+ Add building" to create it and map it to Bintracker.`;
+  if (addBtn){
+    const row = addBtn.closest('.discovered-building-row');
+    const bintrackerName = row.dataset.bintrackerName;
+    const b = discoveredBuildings.find(x => x.name === bintrackerName);
+    if (!b || addDiscoveredBuildingInFlight) return;
+    const displayName = (row.querySelector('.discovered-building-name-input').value || '').trim() || bintrackerName;
+    const checkedIndices = [...row.querySelectorAll('.discovered-tenant-checkbox:checked')].map(cb => Number(cb.dataset.tenantIndex));
+    addDiscoveredBuildingInFlight = bintrackerName;
+    renderDiscoveredBuildingsList();
+    try {
+      const newBuildingId = await generateUniqueSlugAndCreate('buildings', displayName, {
+        name: displayName, bintrackerBuildingName: bintrackerName,
+      });
+      await setDoc(doc(db, 'enrollments', `recycling-sorting__${newBuildingId}`), {
+        programId: 'recycling-sorting', buildingId: newBuildingId, itemOverrides: {}, enabledTenantIds: null,
+        createdAt: serverTimestamp(),
+      });
+      if (checkedIndices.length){
+        const batch = writeBatch(db);
+        checkedIndices.forEach(i => {
+          const t = b.tenants[i];
+          if (!t) return;
+          batch.set(doc(db, 'buildings', newBuildingId, 'tenants', crypto.randomUUID()), {
+            name: t.bintrackerTenantRaw, levels: t.primaryLocations || [],
+          });
+        });
+        await batch.commit();
+      }
+      discoveredBuildings = discoveredBuildings.filter(x => x.name !== bintrackerName);
+      expandedDiscoveredBuildingNames.delete(bintrackerName);
+      document.getElementById('discoverBuildingsStatus').textContent =
+        `Added "${displayName}" with ${checkedIndices.length} tenant${checkedIndices.length === 1 ? '' : 's'}.`;
+      // Render the discovered-buildings list's own removal right away - it doesn't need to wait
+      // on loadMasterBuildings() below (a separate, slower refresh of the OTHER list on the
+      // Buildings tab), and coupling the two made this row's removal feel laggy/racy.
+      renderDiscoveredBuildingsList();
+      await loadMasterBuildings();
+    } catch (err){
+      console.error('Failed to add discovered building:', err);
+      await showAlert('Failed to add this building - check the console for details.');
+    } finally {
+      addDiscoveredBuildingInFlight = null;
+      renderDiscoveredBuildingsList();
+    }
+  }
 });
 
 document.getElementById('bintrackerSyncBuildingsList').addEventListener('click', async (e) => {
@@ -1757,7 +1870,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
   const saveManagersBtn = e.target.closest('.save-managers-btn');
   if (saveManagersBtn){
     const buildingId = saveManagersBtn.closest('.building-row').dataset.buildingId;
-    const editorEl = saveManagersBtn.closest('.building-managers-block').querySelector('.building-managers-emails-editor');
+    const editorEl = saveManagersBtn.closest('.building-sub-card').querySelector('.building-managers-emails-editor');
     const newEmails = readEmailsFromEditor(editorEl);
     const badEmail = newEmails.find(addr => !isValidEmail(addr));
     if (badEmail){ await showAlert(`"${badEmail}" doesn't look like a valid email address.`); return; }
@@ -1781,7 +1894,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
   const saveBintrackerMappingBtn = e.target.closest('.save-bintracker-mapping-btn');
   if (saveBintrackerMappingBtn){
     const buildingId = saveBintrackerMappingBtn.closest('.building-row').dataset.buildingId;
-    const inputEl = saveBintrackerMappingBtn.closest('.building-managers-block').querySelector('.bintracker-mapping-input');
+    const inputEl = saveBintrackerMappingBtn.closest('.building-sub-card').querySelector('.bintracker-mapping-input');
     const newValue = inputEl.value.trim();
     try {
       await updateDoc(doc(db, 'buildings', buildingId), { bintrackerBuildingName: newValue });
@@ -2191,9 +2304,10 @@ if (auth){
       bintrackerLoadedForBuildingId.clear();
       bintrackerChangeOpenKey = null;
       refreshingBintrackerBuildingId = null;
-      discoveredBuildingNames = [];
+      discoveredBuildings = [];
       discoverBuildingsInFlight = false;
-      pendingBintrackerNameForNewBuilding = null;
+      expandedDiscoveredBuildingNames.clear();
+      addDiscoveredBuildingInFlight = null;
       bintrackerSyncInFlightBuildingId = null;
       bintrackerSyncResultsByBuildingId.clear();
       document.getElementById('discoveredBuildingsList').innerHTML = '';

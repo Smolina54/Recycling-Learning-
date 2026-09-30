@@ -262,10 +262,11 @@ async function runFlow(page){
   check('The A4 @page override is removed again after printing', pageStyleAfterPrint === null);
 
   // --- Whole-building link expiry: view/edit-in-place with a real date picker (Workstream 13,
-  // follow-up fix #2 - the view-state text is now a plain <span class="expiry-status-text">
-  // living inside the shared .print-row action row, not a standalone wrapping <p>) ---
+  // follow-up fix #2 revised again same day - the view/Change button and the status text are now
+  // ONE single button showing "Expires: ..." as its own label - clicking it directly opens the
+  // editor, no separate "Change" button beside a plain status span anymore) ---
   check('the whole-building link shows "Expires: Never" by default (no expiresAt saved yet)',
-    (await page.$eval(`${distributionSelector} .expiry-status-text`, el => el.textContent)).includes('Expires: Never'));
+    (await page.$eval(`${distributionSelector} .change-expiry-btn`, el => el.textContent)).includes('Expires: Never'));
   check('the expiry field is a real <input type=date>, not the old Never/1/7/30-day preset dropdown',
     (await page.$eval(`${distributionSelector} .generate-link-block .new-link-expiry`, el => el.tagName + ':' + el.type)) === 'INPUT:date');
 
@@ -275,8 +276,8 @@ async function runFlow(page){
   await page.evaluate((sel, val) => { document.querySelector(sel).value = val; },
     `${distributionSelector} .whole-building-expiry-input`, futureDate);
   await page.click(`${distributionSelector} .save-expiry-btn`);
-  await page.waitForSelector(`${distributionSelector} .expiry-status-text`);
-  const expiryTextAfterSave = await page.$eval(`${distributionSelector} .expiry-status-text`, el => el.textContent);
+  await page.waitForSelector(`${distributionSelector} .change-expiry-btn`);
+  const expiryTextAfterSave = await page.$eval(`${distributionSelector} .change-expiry-btn`, el => el.textContent);
   check('saving a future expiry date shows it back (view state, not "Never")',
     !expiryTextAfterSave.includes('Never') && expiryTextAfterSave.includes('Expires:'), expiryTextAfterSave);
 
@@ -285,8 +286,8 @@ async function runFlow(page){
   await page.waitForSelector(`${distributionSelector} .whole-building-expiry-input`);
   await page.evaluate((sel) => { document.querySelector(sel).value = ''; }, `${distributionSelector} .whole-building-expiry-input`);
   await page.click(`${distributionSelector} .cancel-expiry-btn`);
-  await page.waitForSelector(`${distributionSelector} .expiry-status-text`);
-  const expiryTextAfterCancel = await page.$eval(`${distributionSelector} .expiry-status-text`, el => el.textContent);
+  await page.waitForSelector(`${distributionSelector} .change-expiry-btn`);
+  const expiryTextAfterCancel = await page.$eval(`${distributionSelector} .change-expiry-btn`, el => el.textContent);
   check('Cancel discards the in-progress edit — the previously saved expiry is still shown',
     !expiryTextAfterCancel.includes('Never'), expiryTextAfterCancel);
 
@@ -295,9 +296,9 @@ async function runFlow(page){
   await page.waitForSelector(`${distributionSelector} .whole-building-expiry-input`);
   await page.evaluate((sel) => { document.querySelector(sel).value = ''; }, `${distributionSelector} .whole-building-expiry-input`);
   await page.click(`${distributionSelector} .save-expiry-btn`);
-  await page.waitForSelector(`${distributionSelector} .expiry-status-text`);
+  await page.waitForSelector(`${distributionSelector} .change-expiry-btn`);
   check('saving an empty date clears the expiry back to "Never"',
-    (await page.$eval(`${distributionSelector} .expiry-status-text`, el => el.textContent)).includes('Expires: Never'));
+    (await page.$eval(`${distributionSelector} .change-expiry-btn`, el => el.textContent)).includes('Expires: Never'));
 
   // --- "Email flyer" (Workstream 13, Part 2) - "Show addresses" is gone (follow-up fix #2);
   // the recipient list now shows up in a confirm-before-send dialog instead. ---

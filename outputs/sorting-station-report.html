@@ -2700,7 +2700,7 @@ var qrcode = function() {
     *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
 
     /* header.top (the generic app title/eyebrow/sub) and #programSelectorRow (the induction
-       <select> plus its "Viewing: X" badge) are hidden wholesale rather than picked apart child
+       <select>) are hidden wholesale rather than picked apart child
        by child — .print-header below covers the same ground (induction name + description +
        building/period) once, prominently, as an actual document title instead of leaving the
        generic app chrome duplicating it above. Same reasoning for #filterBlock: once it's
@@ -2802,7 +2802,6 @@ var qrcode = function() {
         <option value="" disabled selected>Select an induction…</option>
       </select>
     </label>
-    <span class="viewing-badge" id="viewingBadge" style="display:none;"></span>
   </div>
   <p class="block-sub" id="pageLoadError" style="display:none;">Something went wrong loading the induction list - try reloading. If it keeps happening, check the browser console for details.</p>
 
@@ -4471,7 +4470,6 @@ function showConfirm(message){
     if (!stillExists){
       currentProgramId = '';
       document.getElementById('programTabs').style.display = 'none';
-      document.getElementById('viewingBadge').style.display = 'none';
     }
   }
 
@@ -4547,7 +4545,6 @@ function showConfirm(message){
     document.getElementById('pageEyebrow').textContent = REPORTS_HEADER.eyebrow;
     document.getElementById('pageHeadline').textContent = REPORTS_HEADER.headline;
     document.getElementById('pageSub').textContent = REPORTS_HEADER.sub;
-    updateViewingBadge();
   }
   document.getElementById('tabReportsBtn').addEventListener('click', showReports);
 
@@ -4566,7 +4563,6 @@ function showConfirm(message){
     setActiveTabButton(activeBtnId);
     document.getElementById('reportSection').style.display = 'none';
     document.getElementById('programTabs').style.display = 'flex';
-    updateViewingBadge();
     const iframe = document.getElementById('adminIframe');
     const wanted = embeddedIframeSrc(page);
     if (adminIframeSrc !== wanted){
@@ -4591,12 +4587,6 @@ function showConfirm(message){
     window.location.href = 'admin-buildings.html' + emulatorSuffix;
   });
 
-  function updateViewingBadge(){
-    const badge = document.getElementById('viewingBadge');
-    badge.textContent = `Viewing: ${currentProgram().name}`;
-    badge.style.display = 'inline-block';
-  }
-
   // Nothing is shown until a real induction is picked — no default selection, no data, per
   // Sergio's explicit correction. The placeholder option has no value, so this only ever
   // fires with a real programId.
@@ -4617,7 +4607,7 @@ function showConfirm(message){
     } else if (activeTab === 'enrolled'){
       showEmbeddedTab('enrolled', 'admin-enrolled-buildings.html', 'tabEnrolledBuildingsBtn');
     } else {
-      // showReports() itself shows #programTabs and calls updateViewingBadge().
+      // showReports() itself shows #programTabs.
       showReports();
       refreshDemoLink(); // no-op if the demo panel isn't open — see its own definition below
       await loadLiveData();
@@ -4721,8 +4711,6 @@ function showConfirm(message){
         document.getElementById('programTabs').style.display = 'none';
         document.getElementById('programSelectorRow').style.display = 'none';
         document.getElementById('programSelector').innerHTML = '';
-        document.getElementById('viewingBadge').style.display = 'none';
-        document.getElementById('viewingBadge').textContent = '';
         document.getElementById('pageLoadError').style.display = 'none';
         currentProgramId = '';
         // Otherwise currentProgram() (which falls back to programsCache[0] whenever

@@ -500,7 +500,7 @@
       </label>
       <button class="btn" type="submit">Continue</button>
     </form>
-    <p class="hero-sub" style="font-size:12px; opacity:.7; margin-top:16px;"><strong>How we use your data:</strong> Your name and email are used only for this induction - to confirm your training completion for your building, tenant, and level, and to let your building's training coordinator see who has completed it. They're never used for anything else, and never shared with any third party.</p>
+    <p class="hero-sub" style="font-size:12px; opacity:.7; margin-top:16px;"><strong>How we use your data:</strong> Your name and email are used only for this induction. They're used to confirm your training completion for your building, tenant, and level, and to let your building's training coordinator see who has completed it. They're never used for anything else, and never shared with any third party.</p>
   </div>
 </section>
 
@@ -738,12 +738,19 @@
       <div class="detail-nav"><span></span><button class="btn" id="toGameBtn">Take the sorting challenge</button></div>
     </div>
 
+    <!-- Follow-up fix (2026-09-30): moved inside #detailSection's own .wrap, right after the last
+         panel - it's a SINGLE shared element (only one .detail-panel is ever visible at a time,
+         via JS/CSS toggling), so this still renders directly under whichever panel is showing.
+         Previously it lived as the first child of #gameSection/.quiz-section instead, which adds
+         its own 90px of padding/margin plus a divider line before ANY content inside it - on
+         mobile that made this text feel like it was in a completely different, much lower section
+         than the "Next" button the trainee just read, instead of reading as the next line right
+         below it. -->
+    <p class="review-progress-note" id="reviewProgressNote"></p>
   </div>
 </section>
 
 <section class="quiz-section wrap" id="gameSection">
-
-  <p class="review-progress-note" id="reviewProgressNote"></p>
 
   <div class="quiz-intro" id="gameIntro" style="display:none;">
     <p class="eyebrow">Knowledge Check</p>

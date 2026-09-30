@@ -523,12 +523,12 @@ async function runFlow(page){
   // dispatches a 'change' event — #settingsBtn being visible (set synchronously, earlier in the
   // same handler) doesn't mean that's finished yet.
   await page.waitForFunction(
-    (name) => document.getElementById('viewingBadge')?.textContent === `Viewing: ${name}`,
+    (name) => document.getElementById('programSelector')?.options[document.getElementById('programSelector').selectedIndex]?.textContent === name,
     { timeout: 10000 },
     programName
   ).catch(() => {});
-  check('...and lands back on the same induction (Viewing badge names it)',
-    (await page.$eval('#viewingBadge', el => el.textContent)) === `Viewing: ${programName}`);
+  check('...and lands back on the same induction (selector names it)',
+    (await page.$eval('#programSelector', el => el.options[el.selectedIndex].textContent)) === programName);
 
   await page.goto(enrolledUrl('recycling-sorting'), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(

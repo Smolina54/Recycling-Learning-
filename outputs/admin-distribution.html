@@ -2457,14 +2457,6 @@ var qrcode = function() {
      text's own overflow-x:auto when space is tight. */
   .building-qr{width:120px; height:120px; flex-shrink:0;}
   .building-qr svg{width:100%; height:100%;}
-  /* The expiry status text used to be a bare <p> (.expiry-status-row) with no font-size of its
-     own - it inherited the browser's default paragraph size (16px) plus the default paragraph
-     margin, both visibly out of proportion next to the buttons beside it (follow-up fix #2,
-     2026-09-29). It's now a plain <span> living directly inside the shared .print-row action row
-     (renderWholeBuildingExpiryViewHtml), so it just needs its own font-size matching this app's
-     established row-text scale - no margin reset needed, a <span> never had the UA paragraph
-     margin problem in the first place. */
-  .expiry-status-text{font-family:var(--body); font-size:13.5px; color:var(--ink);}
 
   /* ---------- Printable Distribution QR flyer (physical building signage) ----------
      Sits as a direct child of <body> (see the markup near the end of this file), hidden on
@@ -2754,7 +2746,7 @@ var qrcode = function() {
     *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
 
     /* header.top (the generic app title/eyebrow/sub) and #programSelectorRow (the induction
-       <select> plus its "Viewing: X" badge) are hidden wholesale rather than picked apart child
+       <select>) are hidden wholesale rather than picked apart child
        by child — .print-header below covers the same ground (induction name + description +
        building/period) once, prominently, as an actual document title instead of leaving the
        generic app chrome duplicating it above. Same reasoning for #filterBlock: once it's
@@ -2946,9 +2938,20 @@ const appModalMessage = document.getElementById('appModalMessage');
 const appModalActions = document.getElementById('appModalActions');
 let closeAppModal = null;
 
+// `message` is normally a plain string (rendered via textContent, unchanged - every existing
+// call site keeps working exactly as before, with no new escaping risk). Follow-up fix (2026-09-
+// 30): pass an ARRAY of `{text, bold?}` segments instead when a message needs real visual
+// hierarchy (e.g. "This will be sent to:" bold, the recipient list plain, "Send it?" bold) - each
+// segment's text is escaped here, inside this one trusted function, never left to the caller, so
+// this stays exactly as safe against XSS as the plain-string path (a tenant/building name is
+// still just data, never markup, even in the array form).
 function openAppModal(message, buttons){
   return new Promise(resolve => {
-    appModalMessage.textContent = message;
+    if (Array.isArray(message)){
+      appModalMessage.innerHTML = message.map(seg => seg.bold ? `<strong>${esc(seg.text)}</strong>` : esc(seg.text)).join('');
+    } else {
+      appModalMessage.textContent = message;
+    }
     appModalActions.innerHTML = '';
     closeAppModal = (value) => {
       appModalOverlay.classList.remove('open');
@@ -3156,7 +3159,7 @@ function renderDistributionLinksHtml(b){
           <input type="date" class="new-link-expiry">
         </label>
       </div>
-      <div class="print-row" style="justify-content:flex-start; margin-top:10px; align-items:center;">
+      <div class="print-row" style="justify-content:flex-start; margin-top:10px; align-items:flex-end;">
         <button class="btn secondary generate-link-btn">+ Generate link</button>
         <button class="btn secondary send-all-tenants-btn">Send to all tenants</button>
         <label class="filter-field filter-field-date"><span>Expires</span>
@@ -3191,9 +3194,7 @@ function renderWholeBuildingExpiryEditHtml(b){
 }
 function renderWholeBuildingExpiryViewHtml(b){
   const expiryText = b.expiresAtMs ? `Expires: ${new Date(b.expiresAtMs).toLocaleDateString('en-GB')}` : 'Expires: Never';
-  return `
-    <span class="expiry-status-text">${expiryText}</span>
-    <button class="btn secondary change-expiry-btn">Change</button>`;
+  return `<button class="btn secondary change-expiry-btn">${expiryText}</button>`;
 }
 
 // "Whole-building link" section (Workstream 13 redesign, follow-up fix #2) - the permanent ?b=
@@ -3389,6 +3390,29 @@ function explainSendFailure(err){
   return 'Could not send automatically - copy the link above and send it yourself instead.';
 }
 
+// Renders a list of items as one per line (with a leading dash), for the app's own plain-text
+// confirm/alert modal - the user's own explicit direction: a comma-separated run-on sentence is
+// harder to scan than a real list, even though the modal itself only ever renders plain text
+// (white-space:pre-wrap), so "list format" here means one line per item, not real <li> markup.
+function formatList(items){
+  return items.map((i) => `- ${i}`).join('\n');
+}
+
+// Builds an openAppModal segment array from {label, list} groups, each rendered as a bold label
+// line followed by its plain list, with a blank line between groups - and an optional bold
+// trailing line (e.g. "Continue?"), for the modal messages that need real visual hierarchy
+// between the enunciate/question and the plain data (2026-09-30).
+function buildModalSegments(groups, trailing){
+  const segs = [];
+  groups.forEach((g, i) => {
+    if (i > 0) segs.push({ text: '\n\n' });
+    segs.push({ text: g.label, bold: true });
+    segs.push({ text: `\n${g.list}` });
+  });
+  if (trailing) segs.push({ text: `\n\n${trailing}`, bold: true });
+  return segs;
+}
+
 // "Send to all tenants" (follow-up fix #8, 2026-09-29) - the fast version of what an admin can
 // already do one tenant at a time via the tenant dropdown + "+ Generate link" + "Send via email".
 // Every link this writes is an ORDINARY links/{id} doc, identical in shape to the single-tenant
@@ -3418,12 +3442,12 @@ async function handleSendToAllTenants(btn){
     return;
   }
 
-  const nameList = (tenants) => tenants.map((t) => t.name).join(', ');
-  const summaryParts = [];
-  if (toSend.length) summaryParts.push(`Will generate a link and send it now: ${nameList(toSend)}`);
-  if (toGenerateOnly.length) summaryParts.push(`Will generate a link but NOT send it (no saved email): ${nameList(toGenerateOnly)}`);
-  if (alreadyCovered.length) summaryParts.push(`Will be skipped (already has a valid link): ${nameList(alreadyCovered)}`);
-  const confirmed = await showConfirm(`${summaryParts.join('\n')}\n\nContinue?`);
+  const nameList = (tenants) => formatList(tenants.map((t) => t.name));
+  const confirmGroups = [];
+  if (toSend.length) confirmGroups.push({ label: 'Will generate a link and send it now:', list: nameList(toSend) });
+  if (toGenerateOnly.length) confirmGroups.push({ label: 'Will generate a link but NOT send it (no saved email):', list: nameList(toGenerateOnly) });
+  if (alreadyCovered.length) confirmGroups.push({ label: 'Will be skipped (already has a valid link):', list: nameList(alreadyCovered) });
+  const confirmed = await showConfirm(buildModalSegments(confirmGroups, 'Continue?'));
   if (!confirmed) return;
 
   const original = btn.textContent;
@@ -3460,12 +3484,12 @@ async function handleSendToAllTenants(btn){
     btn.disabled = false;
   }
 
-  const resultParts = [];
-  if (sent.length) resultParts.push(`Sent: ${sent.join(', ')}`);
-  if (toGenerateOnly.length) resultParts.push(`Generated, not sent (no saved email): ${nameList(toGenerateOnly)}`);
-  if (failed.length) resultParts.push(`Failed to send: ${failed.join('; ')}`);
-  if (alreadyCovered.length) resultParts.push(`Skipped (already covered): ${nameList(alreadyCovered)}`);
-  await showAlert(resultParts.join('\n'));
+  const resultGroups = [];
+  if (sent.length) resultGroups.push({ label: 'Sent:', list: formatList(sent) });
+  if (toGenerateOnly.length) resultGroups.push({ label: 'Generated, not sent (no saved email):', list: nameList(toGenerateOnly) });
+  if (failed.length) resultGroups.push({ label: 'Failed to send:', list: formatList(failed) });
+  if (alreadyCovered.length) resultGroups.push({ label: 'Skipped (already covered):', list: nameList(alreadyCovered) });
+  await showAlert(buildModalSegments(resultGroups));
   await refreshDistributionView();
 }
 
@@ -3511,7 +3535,11 @@ document.addEventListener('click', async (e) => {
   const sendEmailBtn = e.target.closest('.send-email-btn');
   if (sendEmailBtn){
     const to = sendEmailBtn.dataset.emails.split(';').filter(Boolean);
-    const confirmedSend = await showConfirm(`This will be sent to: ${to.join(', ')}. Send it?`);
+    const confirmedSend = await showConfirm([
+      { text: 'This will be sent to:', bold: true },
+      { text: `\n${formatList(to)}\n\n` },
+      { text: 'Send it?', bold: true },
+    ]);
     if (!confirmedSend) return;
     const original = sendEmailBtn.textContent;
     sendEmailBtn.disabled = true;
@@ -3545,7 +3573,11 @@ document.addEventListener('click', async (e) => {
   const emailFlyerBtn = e.target.closest('.email-flyer-btn');
   if (emailFlyerBtn){
     const flyerTo = emailFlyerBtn.dataset.emails.split(';').filter(Boolean);
-    const confirmedFlyerSend = await showConfirm(`This will be sent to: ${flyerTo.join(', ')}. Send it?`);
+    const confirmedFlyerSend = await showConfirm([
+      { text: 'This will be sent to:', bold: true },
+      { text: `\n${formatList(flyerTo)}\n\n` },
+      { text: 'Send it?', bold: true },
+    ]);
     if (!confirmedFlyerSend) return;
     const original = emailFlyerBtn.textContent;
     emailFlyerBtn.disabled = true;

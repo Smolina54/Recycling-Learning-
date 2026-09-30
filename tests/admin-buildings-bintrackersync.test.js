@@ -45,6 +45,15 @@ async function findRowByName(page, rowSelector, name){
   }, rowSelector, name).then(h => h.asElement());
 }
 
+// .discovered-building-row uses a plain <span class="tenant-name"> for its name (same convention
+// as a tenant-list li), not an <h3> like the real .building-row elsewhere on this page.
+async function findDiscoveredBuildingRow(page, name){
+  return page.evaluateHandle((n) => {
+    return [...document.querySelectorAll('#discoveredBuildingsList .discovered-building-row')]
+      .find(r => r.querySelector('.tenant-name') && r.querySelector('.tenant-name').textContent === n);
+  }, name).then(h => h.asElement());
+}
+
 async function findTenantLi(row, tenantName){
   const lis = await row.$$('li');
   for (const li of lis){
@@ -214,6 +223,79 @@ async function runFlow(page){
   const discoverBtnAfter = await page.$eval('#discoverBuildingsBtn', el => ({ text: el.textContent, disabled: el.disabled }));
   check('the "Check for new buildings" button resets (not stuck on "Checking…") after the failure',
     discoverBtnAfter.text === 'Check for new buildings' && !discoverBtnAfter.disabled, JSON.stringify(discoverBtnAfter));
+
+  // --- Follow-up fix (2026-09-30): each discovered building is its own expandable row, with its
+  // own tenants+checkboxes+editable name, and "Add this building" creates everything in one action
+  // - drive this for real via the test-only seam (discoverBintrackerBuildings is real-network-only,
+  // same reasoning as syncBintrackerTenants above). ---
+  await page.evaluate(() => {
+    window.__testSetDiscoveredBuildings([
+      { name: 'New Tower Pty Ltd', tenants: [
+        { bintrackerTenantRaw: 'Acme Startup', primaryLocations: ['Level 3'] },
+        { bintrackerTenantRaw: 'Beta Co', primaryLocations: ['Level 4'] },
+      ] },
+      { name: 'Empty Tower', tenants: [] },
+    ]);
+  });
+  await page.waitForFunction(
+    () => document.querySelectorAll('#discoveredBuildingsList .discovered-building-row').length === 2,
+    { timeout: 8000 }
+  );
+  check('both discovered buildings appear, collapsed by default, with their tenant counts',
+    (await page.$eval('#discoveredBuildingsList', el => el.textContent)).includes('2 tenants found')
+    && (await page.$eval('#discoveredBuildingsList', el => el.textContent)).includes('0 tenants found'));
+  check('a discovered building with no tenants shows no tenant list at all yet (collapsed)',
+    !(await page.$('#discoveredBuildingsList .discovered-tenant-checkbox')));
+
+  const newTowerRow = await findDiscoveredBuildingRow(page, 'New Tower Pty Ltd');
+  await newTowerRow.$eval('.building-toggle-btn', el => el.click());
+  await page.waitForSelector('#discoveredBuildingsList .discovered-building-name-input', { timeout: 8000 });
+  const expandedNewTowerRow = await findDiscoveredBuildingRow(page, 'New Tower Pty Ltd');
+  check('expanding a discovered building shows an editable name field pre-filled with the Bintracker name',
+    (await expandedNewTowerRow.$eval('.discovered-building-name-input', el => el.value)) === 'New Tower Pty Ltd');
+  check('...and both its tenants, each with a checkbox checked by default',
+    (await expandedNewTowerRow.$$eval('.discovered-tenant-checkbox', els => els.length)) === 2
+    && (await expandedNewTowerRow.$$eval('.discovered-tenant-checkbox', els => els.every(el => el.checked))));
+
+  // Rename it for our own display, uncheck one tenant, then add it - in one single action, no
+  // tab-switching, no second confirmation.
+  await expandedNewTowerRow.$eval('.discovered-building-name-input', el => { el.value = 'My Tower'; });
+  const checkboxes = await expandedNewTowerRow.$$('.discovered-tenant-checkbox');
+  await checkboxes[1].evaluate(el => { el.checked = false; }); // uncheck "Beta Co"
+  await expandedNewTowerRow.$eval('.add-discovered-building-btn', el => el.click());
+  await page.waitForFunction(
+    () => !document.getElementById('discoverBuildingsStatus').textContent.includes('Adding') &&
+      document.getElementById('discoverBuildingsStatus').textContent.includes('Added'),
+    { timeout: 10000 }
+  );
+  check('after "Add this building", the discovered-building row is gone from the list (only "Empty Tower" remains)',
+    (await page.$$eval('#discoveredBuildingsList .discovered-building-row', els => els.length)) === 1
+    && !(await page.$eval('#discoveredBuildingsList', el => el.textContent)).includes('New Tower Pty Ltd'));
+
+  const verifyEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  let newBuildingDocData = null, newBuildingId = null, newTenantNames = [], enrollmentCount = 0;
+  await verifyEnv.withSecurityRulesDisabled(async (context) => {
+    const verifyDb = context.firestore();
+    const newBuildingSnap = await getDocs(query(collection(verifyDb, 'buildings'), where('name', '==', 'My Tower')));
+    check('the building was created with the EDITED display name', newBuildingSnap.size === 1, newBuildingSnap.size);
+    if (newBuildingSnap.size === 1){
+      newBuildingId = newBuildingSnap.docs[0].id;
+      newBuildingDocData = newBuildingSnap.docs[0].data();
+      const newTenantsSnap = await getDocs(collection(verifyDb, 'buildings', newBuildingId, 'tenants'));
+      newTenantNames = newTenantsSnap.docs.map(d => d.data().name);
+      enrollmentCount = (await getDocs(query(collection(verifyDb, 'enrollments'), where('buildingId', '==', newBuildingId)))).size;
+    }
+  });
+  await verifyEnv.cleanup();
+  check('...but mapped to the ORIGINAL Bintracker name, not the edited one',
+    newBuildingDocData && newBuildingDocData.bintrackerBuildingName === 'New Tower Pty Ltd', newBuildingDocData && newBuildingDocData.bintrackerBuildingName);
+  check('only the CHECKED tenant (Acme Startup) was created, not the unchecked one (Beta Co)',
+    newTenantNames.length === 1 && newTenantNames[0] === 'Acme Startup', JSON.stringify(newTenantNames));
+  check('the new building was also auto-enrolled in Recycling Sorting, same as a plain "+ Add building"',
+    enrollmentCount === 1, enrollmentCount);
 
   // --- Clicking "Synchronize" with no reachable Cloud Function also fails gracefully ---
   let mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);

@@ -19,7 +19,7 @@ const crypto = require('crypto');
 const { catalog } = require('./catalog');
 const {
   fetchBintrackerCollections, mapWasteTypeToStream, computeRecyclingLevelPct,
-  diffDiscoveredBuildingNames, diffBintrackerTenants,
+  diffDiscoveredBuildingNames, diffBintrackerTenants, normalizeForMatching,
 } = require('./bintracker');
 const { buildFlyerPdf } = require('./flyer');
 
@@ -833,7 +833,21 @@ exports.discoverBintrackerBuildings = onCall(
       .filter(Boolean);
 
     const discoveredBuildingNames = diffDiscoveredBuildingNames(rawRows, existingBintrackerBuildingNames);
-    return { discoveredBuildingNames };
+
+    // Follow-up fix (2026-09-30): also return each discovered building's own tenants, reusing the
+    // exact same rawRows already fetched above (nothing new to call Bintracker for) and the same
+    // diffBintrackerTenants() helper syncBintrackerTenants already uses - passing an EMPTY
+    // existingTenants list means every (tenant, location) pair found is classified as "new",
+    // which is exactly right here (this building doesn't exist in our system yet, so nothing can
+    // already be missing or mismatched). This lets the admin pick which tenants to bring in
+    // at the same moment they add the building, instead of a separate later "Synchronize" trip.
+    const discoveredBuildings = discoveredBuildingNames.map((name) => {
+      const normName = normalizeForMatching(name);
+      const rowsForBuilding = rawRows.filter((row) => normalizeForMatching(row && row.building) === normName);
+      const { newTenants } = diffBintrackerTenants(rowsForBuilding, []);
+      return { name, tenants: newTenants };
+    });
+    return { discoveredBuildings };
   }
 );
 

@@ -164,8 +164,8 @@ async function runFlow(page, seedEnv, consoleErrors){
   );
   check('Reports tab is active by default once an induction is selected',
     await page.$eval('#tabReportsBtn', el => el.classList.contains('active')));
-  check('the "Viewing: …" badge names the selected induction',
-    (await page.$eval('#viewingBadge', el => el.textContent)) === 'Viewing: Recycling Sorting');
+  check('the induction selector shows the selected induction by name',
+    (await page.$eval('#programSelector', el => el.options[el.selectedIndex].textContent)) === 'Recycling Sorting');
 
   // --- XSS check: a malicious trainee-submitted name must render as inert text, never run ---
   const xssFired = await page.evaluate(() => window.__xssFired === true);
@@ -259,8 +259,6 @@ async function runFlow(page, seedEnv, consoleErrors){
   check('signing out hides the induction selector row and clears its options',
     await page.$eval('#programSelectorRow', el => getComputedStyle(el).display === 'none') &&
     (await page.$eval('#programSelector', el => el.innerHTML.trim())) === '');
-  check('signing out clears and hides the "Viewing: …" badge',
-    await page.$eval('#viewingBadge', el => getComputedStyle(el).display === 'none' && el.textContent === ''));
 
   // --- Email/Password sign-in: Firebase's own auth, no external Google/Microsoft account needed ---
   const emailAdmin = 'email-login-admin@example.com';
