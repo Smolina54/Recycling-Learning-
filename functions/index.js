@@ -209,6 +209,15 @@ async function sendViaSmtp({ to, subject, text, html, attachments }) {
 // code here would only add clutter, not help — the separate printable-flyer backlog item is the
 // right place for one). Shares the exact same branded scaffold (and every Outlook-compatibility
 // lesson learned building buildResultEmailContent) as the trainee result email below.
+//
+// Font is 'Helvetica Neue'/Arial, not Gilroy (the app's own brand typeface), deliberately - email
+// clients have very inconsistent @font-face support (many strip it outright, and Outlook desktop
+// renders HTML email through Word's engine, not a real browser), and most also block loading an
+// external font file by default the same way they block images until the recipient allows them.
+// Rather than risk Gilroy rendering correctly in some inboxes and falling back unpredictably in
+// others, this uses a "web-safe" font guaranteed to already be installed and look the same
+// everywhere - a deliberate trade of exact brand typography for guaranteed consistency, the same
+// reasoning that drove the VML "bulletproof button" and table-based layout elsewhere in this file.
 function buildInductionEmailContent({ buildingName, programName, link }) {
   const subject = `Complete your ${programName} induction - ${buildingName}`;
   const html = `
