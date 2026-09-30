@@ -136,7 +136,8 @@
 
   .building-row, .enrolled-building-row, .distribution-building-row{margin-bottom:20px;}
   .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
-  .building-row:has(> .building-header-row:only-child) .building-header-row{margin-bottom:0;}
+  .building-row:has(> .building-header-row:only-child) .building-header-row,
+  .discovered-building-row:has(> .building-header-row:only-child) .building-header-row{margin-bottom:0;}
   .building-header-row h3{margin-bottom:0;}
   .building-toggle-btn{
     background:transparent; border:none; cursor:pointer; font-size:16px; color:var(--ink-soft);
@@ -185,7 +186,17 @@
      ride up alongside the tail end of a taller sibling instead of always starting its own new line,
      and let the "Tenants found" card's own width shrink unpredictably as a wrapping flex item
      instead of filling the row like every other sub-card does. */
-  .tenant-list li.discovered-building-row{display:block;}
+  /* Follow-up fix (2026-09-30): the earlier <h3> swap alone still wasn't enough - a real,
+     already-saved building reads as clickable-to-expand mainly because it sits inside its own
+     bordered/backgrounded box (.report-block), not because of its heading tag. Give this row that
+     exact same box treatment (background/border/radius/padding, same collapsed-vs-expanded padding
+     split via the same :has() condition the real building-row already uses), overriding
+     .tenant-list li's own border-bottom/padding (this selector's two classes outrank its one). */
+  .tenant-list li.discovered-building-row{
+    display:block; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:28px 30px; margin-bottom:12px;
+  }
+  .tenant-list li.discovered-building-row:has(> .building-header-row:only-child){padding:12px 30px;}
   .tenant-list li:last-child{border-bottom:none;}
   .tenant-list .tenant-name{font-weight:600;}
   .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
