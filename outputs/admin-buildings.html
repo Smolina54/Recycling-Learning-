@@ -153,18 +153,39 @@
      others - same nested-report-block-on-report-block pattern already proven to read as visually
      distinct sections in admin-distribution.html's "Whole-building link"/"Generate tenant link". */
   .building-sub-card{
-    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    /* Follow-up fix (2026-09-30): darkened slightly from a flat var(--panel) (same color as the
+       parent .report-block, which only read as "distinct" via its border) so each sub-card is
+       visibly its own surface, not just an outlined rectangle. */
+    background:color-mix(in srgb, var(--panel), var(--ink) 6%);
+    border:1px solid var(--line); border-radius:var(--radius);
     padding:20px 22px; margin-bottom:16px;
   }
   .building-sub-card:last-child{margin-bottom:0;}
   .building-sub-card > .generate-link-title:first-child{margin-top:0;}
   .building-sub-card .btn{padding:6px 14px; font-size:12.5px;}
+  /* Follow-up fix (2026-09-30): a real heading instead of bold body text - the plain <strong>
+     inside a <p> used to compute to font-weight 400 (the CSS "bolder" keyword steps up from this
+     page's own body font-weight:300 to 400, not 700, since Gilroy has no 400 weight registered),
+     reading as barely-bolder-than-normal text instead of a real section title. */
+  .building-sub-card .generate-link-title{
+    font-family:var(--display); font-weight:700; text-transform:uppercase;
+    font-size:15px; letter-spacing:0.02em; margin:0 0 6px;
+  }
+  .building-sub-card .generate-link-title strong{font-weight:inherit;}
   .managers-saved-note{color:var(--forest-dark); font-size:12.5px; font-weight:500;}
-  .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
+  .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:12px 30px;}
   .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
   .building-edit-row input{flex:1; min-width:160px;}
   .tenant-list{list-style:none; margin:0 0 16px; padding:0; font-size:13.5px;}
   .tenant-list li{padding:8px 0; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+  /* Follow-up fix (2026-09-30): a discovered-building row has several large block children of its
+     own (sub-cards, a button row) meant to stack vertically, not the single-line flex layout every
+     OTHER <li> in a .tenant-list needs (a plain tenant name + a couple of inline buttons) - without
+     this override, flex-wrap:wrap above let a short child (like the "Add this building" button row)
+     ride up alongside the tail end of a taller sibling instead of always starting its own new line,
+     and let the "Tenants found" card's own width shrink unpredictably as a wrapping flex item
+     instead of filling the row like every other sub-card does. */
+  .tenant-list li.discovered-building-row{display:block;}
   .tenant-list li:last-child{border-bottom:none;}
   .tenant-list .tenant-name{font-weight:600;}
   .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
@@ -1020,9 +1041,9 @@ function renderBuildingsList(buildings){
     <div class="report-block building-row" data-building-id="${b.id}">
       ${headerHtml}
       ${renderBuildingManagersHtml(b)}
-      ${renderBintrackerMappingHtml(b)}
       <div class="building-sub-card">
         <p class="generate-link-title"><strong>Tenants</strong></p>
+        <p class="block-sub">Everyone currently at this building, with their level(s) and saved contact email, if any.</p>
         <ul class="tenant-list">${tenantsHtml}</ul>
         <p class="block-sub contacts-coverage-note">${withEmail} of ${b.tenants.length} tenants have a contact email saved.</p>
       </div>
@@ -1055,6 +1076,7 @@ function renderBuildingsList(buildings){
       </div>
       <div class="import-contacts-review" style="display:none;"></div>
       </div>
+      ${renderBintrackerMappingHtml(b)}
     </div>
   `;
   }).join('');
@@ -1128,9 +1150,9 @@ function renderDiscoveredBuildingsList(){
         const isAdding = addDiscoveredBuildingInFlight === b.name;
         return `
         <li class="discovered-building-row" data-bintracker-name="${esc(b.name)}">
-          <div class="building-header-row" style="width:100%;">
+          <div class="building-header-row">
             <button type="button" class="building-toggle-btn" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
-            <span class="tenant-name">${esc(b.name)}</span>
+            <h3>${esc(b.name)}</h3>
             <span class="building-tenant-count">${b.tenants.length} tenant${b.tenants.length === 1 ? '' : 's'} found</span>
           </div>
           ${isExpanded ? `

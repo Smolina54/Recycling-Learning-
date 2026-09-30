@@ -45,13 +45,11 @@ async function findRowByName(page, rowSelector, name){
   }, rowSelector, name).then(h => h.asElement());
 }
 
-// .discovered-building-row uses a plain <span class="tenant-name"> for its name (same convention
-// as a tenant-list li), not an <h3> like the real .building-row elsewhere on this page.
+// Follow-up fix (2026-09-30): .discovered-building-row now uses the same <h3> name convention as
+// the real .building-row elsewhere on this page (a clearer "this is expandable" affordance), so
+// findRowByName above works for it directly - no separate helper needed anymore.
 async function findDiscoveredBuildingRow(page, name){
-  return page.evaluateHandle((n) => {
-    return [...document.querySelectorAll('#discoveredBuildingsList .discovered-building-row')]
-      .find(r => r.querySelector('.tenant-name') && r.querySelector('.tenant-name').textContent === n);
-  }, name).then(h => h.asElement());
+  return findRowByName(page, '#discoveredBuildingsList .discovered-building-row', name);
 }
 
 async function findTenantLi(row, tenantName){
