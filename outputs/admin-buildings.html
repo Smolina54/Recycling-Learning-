@@ -134,7 +134,7 @@
   }
   @media (max-width:640px){.import-row{grid-template-columns:20px 1fr;} .import-row .import-levels{grid-column:2;}}
 
-  .building-row, .enrolled-building-row, .distribution-building-row{margin-bottom:20px;}
+  .building-row{margin-bottom:20px;}
   .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
   .building-row:has(> .building-header-row:only-child) .building-header-row,
   .discovered-building-row:has(> .building-header-row:only-child) .building-header-row{margin-bottom:0;}
@@ -443,7 +443,16 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
-import { read as readWorkbook, utils as xlsxUtils, writeFile as xlsxWriteFile } from "https://cdn.sheetjs.com/xlsx-latest/package/xlsx.mjs";
+// Pinned to a specific released version (was "xlsx-latest", a mutable alias) - a pre-production
+// audit flagged this as the one unpinned third-party script on the page that reads/writes real
+// tenant contact emails via Excel import/export: an unpinned "-latest" path could silently start
+// serving different code with no warning, on the one page most worth protecting from a supply-
+// chain surprise. Full Subresource Integrity (an `integrity` hash) isn't achievable for a plain
+// `import {...} from "url"` statement inside an inline module script - browsers only check
+// `integrity` on a <script src=...> element's own fetch, not on further `import`s inside its
+// module graph - but pinning the exact version closes the main practical risk (silent content
+// drift via a mutable alias) even without it. Bump this version deliberately, not automatically.
+import { read as readWorkbook, utils as xlsxUtils, writeFile as xlsxWriteFile } from "https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs";
 
 // ---- Firebase init (deliberately duplicated per-page — see the architecture roadmap plan,
 // Workstream 2: a shared ES module breaks under file://, which every automated test and casual
@@ -818,6 +827,35 @@ async function loadMasterBuildings(){
     console.error('Failed to load buildings:', err);
     document.getElementById('buildingsStatus').textContent = "Couldn't load buildings - check your connection and reload the page.";
   }
+}
+
+// Refetches ONE building doc + its own tenants subcollection and patches the result into
+// buildingsCache/archivedBuildingsCache in place, then re-renders — instead of
+// loadMasterBuildings()'s full re-fetch of EVERY building's own tenants subcollection. A
+// pre-production audit found every single-building write (save managers, add/edit/delete one
+// tenant, archive/restore, permanent delete, etc.) triggered that full N+1 reload even though only
+// one building's data had actually changed. Handles the building having been permanently deleted
+// (no longer exists — removed from both caches, nothing re-added) and having moved between
+// active/archived (removed from whichever cache it was in, re-added to the correct one).
+async function refreshOneBuildingInCache(buildingId){
+  const buildingSnap = await getDoc(doc(db, 'buildings', buildingId));
+  buildingsCache = buildingsCache.filter(b => b.id !== buildingId);
+  archivedBuildingsCache = archivedBuildingsCache.filter(b => b.id !== buildingId);
+  if (buildingSnap.exists()){
+    const tenantsSnap = await getDocs(collection(db, 'buildings', buildingId, 'tenants'));
+    const building = {
+      id: buildingId,
+      name: buildingSnap.data().name || '(untitled)',
+      active: buildingSnap.data().active !== false,
+      tenants: tenantsSnap.docs
+        .filter(t => t.data().active !== false)
+        .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [], emails: t.data().emails || [] })),
+      managerEmails: buildingSnap.data().managerEmails || [],
+      bintrackerBuildingName: buildingSnap.data().bintrackerBuildingName || '',
+    };
+    (building.active ? buildingsCache : archivedBuildingsCache).push(building);
+  }
+  refreshBuildingsView();
 }
 
 function isBuildingExpanded(b){
@@ -1471,7 +1509,7 @@ document.getElementById('addBuildingBtn').addEventListener('click', async () => 
     nameInput.value = '';
     status.textContent = `Added "${name}".`;
     expandedBuildingIds.add(newBuildingId); // open it up right away — you almost always want to add tenants next
-    await loadMasterBuildings();
+    await refreshOneBuildingInCache(newBuildingId);
   } catch (err){
     console.error('Failed to add building:', err);
     status.textContent = 'Failed to add building - check the console for details.';
@@ -1549,24 +1587,44 @@ document.getElementById('discoveredBuildingsList').addEventListener('click', asy
     addDiscoveredBuildingInFlight = bintrackerName;
     renderDiscoveredBuildingsList();
     try {
-      const newBuildingId = await generateUniqueSlugAndCreate('buildings', displayName, {
-        name: displayName, bintrackerBuildingName: bintrackerName,
-      });
-      await setDoc(doc(db, 'enrollments', `recycling-sorting__${newBuildingId}`), {
-        programId: 'recycling-sorting', buildingId: newBuildingId, itemOverrides: {}, enabledTenantIds: null,
-        createdAt: serverTimestamp(),
-      });
-      if (checkedIndices.length){
-        const batch = writeBatch(db);
-        checkedIndices.forEach(i => {
-          const t = b.tenants[i];
-          if (!t) return;
-          batch.set(doc(db, 'buildings', newBuildingId, 'tenants', crypto.randomUUID()), {
-            name: t.bintrackerTenantRaw, levels: t.primaryLocations || [],
+      // The building doc + its enrollment + its checked tenants are all written in ONE Firestore
+      // transaction, not 3 separate sequential calls as this used to be — a pre-production audit
+      // found the old version could fail partway through (a network blip between steps) and leave
+      // a real orphaned state: a building with no enrollment (invisible to enrollment-scoped
+      // reports) or a building+enrollment with no tenants, with only a generic alert and no way to
+      // tell what had actually been created. Same slug-retry-with-suffix-on-conflict loop as
+      // generateUniqueSlugAndCreate above, just extended to write everything atomically instead of
+      // only the building doc — either the whole thing lands, or none of it does.
+      const base = slugify(displayName) || crypto.randomUUID();
+      let newBuildingId = null;
+      for (let attempt = 0; attempt < 5 && !newBuildingId; attempt++){
+        const candidate = attempt === 0 ? base : `${base}-${crypto.randomUUID().slice(0, 6)}`;
+        const buildingRef = doc(db, 'buildings', candidate);
+        try {
+          await runTransaction(db, async (tx) => {
+            const snap = await tx.get(buildingRef);
+            if (snap.exists()) throw new Error('slug-taken');
+            tx.set(buildingRef, { name: displayName, bintrackerBuildingName: bintrackerName });
+            tx.set(doc(db, 'enrollments', `recycling-sorting__${candidate}`), {
+              programId: 'recycling-sorting', buildingId: candidate, itemOverrides: {}, enabledTenantIds: null,
+              createdAt: serverTimestamp(),
+            });
+            checkedIndices.forEach(i => {
+              const t = b.tenants[i];
+              if (!t) return;
+              tx.set(doc(db, 'buildings', candidate, 'tenants', crypto.randomUUID()), {
+                name: t.bintrackerTenantRaw, levels: t.primaryLocations || [],
+              });
+            });
           });
-        });
-        await batch.commit();
+          newBuildingId = candidate;
+        } catch (err){
+          if (err && err.message === 'slug-taken') continue; // race lost to another create — retry with a suffix
+          throw err;
+        }
       }
+      if (!newBuildingId) throw new Error('Could not find a unique id after several attempts.');
+
       discoveredBuildings = discoveredBuildings.filter(x => x.name !== bintrackerName);
       expandedDiscoveredBuildingNames.delete(bintrackerName);
       document.getElementById('discoverBuildingsStatus').textContent =
@@ -1575,7 +1633,7 @@ document.getElementById('discoveredBuildingsList').addEventListener('click', asy
       // on loadMasterBuildings() below (a separate, slower refresh of the OTHER list on the
       // Buildings tab), and coupling the two made this row's removal feel laggy/racy.
       renderDiscoveredBuildingsList();
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(newBuildingId);
     } catch (err){
       console.error('Failed to add discovered building:', err);
       await showAlert('Failed to add this building - check the console for details.');
@@ -1610,7 +1668,7 @@ document.getElementById('bintrackerSyncBuildingsList').addEventListener('click',
       });
       await batch.commit();
       toImport.forEach(t => { t.imported = true; });
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
       renderBintrackerSyncBuildingsList();
     } catch (err){
       console.error('Failed to import new tenants:', err);
@@ -1671,7 +1729,7 @@ document.getElementById('bintrackerSyncBuildingsList').addEventListener('click',
         `Deleted "${deleteResult.data.tenantName}" permanently.\n\n` +
         `${deleteResult.data.deletedCounts.submissions} submissions, ${deleteResult.data.deletedCounts.attempts} attempts.`
       );
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
       renderBintrackerSyncBuildingsList();
     } catch (err){
       console.error('Failed to permanently delete tenant:', err);
@@ -1693,7 +1751,7 @@ document.getElementById('bintrackerSyncBuildingsList').addEventListener('click',
     try {
       await updateDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { levels: newLevels });
       m.updated = true;
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
       renderBintrackerSyncBuildingsList();
     } catch (err){
       console.error('Failed to update tenant levels:', err);
@@ -1746,7 +1804,7 @@ document.getElementById('archivedBuildingsList').addEventListener('click', async
     const buildingId = restoreBtn.closest('.building-row').dataset.buildingId;
     try {
       await updateDoc(doc(db, 'buildings', buildingId), { active: true });
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
     } catch (err){
       console.error('Failed to restore building:', err);
       await showAlert('Failed to restore - check the console for details.');
@@ -1788,7 +1846,7 @@ document.getElementById('archivedBuildingsList').addEventListener('click', async
         `${c.buildingAccess} access grant(s), ${c.tenants} tenant(s).`
       );
       permanentDeletePanelBuildingId = null;
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
     } catch (err){
       console.error('Failed to permanently delete building:', err);
       statusEl.textContent = err.message || 'Failed to delete - check the console for details.';
@@ -1867,7 +1925,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     try {
       await setDoc(doc(db, 'buildings', buildingId), { name: newName }, { merge: true });
       editingBuildingId = null;
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
     } catch (err){
       console.error('Failed to rename building:', err);
       await showAlert('Failed to save - check the console for details.');
@@ -1892,7 +1950,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       // stay intact so nothing referencing it — historical submissions/attempts included —
       // ever points at a missing document; initIdGate() treats active:false the same as "not found".
       await updateDoc(doc(db, 'buildings', buildingId), { active: false });
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
     } catch (err){
       console.error('Failed to delete building:', err);
       await showAlert('Failed to delete - check the console for details.');
@@ -1910,7 +1968,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     try {
       await updateDoc(doc(db, 'buildings', buildingId), { managerEmails: newEmails });
       justSavedManagersForBuildingId = buildingId;
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
       setTimeout(() => {
         if (justSavedManagersForBuildingId === buildingId){
           justSavedManagersForBuildingId = null;
@@ -1932,7 +1990,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     try {
       await updateDoc(doc(db, 'buildings', buildingId), { bintrackerBuildingName: newValue });
       justSavedBintrackerMappingForBuildingId = buildingId;
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
       setTimeout(() => {
         if (justSavedBintrackerMappingForBuildingId === buildingId){
           justSavedBintrackerMappingForBuildingId = null;
@@ -2045,7 +2103,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       // survive an edit (emails included) must be listed explicitly.
       await setDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { name: newName, levels: newLevels, emails: newEmails });
       editingTenant = null;
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
     } catch (err){
       console.error('Failed to update tenant:', err);
       await showAlert('Failed to save - check the console for details.');
@@ -2066,7 +2124,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     try {
       // Soft-delete, not a real delete — same reasoning as "Delete building" above.
       await updateDoc(doc(db, 'buildings', buildingId, 'tenants', tenantId), { active: false });
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
     } catch (err){
       console.error('Failed to delete tenant:', err);
       await showAlert('Failed to delete - check the console for details.');
@@ -2086,7 +2144,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     if (badEmail){ await showAlert(`"${badEmail}" doesn't look like a valid email address.`); return; }
     try {
       await setDoc(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: tenantName, levels, emails });
-      await loadMasterBuildings(); // re-renders the whole tab, including a fresh blank "add tenant" form
+      await refreshOneBuildingInCache(buildingId); // re-renders the whole tab, including a fresh blank "add tenant" form
     } catch (err){
       console.error('Failed to add tenant:', err);
       await showAlert('Failed to add tenant - check the console for details.');
@@ -2141,7 +2199,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
         batch.set(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), { name: t.name, levels: t.levels });
       }
       await batch.commit();
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
     } catch (err){
       console.error('Bulk import failed:', err);
       await showAlert('Import failed - check the console for details. Nothing was partially added (this import is a single atomic batch).');
@@ -2209,7 +2267,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       }
       await batch.commit();
       row.querySelector('.import-contacts-review').style.display = 'none';
-      await loadMasterBuildings();
+      await refreshOneBuildingInCache(buildingId);
     } catch (err){
       console.error('Failed to import contact emails:', err);
       await showAlert('Import failed - check the console for details.');
@@ -2331,6 +2389,13 @@ if (auth){
       permanentDeletePanelBuildingId = null;
       buildingsCache = [];
       archivedBuildingsCache = [];
+      // A pre-production audit found these 3 were missing from this reset — cosmetic only (a
+      // stale search filter or a leftover "Saved ✓" flag could flash on the next sign-in before
+      // real data loads), no data/security exposure, but still worth completing the reset.
+      buildingSearchTerm = '';
+      document.getElementById('buildingSearchInput').value = '';
+      justSavedManagersForBuildingId = null;
+      justSavedBintrackerMappingForBuildingId = null;
       lastBintrackerRefreshCountsByBuildingId.clear();
       bintrackerRowsByBuildingId.clear();
       bintrackerMatchesByBuildingId.clear();

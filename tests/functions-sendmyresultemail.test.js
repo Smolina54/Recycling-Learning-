@@ -95,8 +95,20 @@ async function main() {
   check('a valid, uncapped submission reaches the send attempt and fails only for a network reason (fake test creds)',
     !freshResult.ok && freshResult.code === 'functions/internal', JSON.stringify(freshResult));
 
+  // A pre-production audit found the "give back the attempt on a failed send" logic (functions/
+  // index.js's sendMyResultEmail) was itself crashing — admin.firestore.FieldValue read fresh
+  // from inside the deferred catch block came back undefined in the Functions Emulator, throwing
+  // a TypeError that silently masked the real SMTP error AND left sendCount permanently stuck at
+  // 1 instead of reverting to 0. Fixed by importing FieldValue from the modular
+  // 'firebase-admin/firestore' submodule (resolved once at require time, not dependent on
+  // admin.firestore's own static property being attached yet) instead of reading
+  // admin.firestore.FieldValue fresh each time. This assertion checks the END STATE after a
+  // failed send — sendCount back at 0, not stuck at 1 — which is what actually matters (a
+  // transient SMTP hiccup must never permanently burn one of the trainee's 5 allowed sends);
+  // the previous version of this assertion only checked the pre-send increment, which is exactly
+  // what let the give-back bug ship unnoticed.
   const freshAfter = await readSubmission(freshId);
-  check('sendCount was incremented before the send attempt', freshAfter && freshAfter.sendCount === 1, JSON.stringify(freshAfter && freshAfter.sendCount));
+  check('sendCount was correctly given back to 0 after the send attempt failed (not stuck at 1)', freshAfter && freshAfter.sendCount === 0, JSON.stringify(freshAfter && freshAfter.sendCount));
   check('the corrected email was persisted back onto the submission', freshAfter && freshAfter.email === 'corrected@example.com', JSON.stringify(freshAfter && freshAfter.email));
 
   for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.ok ? '' : ' ' + r.extra}`);

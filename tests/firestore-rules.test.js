@@ -86,6 +86,25 @@ async function main(){
     assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, email: 'not-an-email' })));
   await record('anon CANNOT create a submission with an oversized name (storage/rendering abuse)', () =>
     assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, name: 'x'.repeat(201) })));
+
+  // hasReasonableSizes()'s avoided/total/correctCount/duration_seconds/device_type bounds — added
+  // after a pre-production audit found these 5 fields were on the field allowlist with NO type
+  // or size check at all, unlike everything else in hasReasonableSizes(). A direct API write
+  // (bypassing this app's own client UI entirely) could otherwise attach an arbitrarily large
+  // nested map/array to any of them, up to Firestore's 1MB-per-doc ceiling, with no rate limit in
+  // front of submissions.create to stop a scripted flood of near-1MB documents.
+  await record('anon CANNOT create a submission with a non-numeric avoided count (type confusion)', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, avoided: { huge: 'x'.repeat(100000) } })));
+  await record('anon CANNOT create a submission with an absurdly large avoided count', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, avoided: 999999999 })));
+  await record('anon CANNOT create a submission with a negative total', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, total: -1 })));
+  await record('anon CANNOT create a submission with an out-of-range duration_seconds (more than a day)', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, duration_seconds: 999999 })));
+  await record('anon CANNOT create a submission with an oversized device_type string', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, device_type: 'x'.repeat(51) })));
+  await record('anon CAN create a submission with realistic avoided/total/duration_seconds/device_type values', () =>
+    assertSucceeds(addDoc(collection(anon, 'submissions'), { ...validSubmission, avoided: 20, total: 25, duration_seconds: 180, device_type: 'mobile-touch' })));
   await record('anon CANNOT create a submission missing programId', () => {
     const bad = { ...validSubmission }; delete bad.programId;
     return assertFails(addDoc(collection(anon, 'submissions'), bad));

@@ -188,6 +188,15 @@ async function main() {
   const chunkSubsAfter = await collectionCountForBuilding(otherAdmin.db, 'submissions', CHUNK_BUILDING_ID);
   check('every one of the 420 submissions is actually gone, not just the first page', chunkSubsAfter === 0, String(chunkSubsAfter));
 
+  // --- Rate limit (a pre-production audit found this function had NO rate limit at all) ---
+  const DELETE_RATE_LIMIT_MAX_CALLS = 50;
+  await withRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'deleteRateLimits', OTHER_ADMIN_EMAIL), { count: DELETE_RATE_LIMIT_MAX_CALLS, windowStart: Date.now() });
+  });
+  const rateLimitedResult = await callDelete(otherAdmin.functions, { buildingId: 'does-not-matter-' + Date.now(), confirmName: 'x' });
+  check(`a call at the ${DELETE_RATE_LIMIT_MAX_CALLS}/window cap is rejected as resource-exhausted (before even reaching the not-found check)`,
+    !rateLimitedResult.ok && rateLimitedResult.code === 'functions/resource-exhausted', JSON.stringify(rateLimitedResult));
+
   for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.ok ? '' : ' ' + r.extra}`);
   const failed = results.filter(r => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} passed`);

@@ -223,18 +223,49 @@ function diffBintrackerTenants(rawRows, existingTenants) {
   }
   const distinctRawTenantNames = [...pairsByNormRaw.values()].map((v) => v.raw);
 
-  const matchedNormRaws = new Set();
-  const missingTenants = [];
-  const levelMismatches = [];
+  // Each raw Bintracker tenant name may be claimed by at most one existing tenant. The original
+  // version ran findBestMatch(tenant.name, distinctRawTenantNames) independently per tenant with
+  // no exclusion of names already claimed by an earlier tenant in the loop — two real tenants
+  // with similar names (e.g. "Acme Legal" and "Acme Legal Services") could both "contains"-match
+  // the same raw string, corrupting one tenant's level-mismatch comparison with the other's real
+  // location data and potentially hiding a genuinely new tenant behind a wrongly-claimed match
+  // (found in a pre-production audit). Fixed with a two-pass greedy claim: every tenant with an
+  // EXACT match claims it first (exact matches are unambiguous, so claim order among them doesn't
+  // matter), then every remaining tenant matches against whatever raw names are still unclaimed.
+  // Not a full optimal bipartite match — just enough to guarantee no raw name is ever double-
+  // claimed, which is what the audit actually flagged.
+  const availableRawNames = new Set(distinctRawTenantNames);
+  const matches = new Map(); // tenant.id -> { candidate, confidence }
 
   for (const tenant of existingTenants || []) {
-    const match = distinctRawTenantNames.length ? findBestMatch(tenant.name, distinctRawTenantNames) : null;
+    const ours = normalizeForMatching(tenant.name);
+    if (!ours) continue;
+    for (const raw of availableRawNames) {
+      if (normalizeForMatching(raw) === ours) {
+        matches.set(tenant.id, { candidate: raw, confidence: 'exact' });
+        availableRawNames.delete(raw);
+        break;
+      }
+    }
+  }
+  for (const tenant of existingTenants || []) {
+    if (matches.has(tenant.id) || !availableRawNames.size) continue;
+    const match = findBestMatch(tenant.name, [...availableRawNames]);
+    if (match) {
+      matches.set(tenant.id, match);
+      availableRawNames.delete(match.candidate);
+    }
+  }
+
+  const missingTenants = [];
+  const levelMismatches = [];
+  for (const tenant of existingTenants || []) {
+    const match = matches.get(tenant.id);
     if (!match) {
       missingTenants.push({ tenantId: tenant.id, tenantName: tenant.name, levels: tenant.levels || [] });
       continue;
     }
     const matchedNorm = normalizeForMatching(match.candidate);
-    matchedNormRaws.add(matchedNorm);
     const seenLocations = [...pairsByNormRaw.get(matchedNorm).locations];
     const tenantLevels = new Set(tenant.levels || []);
     const newLevels = seenLocations.filter((loc) => !tenantLevels.has(loc));
@@ -251,8 +282,8 @@ function diffBintrackerTenants(rawRows, existingTenants) {
   }
 
   const newTenants = [];
-  for (const [norm, { raw, locations }] of pairsByNormRaw) {
-    if (matchedNormRaws.has(norm)) continue;
+  for (const [, { raw, locations }] of pairsByNormRaw) {
+    if (!availableRawNames.has(raw)) continue; // claimed by some tenant above
     newTenants.push({ bintrackerTenantRaw: raw, primaryLocations: [...locations] });
   }
 
@@ -260,7 +291,6 @@ function diffBintrackerTenants(rawRows, existingTenants) {
 }
 
 module.exports = {
-  BASE_URL,
   fetchBintrackerCollections,
   mapWasteTypeToStream,
   WASTE_TYPE_TO_STREAM,

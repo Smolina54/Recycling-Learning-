@@ -2610,8 +2610,8 @@ var qrcode = function() {
      — every ROW-level action button in this app (a tenant row, a generated link's own actions)
      uses this smaller, outlined size instead, so a run of several buttons sitting side by side
      next to a line of text reads as one consistent family. "Whole-building link"'s own action
-     row (Preview/Print flyer/Email flyer), its expiry Change button, and its Show/Hide addresses
-     toggle are the same kind of row-level action — they must match, not use the bigger CTA size. */
+     row (Preview/Print flyer/Email flyer) and its expiry Change button are the same kind of
+     row-level action — they must match, not use the bigger CTA size. */
   .tenant-list .btn.secondary, .building-header-actions .btn, .building-edit-row .btn,
   .whole-building-link-block .btn{padding:6px 14px; font-size:12.5px;}
   .danger-btn{border-color:var(--gw) !important; color:var(--gw) !important;}
@@ -3087,22 +3087,35 @@ function renderQrCode(buildingId, link){
 // Printable Distribution QR flyer (physical building signage) - see #flyerPrintOverlay's CSS/
 // markup above. Only ever for the whole-building link (never a tenant-scoped one) - a lobby/
 // floor poster is meant for the whole building, not one specific tenant.
+// Re-entrancy guard (a pre-production audit found none existed) - a rapid double-click, or
+// clicking a second building's "Print flyer" before the browser's print dialog appears (not
+// guaranteed to block synchronously in every browser), could otherwise create two competing
+// #flyerPageSizeOverride <style> tags (duplicate ids) and two `afterprint` listeners, letting the
+// second call's DOM writes (kicker/footer text, QR) race the first call's print render.
+let isPrintingFlyer = false;
 function openFlyerPrint(buildingName, link){
+  if (isPrintingFlyer) return;
+  isPrintingFlyer = true;
+
   document.getElementById('flyerKickerText').textContent = `${buildingName} · Waste Management Program`;
   document.getElementById('flyerFooterText').textContent = buildingName;
   renderQrInto(document.getElementById('flyerQrContainer'), link);
 
-  // A5, not whatever the browser's own print default is - a real poster size, not a small card
-  // on a full Letter/A4 sheet. Injected only for this one print call (removed on afterprint)
-  // rather than declared statically, since this file's OWN separate whole-screen print
-  // stylesheet (further down) already has its own @page rule - @page isn't scopeable by any
-  // selector, so two static @page rules would just fight over source order regardless of which
-  // content is actually visible.
+  // A4 (not whatever the browser's own print default is) - a real poster size, not a small card
+  // floating on the sheet. Injected only for this one print call (removed on afterprint) rather
+  // than declared statically, since this file's OWN separate whole-screen print stylesheet
+  // (further down) already has its own @page rule - @page isn't scopeable by any selector, so
+  // two static @page rules would just fight over source order regardless of which content is
+  // actually visible.
   const pageStyle = document.createElement('style');
   pageStyle.id = 'flyerPageSizeOverride';
   pageStyle.textContent = '@media print { @page { size: A4; margin: 0; } }';
   document.head.appendChild(pageStyle);
-  const cleanup = () => { pageStyle.remove(); window.removeEventListener('afterprint', cleanup); };
+  const cleanup = () => {
+    pageStyle.remove();
+    window.removeEventListener('afterprint', cleanup);
+    isPrintingFlyer = false;
+  };
   window.addEventListener('afterprint', cleanup);
 
   window.print();
@@ -3259,9 +3272,24 @@ function renderDistributionList(buildings){
   });
 }
 
+// Cache of the last real fetch, kept so a pure UI-state change (expand/collapse a row, open/
+// cancel the expiry editor) can re-render without re-fetching. A pre-production audit found
+// every one of these — including a plain accordion toggle — re-fetched every enrollment, every
+// active building, every link, and every building's tenants subcollection for the whole program,
+// unlike this file's sibling admin-enrolled-buildings.html, which already avoids this via its own
+// enrolledBuildingsCache.
+let distributionCache = [];
+
 async function refreshDistributionView(){
-  const buildings = await loadDistributionData();
-  renderDistributionList(buildings);
+  distributionCache = await loadDistributionData();
+  renderDistributionList(distributionCache);
+}
+
+// Re-renders from the already-cached data — use this for a pure UI-state change that touches no
+// Firestore write (expand/collapse, opening/cancelling the expiry editor). Anything that actually
+// writes must still call refreshDistributionView() to pick up the real new state.
+function renderDistributionViewFromCache(){
+  renderDistributionList(distributionCache);
 }
 
 document.getElementById('distributionList').addEventListener('click', async (e) => {
@@ -3270,7 +3298,7 @@ document.getElementById('distributionList').addEventListener('click', async (e) 
     const buildingId = toggleBtn.closest('.distribution-building-row').dataset.buildingId;
     if (expandedDistributionBuildingIds.has(buildingId)) expandedDistributionBuildingIds.delete(buildingId);
     else expandedDistributionBuildingIds.add(buildingId);
-    refreshDistributionView();
+    renderDistributionViewFromCache();
     return;
   }
 
@@ -3327,14 +3355,14 @@ document.getElementById('distributionList').addEventListener('click', async (e) 
   const changeExpiryBtn = e.target.closest('.change-expiry-btn');
   if (changeExpiryBtn){
     editingExpiryBuildingId = changeExpiryBtn.closest('.distribution-building-row').dataset.buildingId;
-    refreshDistributionView();
+    renderDistributionViewFromCache();
     return;
   }
 
   const cancelExpiryBtn = e.target.closest('.cancel-expiry-btn');
   if (cancelExpiryBtn){
     editingExpiryBuildingId = null;
-    refreshDistributionView();
+    renderDistributionViewFromCache();
     return;
   }
 
@@ -3386,6 +3414,15 @@ function explainSendFailure(err){
     // The rate-limit error's own message is already actionable ("...wait a few minutes and try
     // again (limit: N per M minutes)") - show it directly rather than wrapping it further.
     return `Could not send: ${msg}`;
+  }
+  // assertIsAdmin()'s two real throws - a pre-production audit found these fell through to the
+  // generic "copy the link yourself" message, which doesn't tell the admin their SESSION is the
+  // actual problem (a stale/expired sign-in, or their admin access being revoked mid-session).
+  if (msg.includes('Sign in first')){
+    return 'Could not send: your session has expired. Sign out and back in, then try again.';
+  }
+  if (msg.includes('Not an admin')){
+    return 'Could not send: your account no longer has admin access. Ask another admin to check Admins settings.';
   }
   return 'Could not send automatically - copy the link above and send it yourself instead.';
 }
@@ -3458,12 +3495,25 @@ async function handleSendToAllTenants(btn){
   const sendInductionEmail = httpsCallable(functions, 'sendInductionEmail');
   const sent = [];
   const failed = [];
+  const generatedOnly = [];
+  const failedToGenerate = [];
   try {
     for (const t of [...toSend, ...toGenerateOnly]) {
       const linkId = crypto.randomUUID();
       const linkDoc = { programId: currentProgram.id, buildingId, tenantId: t.id, createdAt: serverTimestamp() };
       if (expiryDate) linkDoc.expiresAt = new Date(`${expiryDate}T23:59:59`);
-      await setDoc(doc(db, 'links', linkId), linkDoc);
+      // Each tenant's link-write gets its own try/catch (a pre-production audit found this call
+      // used to sit OUTSIDE any per-tenant guard — a transient failure partway through the batch
+      // would throw past the whole loop with no summary shown at all, leaving every remaining
+      // tenant silently without a link OR an email and no way for the admin to know). A failed
+      // link write means there's nothing to email, so skip straight to the next tenant.
+      try {
+        await setDoc(doc(db, 'links', linkId), linkDoc);
+      } catch (err) {
+        console.error(`Failed to generate a link for tenant ${t.name}:`, err);
+        failedToGenerate.push(t.name);
+        continue;
+      }
 
       if (t.emails && t.emails.length) {
         const link = `${pageBaseUrl()}${currentProgram.file}?l=${linkId}`;
@@ -3477,6 +3527,8 @@ async function handleSendToAllTenants(btn){
           console.error(`sendInductionEmail failed for tenant ${t.name}:`, err);
           failed.push(`${t.name} (${explainSendFailure(err)})`);
         }
+      } else {
+        generatedOnly.push(t.name);
       }
     }
   } finally {
@@ -3486,8 +3538,9 @@ async function handleSendToAllTenants(btn){
 
   const resultGroups = [];
   if (sent.length) resultGroups.push({ label: 'Sent:', list: formatList(sent) });
-  if (toGenerateOnly.length) resultGroups.push({ label: 'Generated, not sent (no saved email):', list: nameList(toGenerateOnly) });
+  if (generatedOnly.length) resultGroups.push({ label: 'Generated, not sent (no saved email):', list: formatList(generatedOnly) });
   if (failed.length) resultGroups.push({ label: 'Failed to send:', list: formatList(failed) });
+  if (failedToGenerate.length) resultGroups.push({ label: 'Failed to generate a link:', list: formatList(failedToGenerate) });
   if (alreadyCovered.length) resultGroups.push({ label: 'Skipped (already covered):', list: nameList(alreadyCovered) });
   await showAlert(buildModalSegments(resultGroups));
   await refreshDistributionView();
@@ -3676,6 +3729,7 @@ if (auth){
       document.getElementById('showEmailSignInBtn').style.display = 'inline-flex';
       document.getElementById('distributionSection').style.display = 'none';
       document.getElementById('distributionList').innerHTML = '';
+      distributionCache = [];
       document.getElementById('noProgramNote').style.display = 'none';
       document.getElementById('pageLoadError').style.display = 'none';
     }

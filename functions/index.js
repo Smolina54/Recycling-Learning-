@@ -13,6 +13,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
+const { FieldValue } = require('firebase-admin/firestore');
 const nodemailer = require('nodemailer');
 const path = require('path');
 const crypto = require('crypto');
@@ -80,6 +81,24 @@ const MAX_LINK_LENGTH = 500;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const RATE_LIMIT_MAX_SENDS = 200;
 
+// Same 15-minute window as email, but a much lower cap — these 3 functions each hit Bintracker's
+// real third-party API per call (refreshBintrackerData/syncBintrackerTenants scoped to one
+// building; discoverBintrackerBuildings unscoped, pulling up to 25,000 rows per call per
+// functions/bintracker.js's own paging cap), so nothing before this audit stopped a compromised
+// or careless admin session (or a buggy client-side retry loop) from hammering that shared
+// account in a tight loop. 30/15min comfortably covers a real admin working through a session of
+// several buildings while still tripping fast on genuine abuse.
+const BINTRACKER_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const BINTRACKER_RATE_LIMIT_MAX_CALLS = 30;
+
+// Permanent-delete functions are individually gated by a type-the-exact-name confirmation, but
+// that only stops accidental misuse — a scripted/compromised admin credential already knows the
+// real names from a prior read and could loop through every archived building/tenant with no
+// artificial delay. A higher cap than Bintracker's (a legitimate end-of-quarter cleanup session
+// could plausibly delete a couple dozen stale records) but still a real, bounded budget.
+const DELETE_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const DELETE_RATE_LIMIT_MAX_CALLS = 50;
+
 function isValidEmail(str) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(str || '').trim());
 }
@@ -123,25 +142,33 @@ function validatePayload(data) {
 // Fixed-window counter, one doc per admin email — a Firestore transaction so two
 // near-simultaneous calls from the same admin can't both read a stale count and both slip
 // through. A missing doc or an expired window both take the same "start a fresh window" path.
-async function checkRateLimit(email) {
-  const ref = admin.firestore().doc(`emailRateLimits/${email}`);
+// Generalized (a pre-production audit found the Bintracker-calling functions and both permanent-
+// delete functions had NO rate limit at all, unlike every email function) so each action category
+// gets its own independent bucket in its own collection — a burst of one kind of action (e.g.
+// deletes) never eats into another kind's (e.g. Bintracker syncs) budget.
+async function checkRateLimitGeneric(collectionName, key, windowMs, maxCount, actionLabel) {
+  const ref = admin.firestore().doc(`${collectionName}/${key}`);
   await admin.firestore().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const data = snap.exists ? snap.data() : null;
     const now = Date.now();
-    if (!data || now - data.windowStart > RATE_LIMIT_WINDOW_MS) {
+    if (!data || now - data.windowStart > windowMs) {
       tx.set(ref, { windowStart: now, count: 1 });
       return;
     }
-    if (data.count >= RATE_LIMIT_MAX_SENDS) {
+    if (data.count >= maxCount) {
       throw new HttpsError(
         'resource-exhausted',
-        `Too many induction emails sent recently — wait a few minutes and try again ` +
-          `(limit: ${RATE_LIMIT_MAX_SENDS} per ${RATE_LIMIT_WINDOW_MS / 60000} minutes).`
+        `Too many ${actionLabel} recently — wait a few minutes and try again ` +
+          `(limit: ${maxCount} per ${windowMs / 60000} minutes).`
       );
     }
     tx.update(ref, { count: data.count + 1 });
   });
+}
+
+async function checkRateLimit(email) {
+  return checkRateLimitGeneric('emailRateLimits', email, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX_SENDS, 'induction emails sent');
 }
 
 // Built fresh per call rather than cached at module scope — defineSecret().value() only
@@ -304,7 +331,15 @@ exports.sendDistributionFlyer = onCall(
     }
     const building = buildingSnap.data();
     const buildingName = building.name || '(untitled)';
-    const managerEmails = building.managerEmails || [];
+    // Unlike sendInductionEmail's `to` (checked by validatePayload before this function ever
+    // sees it), managerEmails comes straight off a Firestore doc with no format/size gate of its
+    // own — buildings writes are admin-only, but nothing stops a malformed value (a stray typo,
+    // a paste error, or a future buggy code path) from being saved. Filter to well-formed
+    // addresses and cap the count the same way validatePayload does for every other email send,
+    // so a bad/oversized value here can't reach nodemailer's address-parsing path unfiltered.
+    const managerEmails = (building.managerEmails || [])
+      .filter(isValidEmail)
+      .slice(0, MAX_RECIPIENTS);
     // Graceful absence, same as every other email feature in this app - no manager contacts
     // saved yet means there's genuinely nobody to send this to.
     if (managerEmails.length === 0) {
@@ -554,10 +589,15 @@ exports.sendMyResultEmail = onCall(
       // one of their 5 sends with no way back — submissions.update is reviewer-only in
       // firestore.rules, so nothing client-side could ever undo it. Give the attempt back before
       // letting the original error propagate, so only a SUCCESSFUL send ever counts against the
-      // cap.
-      await ref.update({ sendCount: admin.firestore.FieldValue.increment(-1) }).catch((giveBackErr) => {
+      // cap. Wrapped in a real try/catch (not just a Promise .catch()) — a .catch() only attaches
+      // to a promise that already exists, so if constructing the update payload itself threw
+      // synchronously, that throw would escape uncaught and silently replace the real send error
+      // the caller is supposed to see.
+      try {
+        await ref.update({ sendCount: FieldValue.increment(-1) });
+      } catch (giveBackErr) {
         console.error('Failed to give back sendCount after a failed send:', giveBackErr && giveBackErr.message);
-      });
+      }
       throw err;
     }
     return { ok: true };
@@ -598,8 +638,9 @@ async function deleteAllMatchingBuildingId(collectionName, buildingId) {
   return deleted;
 }
 
-exports.deleteBuildingPermanently = onCall({ timeoutSeconds: 300 }, async (request) => {
+exports.deleteBuildingPermanently = onCall({ timeoutSeconds: 300, maxInstances: 3, concurrency: 5 }, async (request) => {
   await assertIsAdmin(request.auth);
+  await checkRateLimitGeneric('deleteRateLimits', request.auth.token.email, DELETE_RATE_LIMIT_WINDOW_MS, DELETE_RATE_LIMIT_MAX_CALLS, 'permanent deletes');
 
   const { buildingId, confirmName } = request.data || {};
   if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
@@ -675,7 +716,7 @@ async function writeRecyclingLevelAggregates(db, buildingId) {
   // FieldValue.delete() when the current data no longer qualifies (e.g. a stale number from an
   // earlier, richer date range) - graceful absence beats a stale/misleading number left behind.
   await buildingRef.update({
-    recyclingLevelPct: buildingPct === null ? admin.firestore.FieldValue.delete() : buildingPct,
+    recyclingLevelPct: buildingPct === null ? FieldValue.delete() : buildingPct,
   });
 
   const confirmedMatchesSnap = await db.collection('bintrackerTenantMatches')
@@ -692,7 +733,7 @@ async function writeRecyclingLevelAggregates(db, buildingId) {
     const tenantSnap = await tenantRef.get();
     if (!tenantSnap.exists) continue; // stale match pointing at a since-deleted tenant doc
     await tenantRef.update({
-      recyclingLevelPct: tenantPct === null ? admin.firestore.FieldValue.delete() : tenantPct,
+      recyclingLevelPct: tenantPct === null ? FieldValue.delete() : tenantPct,
     });
   }
 }
@@ -718,9 +759,10 @@ async function deleteBintrackerRowsInRange(buildingId, fromDate, toDate) {
 }
 
 exports.refreshBintrackerData = onCall(
-  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300 },
+  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300, maxInstances: 3, concurrency: 5 },
   async (request) => {
     await assertIsAdmin(request.auth);
+    await checkRateLimitGeneric('bintrackerRateLimits', request.auth.token.email, BINTRACKER_RATE_LIMIT_WINDOW_MS, BINTRACKER_RATE_LIMIT_MAX_CALLS, 'Bintracker calls made');
 
     const { buildingId, fromDate, toDate } = request.data || {};
     if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
@@ -750,7 +792,7 @@ exports.refreshBintrackerData = onCall(
     const db = admin.firestore();
     let rowsMapped = 0;
     let rowsSkipped = 0;
-    const fetchedAt = admin.firestore.FieldValue.serverTimestamp();
+    const fetchedAt = FieldValue.serverTimestamp();
     for (let i = 0; i < rawRows.length; i += 400) {
       const chunk = rawRows.slice(i, i + 400);
       const batch = db.batch();
@@ -814,9 +856,10 @@ function last30DayRange() {
 // can see, then surfaces any distinct `building` value not yet mapped to one of this app's own
 // buildings via bintrackerBuildingName. Pure read - no Firestore writes.
 exports.discoverBintrackerBuildings = onCall(
-  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300 },
+  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300, maxInstances: 3, concurrency: 5 },
   async (request) => {
     await assertIsAdmin(request.auth);
+    await checkRateLimitGeneric('bintrackerRateLimits', request.auth.token.email, BINTRACKER_RATE_LIMIT_WINDOW_MS, BINTRACKER_RATE_LIMIT_MAX_CALLS, 'Bintracker calls made');
 
     const { fromDate, toDate } = last30DayRange();
     const rawRows = await fetchBintrackerCollections({
@@ -861,9 +904,10 @@ exports.discoverBintrackerBuildings = onCall(
 // delete needs its own Cloud Function (deleteTenantPermanently, below), since submissions/attempts
 // both have `allow delete: if false` for every client, admins included.
 exports.syncBintrackerTenants = onCall(
-  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300 },
+  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300, maxInstances: 3, concurrency: 5 },
   async (request) => {
     await assertIsAdmin(request.auth);
+    await checkRateLimitGeneric('bintrackerRateLimits', request.auth.token.email, BINTRACKER_RATE_LIMIT_WINDOW_MS, BINTRACKER_RATE_LIMIT_MAX_CALLS, 'Bintracker calls made');
 
     const { buildingId } = request.data || {};
     if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
@@ -923,8 +967,9 @@ async function deleteAllMatchingTenantId(collectionName, tenantId) {
 // is invoked from a dedicated, already-deliberate sync/audit action that already has its own
 // name-confirmation step, so an extra archive-first gate would add friction without adding real
 // safety here (2026-09-28 design decision, confirmed with the user - not an oversight).
-exports.deleteTenantPermanently = onCall({ timeoutSeconds: 300 }, async (request) => {
+exports.deleteTenantPermanently = onCall({ timeoutSeconds: 300, maxInstances: 3, concurrency: 5 }, async (request) => {
   await assertIsAdmin(request.auth);
+  await checkRateLimitGeneric('deleteRateLimits', request.auth.token.email, DELETE_RATE_LIMIT_WINDOW_MS, DELETE_RATE_LIMIT_MAX_CALLS, 'permanent deletes');
 
   const { buildingId, tenantId, confirmName } = request.data || {};
   if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
@@ -947,10 +992,19 @@ exports.deleteTenantPermanently = onCall({ timeoutSeconds: 300 }, async (request
   }
 
   // Children before the parent tenant doc - same retriable-on-crash reasoning as
-  // deleteBuildingPermanently's own ordering.
+  // deleteBuildingPermanently's own ordering. links and bintrackerTenantMatches both carry their
+  // own tenantId field (links: {programId, buildingId, tenantId, createdAt, expiresAt?} - see
+  // admin-distribution.html's link-generation writes; bintrackerTenantMatches: written by
+  // admin-buildings.html's match-review UI) - added after a real gap found in a pre-production
+  // audit: without these, a tenant-scoped distribution link outlives the tenant it was scoped to
+  // (still publicly readable and resolvable at ?l=<linkId>, since firestore.rules only checks
+  // tenantId is a well-formed string, never that the tenant still exists), and a stale
+  // bintrackerTenantMatches doc lingers as a permanent, invisible record of a tenant that's gone.
   const deletedCounts = {
     submissions: await deleteAllMatchingTenantId('submissions', tenantId),
     attempts: await deleteAllMatchingTenantId('attempts', tenantId),
+    links: await deleteAllMatchingTenantId('links', tenantId),
+    bintrackerTenantMatches: await deleteAllMatchingTenantId('bintrackerTenantMatches', tenantId),
   };
   await tenantRef.delete();
 

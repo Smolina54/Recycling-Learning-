@@ -165,9 +165,44 @@ function testDiffBintrackerTenants() {
     !newTenants.some((n) => n.bintrackerTenantRaw === 'WIDGETCO PTY LTD'), JSON.stringify(newTenants));
 }
 
+// Regression test for a real bug found in a pre-production audit: two existing tenants with
+// similar names could both "contains"-match the SAME raw Bintracker string, since the original
+// code ran findBestMatch independently per tenant with no exclusion of already-claimed names.
+// Only one raw name here ("Acme Legal Services Pty Ltd"), and BOTH "Acme Legal" and "Acme Legal
+// Services" are legitimate substring matches for it — before the fix, both tenants would end up
+// pointing at the identical match (and the identical location data); after the fix, only one
+// claims it and the other correctly falls back to "missing" rather than getting a bogus match.
+function testDiffBintrackerTenantsNoDoubleClaim() {
+  const existingTenants = [
+    { id: 'acme-legal-id', name: 'Acme Legal', levels: ['Level 5'] },
+    { id: 'acme-legal-services-id', name: 'Acme Legal Services', levels: ['Level 9'] },
+  ];
+  const rawRows = [
+    { tenant: 'Acme Legal Services Pty Ltd', primaryLocation: 'Level 5' },
+  ];
+
+  const { missingTenants, levelMismatches } = diffBintrackerTenants(rawRows, existingTenants);
+
+  const claimedIds = new Set(levelMismatches.map((m) => m.tenantId));
+  // Every level-mismatch entry that references this one raw name must come from at most ONE
+  // tenant — the bug's exact symptom was both tenants showing up here, both pointing at the
+  // same bintrackerTenantRaw and the same seen-location data.
+  check('diffBintrackerTenants: two similarly-named tenants never both claim the same raw match',
+    claimedIds.size <= 1, JSON.stringify({ missingTenants, levelMismatches }));
+
+  // Exactly one of the two tenants ends up unmatched (missing) as a direct consequence — this is
+  // the correct, honest outcome for genuinely ambiguous data (an admin needs to resolve it
+  // manually), not a silent double-match.
+  check('...and exactly one of the two similarly-named tenants ends up unmatched (ambiguity surfaced, not hidden)',
+    missingTenants.length === 1 &&
+      (missingTenants[0].tenantId === 'acme-legal-id' || missingTenants[0].tenantId === 'acme-legal-services-id'),
+    JSON.stringify(missingTenants));
+}
+
 async function main() {
   testDiffDiscoveredBuildingNames();
   testDiffBintrackerTenants();
+  testDiffBintrackerTenantsNoDoubleClaim();
 
   // --- Auth/permission rejection, all 3 functions ---
   const SEED_BUILDING_ID = 'sync-tower-' + Date.now();
@@ -257,6 +292,25 @@ async function main() {
     await setDoc(doc(db, 'submissions', 'other-tenant-sub-' + Date.now()), {
       buildingId: STILL_ACTIVE_BUILDING_ID, tenantId: 'some-other-tenant-id', programId: 'recycling-sorting', score: 50,
     });
+    // A tenant-scoped distribution link and a Bintracker tenant-match doc — a pre-production
+    // audit found deleteTenantPermanently's cascade skipped both, leaving a stale link still
+    // publicly resolvable at ?l=<linkId> and a stale match doc referencing a tenant that no
+    // longer exists. Seed one of each for the tenant being deleted, plus one of each for the
+    // unrelated tenant, to prove both the sweep and the cross-tenant isolation.
+    await setDoc(doc(db, 'links', `${STILL_ACTIVE_TENANT_ID}-link`), {
+      buildingId: STILL_ACTIVE_BUILDING_ID, tenantId: STILL_ACTIVE_TENANT_ID, programId: 'recycling-sorting', createdAt: Date.now(),
+    });
+    await setDoc(doc(db, 'bintrackerTenantMatches', `${STILL_ACTIVE_BUILDING_ID}__${STILL_ACTIVE_TENANT_ID}`), {
+      buildingId: STILL_ACTIVE_BUILDING_ID, tenantId: STILL_ACTIVE_TENANT_ID, tenantName: 'Still Active Tenant',
+      bintrackerTenantRaw: 'Still Active Tenant', status: 'confirmed',
+    });
+    await setDoc(doc(db, 'links', 'other-tenant-link-' + Date.now()), {
+      buildingId: STILL_ACTIVE_BUILDING_ID, tenantId: 'some-other-tenant-id', programId: 'recycling-sorting', createdAt: Date.now(),
+    });
+    await setDoc(doc(db, 'bintrackerTenantMatches', `${STILL_ACTIVE_BUILDING_ID}__some-other-tenant-id`), {
+      buildingId: STILL_ACTIVE_BUILDING_ID, tenantId: 'some-other-tenant-id', tenantName: 'Some Other Tenant',
+      bintrackerTenantRaw: 'Some Other Tenant', status: 'confirmed',
+    });
   });
 
   const happyDelete = await callFn(otherAdmin.functions, 'deleteTenantPermanently', {
@@ -266,23 +320,48 @@ async function main() {
     happyDelete.ok && happyDelete.data && happyDelete.data.ok === true, JSON.stringify(happyDelete));
   if (happyDelete.ok) {
     const c = happyDelete.data.deletedCounts;
-    check('...and deletedCounts matches what was seeded (3 submissions, 2 attempts)',
-      c.submissions === 3 && c.attempts === 2, JSON.stringify(c));
+    check('...and deletedCounts matches what was seeded (3 submissions, 2 attempts, 1 link, 1 match)',
+      c.submissions === 3 && c.attempts === 2 && c.links === 1 && c.bintrackerTenantMatches === 1, JSON.stringify(c));
   }
 
   const tenantDocAfter = await getDoc(doc(otherAdmin.db, 'buildings', STILL_ACTIVE_BUILDING_ID, 'tenants', STILL_ACTIVE_TENANT_ID));
   check('...the tenant doc itself is really gone', !tenantDocAfter.exists());
   const subsAfter = await collectionCountForTenant('submissions', STILL_ACTIVE_TENANT_ID);
   const attemptsAfter = await collectionCountForTenant('attempts', STILL_ACTIVE_TENANT_ID);
+  const linksAfter = await collectionCountForTenant('links', STILL_ACTIVE_TENANT_ID);
+  const matchesAfter = await collectionCountForTenant('bintrackerTenantMatches', STILL_ACTIVE_TENANT_ID);
   check('...its submissions are really gone', subsAfter === 0, String(subsAfter));
   check('...its attempts are really gone', attemptsAfter === 0, String(attemptsAfter));
+  check('...its distribution link is really gone (a pre-production audit found this leaking)', linksAfter === 0, String(linksAfter));
+  check('...its Bintracker tenant-match doc is really gone (a pre-production audit found this leaking)', matchesAfter === 0, String(matchesAfter));
   const otherTenantSubsAfter = await collectionCountForTenant('submissions', 'some-other-tenant-id');
+  const otherTenantLinksAfter = await collectionCountForTenant('links', 'some-other-tenant-id');
+  const otherTenantMatchesAfter = await collectionCountForTenant('bintrackerTenantMatches', 'some-other-tenant-id');
   check('...an unrelated tenant\'s submission in the SAME building survives untouched', otherTenantSubsAfter === 1, String(otherTenantSubsAfter));
+  check('...an unrelated tenant\'s link survives untouched', otherTenantLinksAfter === 1, String(otherTenantLinksAfter));
+  check('...an unrelated tenant\'s Bintracker match survives untouched', otherTenantMatchesAfter === 1, String(otherTenantMatchesAfter));
 
   // The building itself (still active, never archived) must survive - this function only ever
   // touches the one named tenant and its own history, never the building doc.
   const buildingStillThere = await getDoc(doc(otherAdmin.db, 'buildings', STILL_ACTIVE_BUILDING_ID));
   check('...and the still-active BUILDING itself is untouched (only the tenant was deleted)', buildingStillThere.exists());
+
+  // --- Rate limits (a pre-production audit found these 3 functions had NO rate limit at all) ---
+  const BINTRACKER_RATE_LIMIT_MAX_CALLS = 30;
+  const DELETE_RATE_LIMIT_MAX_CALLS = 50;
+  await withRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'bintrackerRateLimits', OTHER_ADMIN_EMAIL), { count: BINTRACKER_RATE_LIMIT_MAX_CALLS, windowStart: Date.now() });
+  });
+  const rateLimitedSync = await callFn(otherAdmin.functions, 'syncBintrackerTenants', { buildingId: 'does-not-matter' })();
+  check(`syncBintrackerTenants: a call at the ${BINTRACKER_RATE_LIMIT_MAX_CALLS}/window Bintracker cap is rejected as resource-exhausted`,
+    !rateLimitedSync.ok && rateLimitedSync.code === 'functions/resource-exhausted', JSON.stringify(rateLimitedSync));
+
+  await withRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'deleteRateLimits', OTHER_ADMIN_EMAIL), { count: DELETE_RATE_LIMIT_MAX_CALLS, windowStart: Date.now() });
+  });
+  const rateLimitedDelete = await callFn(otherAdmin.functions, 'deleteTenantPermanently', { buildingId: 'does-not-matter', tenantId: 'does-not-matter', confirmName: 'x' })();
+  check(`deleteTenantPermanently: a call at the ${DELETE_RATE_LIMIT_MAX_CALLS}/window delete cap is rejected as resource-exhausted`,
+    !rateLimitedDelete.ok && rateLimitedDelete.code === 'functions/resource-exhausted', JSON.stringify(rateLimitedDelete));
 
   for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.ok ? '' : ' ' + r.extra}`);
   const failed = results.filter((r) => !r.ok);

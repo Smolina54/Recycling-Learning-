@@ -1038,6 +1038,20 @@ function refreshEnrolledBuildingsView(){
   refreshEnrollBuildingSelect();
 }
 
+// Re-renders ONLY the currently-open item-streams editor (a single <div class="items-editor">,
+// since only one building can be in edit mode at a time via editingItemsBuildingId) instead of
+// the whole enrolled-buildings list. A pre-production audit found every single draft-field change
+// inside the editor (an active toggle, a stream <select>, an acceptable checkbox) re-rendered
+// EVERY enrolled building row - including every other collapsed/expanded building's own tenant
+// checklist - even though none of that other content depends on this editor's draft state at all.
+// Nothing here touches Firestore (setDraftActive/setDraftOverride only mutate the in-memory draft),
+// so there's no real save to reflect elsewhere until the editor's own "Save" button is clicked,
+// which already correctly triggers a full loadEnrolledData() reload.
+function refreshItemStreamsEditorOnly(){
+  const editorEl = document.querySelector('.items-editor');
+  if (editorEl) editorEl.outerHTML = renderItemStreamsEditorHtml();
+}
+
 function refreshEnrollBuildingSelect(){
   const enrolledIds = new Set(enrolledBuildingsCache.map(b => b.id));
   const notEnrolled = allBuildingsCache.filter(b => !enrolledIds.has(b.id));
@@ -1246,7 +1260,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('click', async
   if (resetItemsBtn){
     draftItemOverrides = {};
     itemsEditorError = '';
-    refreshEnrolledBuildingsView();
+    refreshItemStreamsEditorOnly();
     return;
   }
 
@@ -1264,7 +1278,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('click', async
       setDraftOverride(id, toStream, effectiveAcceptableInDraft(id));
     });
     itemsEditorError = '';
-    refreshEnrolledBuildingsView();
+    refreshItemStreamsEditorOnly();
     return;
   }
 
@@ -1345,7 +1359,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('change', (e) 
   if (activeToggle){
     setDraftActive(activeToggle.dataset.itemId, activeToggle.checked);
     itemsEditorError = '';
-    refreshEnrolledBuildingsView();
+    refreshItemStreamsEditorOnly();
     return;
   }
 
@@ -1354,7 +1368,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('change', (e) 
     const itemId = itemStreamSelect.dataset.itemId;
     setDraftOverride(itemId, itemStreamSelect.value, effectiveAcceptableInDraft(itemId));
     itemsEditorError = '';
-    refreshEnrolledBuildingsView();
+    refreshItemStreamsEditorOnly();
     return;
   }
 
@@ -1368,7 +1382,7 @@ document.getElementById('enrolledBuildingsList').addEventListener('change', (e) 
       : current.filter(s => s !== stream);
     setDraftOverride(itemId, effectiveStreamInDraft(itemId), updated);
     itemsEditorError = '';
-    refreshEnrolledBuildingsView();
+    refreshItemStreamsEditorOnly();
     return;
   }
 });

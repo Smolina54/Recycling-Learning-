@@ -584,6 +584,27 @@ async function loadEnrolledBuildings(){
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// A building-scoped admin (granted access to specific buildings via /buildingAccess, see
+// firestore.rules' canReviewBuilding()) previously had no filtering here at all — this page let
+// them check ANY enrolled building, and Firestore rejects a submissions/attempts query outright
+// if it includes even one building outside their grant (rules can only permit a query if every
+// document it could return is provably allowed) — the whole report generation then failed with a
+// generic "Something went wrong," with no way for the admin to know why (found in a
+// pre-production audit). Fixed by fetching this user's own buildingAccess grants right after
+// sign-in (readable by them per firestore.rules: their own grants only) and, if any exist,
+// narrowing the checklist to just those buildings — the same assumption this app's own
+// buildingAccess design already makes elsewhere (it exists specifically for scoped external
+// clients; a global reviewer is never expected to also hold grants), so an empty grant list here
+// means "global reviewer, show everything," not "no access."
+async function filterToGrantedBuildings(buildings){
+  const email = (auth.currentUser?.email || '').toLowerCase();
+  if (!email) return buildings;
+  const grantsSnap = await getDocs(query(collection(db, 'buildingAccess'), where('email', '==', email)));
+  if (grantsSnap.empty) return buildings; // no grants at all — treat as a global reviewer
+  const grantedIds = new Set(grantsSnap.docs.map(d => d.data().buildingId));
+  return buildings.filter(b => grantedIds.has(b.id));
+}
+
 function renderBuildingChecklist(){
   const el = document.getElementById('buildingChecklist');
   if (!allBuildings.length){
@@ -732,6 +753,15 @@ function computeBuildingStats(rows, attempts, selectedBuildings){
 // headline/detail/recommendation structure a client-facing report calls for, rather than a
 // single run-on sentence - shared by the combined "Key findings" section and each building's
 // own "Individual building analysis" block below.
+// SECURITY INVARIANT (flagged in a pre-production audit): f.detail/f.recommendation are rendered
+// UNESCAPED here - every finding-generator function below (computeKeyFindings and its per-
+// building/Bintracker-comparison siblings) is individually responsible for wrapping every dynamic
+// substring it embeds (a tenant/building name, a stream label) in esc() at the point of string
+// construction, since re-escaping the whole already-built string here would double-escape those
+// entities (e.g. a name containing "&" would render as the literal text "&amp;"). f.headline is
+// the one field safe to escape centrally since it's never handed pre-escaped fragments. If you
+// add a new finding-generator, ESCAPE EVERY DYNAMIC VALUE before it goes into detail/recommendation
+// - there is no backstop here that would catch a forgotten one.
 function renderFindingsList(findings){
   return findings.map(f => `
     <li>
@@ -1342,7 +1372,7 @@ if (auth){
         const backLink = document.getElementById('backToReportsLink');
         const backHrefSep = backLink.getAttribute('href').includes('?') ? '&' : '?';
         backLink.setAttribute('href', backLink.getAttribute('href') + backHrefSep + 'program=' + encodeURIComponent(currentProgram.id));
-        allBuildings = await loadEnrolledBuildings();
+        allBuildings = await filterToGrantedBuildings(await loadEnrolledBuildings());
         renderBuildingChecklist();
         document.getElementById('reportSection').style.display = 'block';
       } catch (err){

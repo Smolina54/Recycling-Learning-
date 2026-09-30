@@ -93,7 +93,19 @@ service cloud.firestore {
         && (!('breakdown' in data) || data.breakdown.size() <= 20)
         && (!('answers' in data) || data.answers.size() <= 200)
         && (!('itemOverridesSnapshot' in data) ||
-            (data.itemOverridesSnapshot is string && data.itemOverridesSnapshot.size() <= 20000));
+            (data.itemOverridesSnapshot is string && data.itemOverridesSnapshot.size() <= 20000))
+        // These 5 were on the field allowlist but had no type/size bound at all — a direct API
+        // write could set any of them to an arbitrarily large nested map/array (up to Firestore's
+        // 1MB-per-doc ceiling), which is otherwise unconstrained since submissions/attempts are
+        // the only writes in this app with no Cloud Function in front of them to gate on. Bounds
+        // are generous relative to real values (avoided/total/correctCount are item/question
+        // counts, always well under 100; duration_seconds is a session length in seconds;
+        // device_type is a short label like 'mobile-touch'/'desktop').
+        && (!('avoided' in data) || (data.avoided is number && data.avoided >= 0 && data.avoided <= 100000))
+        && (!('total' in data) || (data.total is number && data.total >= 0 && data.total <= 100000))
+        && (!('correctCount' in data) || (data.correctCount is number && data.correctCount >= 0 && data.correctCount <= 100000))
+        && (!('duration_seconds' in data) || (data.duration_seconds is number && data.duration_seconds >= 0 && data.duration_seconds <= 86400))
+        && (!('device_type' in data) || (data.device_type is string && data.device_type.size() <= 50));
     }
 
     // A submission/attempt MAY carry a linkId (came in via ?l=, a tenant-scoped and/or
@@ -103,8 +115,12 @@ service cloud.firestore {
     // link, or no link param at all) always passes — this check only ever narrows, never
     // requires, a linkId.
     function isValidLinkIfPresent(data) {
+      // Bounded the same way every other allowlisted field in this file is (a pre-production
+      // audit found this was the one field with no size check at all before using it in a get()
+      // path lookup) - real linkIds are crypto.randomUUID() values (36 chars), so 200 is
+      // generous headroom, never a real constraint.
       return !('linkId' in data) ||
-        (data.linkId is string &&
+        (data.linkId is string && data.linkId.size() > 0 && data.linkId.size() <= 200 &&
          (!('expiresAt' in get(/databases/$(database)/documents/links/$(data.linkId)).data) ||
           get(/databases/$(database)/documents/links/$(data.linkId)).data.expiresAt > request.time));
     }
@@ -134,6 +150,16 @@ service cloud.firestore {
     // outright here (not just left unmatched) so no client, admin included, can read or
     // tamper with its own send count.
     match /emailRateLimits/{email} {
+      allow read, write: if false;
+    }
+
+    // Same shape/reasoning as emailRateLimits above, for the Bintracker-calling functions and the
+    // 2 permanent-delete functions (functions/index.js's checkRateLimitGeneric) — added after a
+    // pre-production audit found these had no rate limit at all. Admin-SDK-only, same as above.
+    match /bintrackerRateLimits/{email} {
+      allow read, write: if false;
+    }
+    match /deleteRateLimits/{email} {
       allow read, write: if false;
     }
 

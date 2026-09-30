@@ -112,6 +112,13 @@ async function runFlow(page){
   const authStatusText = await page.$eval('#authStatus', el => el.textContent);
   check('no "not authorised" message shown for a validly-scoped client', !authStatusText.includes("isn't authorised"), authStatusText);
 
+  // A pre-production audit found "Delete these submissions" was shown to scoped admins even
+  // though firestore.rules restricts delete to isAllowedReviewer() only — they could confirm a
+  // destructive-sounding prompt and then just get a generic failure, since they can never
+  // actually succeed. Confirmed hidden for a scoped client, still shown for the global owner.
+  const deleteBtnDisplayScoped = await page.$eval('#deleteBtn', el => getComputedStyle(el).display);
+  check('"Delete these submissions" is hidden for a building-scoped (non-global) reviewer', deleteBtnDisplayScoped === 'none', deleteBtnDisplayScoped);
+
   // ---- Negative control: signed in, but zero /buildingAccess grant at all ----
   await page.evaluate((email, password) => window.__testSignIn(email, password), NO_GRANT_EMAIL, PASSWORD);
   await page.waitForFunction(() => document.getElementById('programSelectorRow') &&

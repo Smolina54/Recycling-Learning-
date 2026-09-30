@@ -3582,6 +3582,12 @@ function showConfirm(message){
   let allRows = [];
   let allAttempts = []; // "started the sort" pings — used only to compute a completion rate
   let isLiveData = false;
+  // Set by loadLiveData() below - true for the normal/global-reviewer path, false once the
+  // scoped/building-limited fallback is used. A pre-production audit found "Delete these
+  // submissions" was shown to scoped admins even though firestore.rules restricts delete to
+  // isAllowedReviewer() only (never canReviewBuilding()) - they could confirm the destructive-
+  // sounding prompt and then just get a generic failure, since they can never actually succeed.
+  let isGlobalReviewer = true;
 
   // ---------------- Filters (building → tenant → level) ----------------
   function distinctValues(rows, key, filterFn){
@@ -3662,7 +3668,7 @@ function showConfirm(message){
     const scopeParts = [t, b, l].filter(Boolean);
     if (from || to) scopeParts.push(`${from || '…'} to ${to || '…'}`);
     document.getElementById('focusNote').textContent = focused ? `Focused on: ${scopeParts.join(' - ')}` : '';
-    document.getElementById('deleteBtn').style.display = isLiveData ? 'inline-flex' : 'none';
+    document.getElementById('deleteBtn').style.display = (isLiveData && isGlobalReviewer) ? 'inline-flex' : 'none';
 
     // Print-only cover context (invisible on screen — see .print-header) — reuses the exact
     // same b/from/to filter state as the "Focused on: ..." note above rather than re-reading
@@ -3917,6 +3923,30 @@ function showConfirm(message){
     return snap.docs.map(d => d.data());
   }
 
+  // Per-buildingId caches for the two Bintracker fetches that DON'T depend on the report's date
+  // filter — confirmed matches (only ever change from a different admin page, admin-buildings.html)
+  // and the all-time row fetch (Comparison #2's before/after split is anchored per-tenant, never
+  // scoped to the viewing window, so it's the exact same query on every render regardless of what
+  // date filter is set). A pre-production audit found renderBintrackerComparison() re-ran BOTH of
+  // these on every single filter change, alongside the one fetch that actually needs to vary (the
+  // date-ranged rows) — multiplying Firestore reads for buildings that never even change. Cleared
+  // on program switch/sign-out below, since a different program can mean different buildings.
+  let bintrackerMatchesCacheByBuildingId = new Map();
+  let bintrackerAllTimeRowsCacheByBuildingId = new Map();
+
+  async function getCachedConfirmedBintrackerMatches(buildingId){
+    if (!bintrackerMatchesCacheByBuildingId.has(buildingId)){
+      bintrackerMatchesCacheByBuildingId.set(buildingId, await fetchConfirmedBintrackerMatches(buildingId));
+    }
+    return bintrackerMatchesCacheByBuildingId.get(buildingId);
+  }
+  async function getCachedAllTimeBintrackerRows(buildingId){
+    if (!bintrackerAllTimeRowsCacheByBuildingId.has(buildingId)){
+      bintrackerAllTimeRowsCacheByBuildingId.set(buildingId, await fetchBintrackerRowsInRange(buildingId, '', ''));
+    }
+    return bintrackerAllTimeRowsCacheByBuildingId.get(buildingId);
+  }
+
   // "{Tenant}" always includes "on {Level}" when every contributing submission shares one level
   // value — omitted only when a tenant's submissions span multiple different levels. Shared by
   // both comparisons.
@@ -4112,9 +4142,9 @@ function showConfirm(message){
     try {
       const perBuilding = await Promise.all(mappedBuildingIds.map(async (buildingId) => {
         const [matches, rangedRows, allTimeRows] = await Promise.all([
-          fetchConfirmedBintrackerMatches(buildingId),
+          getCachedConfirmedBintrackerMatches(buildingId),
           fetchBintrackerRowsInRange(buildingId, fromDateStr, toDateStr),
-          fetchBintrackerRowsInRange(buildingId, '', ''),
+          getCachedAllTimeBintrackerRows(buildingId),
         ]);
         if (!matches.length) return { current: [], impact: [] };
         const tenantRowsInRange = rows.filter(r => r.buildingId === buildingId);
@@ -4357,6 +4387,7 @@ function showConfirm(message){
       const truncated = rows.length >= MAX_ROWS || attempts.length >= MAX_ROWS;
       const sourceLabel = `Live data from Firestore · ${rows.length} submissions` +
         (truncated ? ` (most recent ${MAX_ROWS} - narrow with the date filter to see an older period)` : '');
+      isGlobalReviewer = true;
       loadRows(rows, attempts, sourceLabel, true);
     } catch (err){
       // A global reviewer never reaches here (their query above always succeeds). Only a
@@ -4367,7 +4398,13 @@ function showConfirm(message){
           document.getElementById('authStatus').textContent = "Your account isn't authorised to view this report, or something went wrong loading it.";
           return;
         }
-        const sourceLabel = `Live data from Firestore · ${scoped.rows.length} submissions (scoped to your granted building(s))`;
+        // Same truncation caveat as the unscoped path above - a pre-production audit found this
+        // was missing here even though loadScopedLiveData() slices to the exact same MAX_ROWS,
+        // so a high-volume granted building could silently look complete when it wasn't.
+        const scopedTruncated = scoped.rows.length >= MAX_ROWS || scoped.attempts.length >= MAX_ROWS;
+        const sourceLabel = `Live data from Firestore · ${scoped.rows.length} submissions (scoped to your granted building(s))` +
+          (scopedTruncated ? ` (most recent ${MAX_ROWS} - narrow with the date filter to see an older period)` : '');
+        isGlobalReviewer = false;
         loadRows(scoped.rows, scoped.attempts, sourceLabel, true);
       } catch (scopedErr){
         console.error('Failed to load submissions (both unscoped and scoped attempts failed):', err, scopedErr);
@@ -4599,6 +4636,10 @@ function showConfirm(message){
     // for the page's whole lifetime, same as Distribution).
     currentProgramId = e.target.value;
     if (!currentProgramId) return;
+    // A different program can mean different buildings/matches — never carry stale Bintracker
+    // cache entries across a program switch.
+    bintrackerMatchesCacheByBuildingId = new Map();
+    bintrackerAllTimeRowsCacheByBuildingId = new Map();
     // Stay on whichever tab is currently active — switching induction while looking at
     // Distribution/Enrolled Buildings should refresh THAT tab for the new induction, not bounce
     // back to Reports (the iframe has no live induction switcher of its own, same as before).
@@ -4696,7 +4737,10 @@ function showConfirm(message){
         // Completed/Pending tables, the building/tenant breakdown) was left fully visible and
         // populated after sign-out, which anyone at the same screen could still read.
         isLiveData = false;
+        isGlobalReviewer = true;
         allRows = []; currentRows = []; allAttempts = []; buildingsMetaById = new Map();
+        bintrackerMatchesCacheByBuildingId = new Map();
+        bintrackerAllTimeRowsCacheByBuildingId = new Map();
         document.getElementById('authZone').style.display = '';
         document.getElementById('authStatus').textContent = 'Sign in with an authorised account to load live results.';
         // Reset the email form back to its collapsed state, and never leave a typed password

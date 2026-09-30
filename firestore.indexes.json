@@ -35,24 +35,6 @@
       ]
     },
     {
-      "collectionGroup": "submissions",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "buildingId", "order": "ASCENDING" },
-        { "fieldPath": "programId", "order": "ASCENDING" },
-        { "fieldPath": "timestamp", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "attempts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "buildingId", "order": "ASCENDING" },
-        { "fieldPath": "programId", "order": "ASCENDING" },
-        { "fieldPath": "startedAt", "order": "ASCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "bintrackerRows",
       "queryScope": "COLLECTION",
       "fields": [

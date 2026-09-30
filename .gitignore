@@ -13,8 +13,15 @@ functions/.secret.local
 firebase.local-test.json
 
 # Real client data dropped in uploads/ for reference (e.g. real building/tenant
-# exports) — never goes into git, even in a private repo.
+# exports, generated client reports) — never goes into git, even in a private repo.
+# Broadened after a pre-production audit found a real generated client report (a PDF with real
+# names/scores) sitting untracked with nothing stopping a routine `git add -A`/`git add .` from
+# committing it — once committed, a file is compromised forever even after a later deletion.
+# .docx is deliberately NOT included here — the 2 tracked files in uploads/ today are content-
+# review copies (induction wording, not client data) and are expected to stay tracked.
 uploads/*.xlsx
+uploads/*.pdf
+uploads/*.csv
 
 # Bintracker Data Sharing API test-environment credentials (Point 1 / Workstream 7) — reused
 # from Bin Tally's own existing test account, never real production credentials, never committed.
