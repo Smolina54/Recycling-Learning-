@@ -197,7 +197,13 @@
     padding:28px 30px; margin-bottom:12px;
   }
   .tenant-list li.discovered-building-row:has(> .building-header-row:only-child){padding:12px 30px;}
-  .tenant-list li:last-child{border-bottom:none;}
+  /* :not(.discovered-building-row) - this rule and .discovered-building-row's own full-box border
+     above have identical specificity (.tenant-list li + one more selector each), so without this
+     exclusion, this rule (being later in the file) would win and strip the bottom border off a
+     discovered-building row whenever it's the last (or only) one in the list - the box then
+     looked "open" at the bottom, exactly the bug the user found. Plain tenant-list rows still get
+     their bottom border removed as the last item, same as before. */
+  .tenant-list li:last-child:not(.discovered-building-row){border-bottom:none;}
   .tenant-list .tenant-name{font-weight:600;}
   .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
   .tenant-row-actions{display:flex; gap:8px; flex-shrink:0; margin-left:auto;}
