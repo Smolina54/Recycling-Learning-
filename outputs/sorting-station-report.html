@@ -2391,7 +2391,7 @@ var qrcode = function() {
      one lifts forward to the page's own background color with its bottom border erased — reads
      as physically connected to the content underneath instead of a separate flat button. */
   .tab-btn{
-    font-family:var(--body); font-weight:600; font-size:14.5px; color:var(--ink-soft);
+    font-family:var(--body); font-weight:500; font-size:14.5px; color:var(--ink-soft);
     background:color-mix(in srgb, var(--paper), var(--ink) 9%);
     border:1.5px solid var(--line); border-bottom:none; border-radius:8px 8px 0 0;
     padding:10px 20px 9px; margin-bottom:-1.5px;
@@ -2481,7 +2481,7 @@ var qrcode = function() {
   .items-card-head{display:flex; align-items:center; gap:6px;}
   .items-card-icon{width:20px; height:20px; flex-shrink:0; display:inline-flex;}
   .items-card-icon svg, .items-card-icon img{width:20px; height:20px; object-fit:contain;}
-  .items-card-name{font-weight:600; line-height:1.25; flex:1;}
+  .items-card-name{font-weight:500; line-height:1.25; flex:1;}
   .items-card-inactive .items-card-icon, .items-card-inactive .items-card-name{opacity:0.45;}
   .item-toggle{position:relative; display:inline-block; width:34px; height:20px; flex-shrink:0; cursor:pointer;}
   .item-toggle input{position:absolute; inset:0; opacity:0; margin:0; cursor:pointer;}
@@ -2497,7 +2497,7 @@ var qrcode = function() {
   .acceptable-details{font-size:11.5px;}
   .acceptable-details summary{color:var(--ink-soft); cursor:pointer; user-select:none;}
   .acceptable-checkbox-group{display:flex; flex-direction:column; gap:3px; margin-top:6px;}
-  .acceptable-checkbox-label{display:flex; align-items:center; gap:5px; font-weight:400; cursor:pointer;}
+  .acceptable-checkbox-label{display:flex; align-items:center; gap:5px; font-weight:500; cursor:pointer;}
   .items-editor-actions{display:flex; gap:8px; margin-top:20px;}
   .items-editor-error{color:var(--gw); font-size:13px; margin:10px 0 0;}
   .building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
@@ -2506,7 +2506,7 @@ var qrcode = function() {
   .tenant-list{list-style:none; margin:0 0 16px; padding:0; font-size:13.5px;}
   .tenant-list li{padding:8px 0; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
   .tenant-list li:last-child{border-bottom:none;}
-  .tenant-list .tenant-name{font-weight:600;}
+  .tenant-list .tenant-name{font-weight:500;}
   .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
   .tenant-row-actions{display:flex; gap:8px; flex-shrink:0; margin-left:auto;}
   .remove-admin-btn{margin-left:auto;}
@@ -2604,7 +2604,7 @@ var qrcode = function() {
   .missed-list{display:flex; flex-direction:column; gap:10px;}
   .missed-row{display:grid; grid-template-columns:22px 1fr 90px 50px; align-items:center; gap:12px; padding:10px 14px; background:var(--paper); border:1px solid var(--line);}
   .missed-rank{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
-  .missed-name{font-size:14px; font-weight:600;}
+  .missed-name{font-size:14px; font-weight:500;}
   .missed-bar-track{height:10px; background:var(--line); overflow:hidden;}
   .missed-bar-fill{height:100%; background:var(--gw);}
   .missed-pct{font-family:var(--mono); font-size:12.5px; text-align:right; color:var(--gw); font-weight:700;}
@@ -2635,7 +2635,7 @@ var qrcode = function() {
      screen (and stays collapsed in print — see the @media print rule above). */
   .roster-details{margin-top:4px;}
   .roster-details summary{
-    font-family:var(--body); font-weight:600; font-size:14px; cursor:pointer;
+    font-family:var(--body); font-weight:500; font-size:14px; cursor:pointer;
     color:var(--forest-dark); list-style:none; display:inline-flex; align-items:center; gap:6px;
   }
   .roster-details summary::-webkit-details-marker{display:none;}
@@ -4020,7 +4020,7 @@ function showConfirm(message){
           // Low induction result, good real recycling - real behavior better than the induction result suggests.
           if (large){
             findings.push({
-              text: `<b>${streamLabel}: real recycling is notably better than the induction result suggests</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap. Worth understanding who is actually responsible for sorting decisions in this space - real behavior looks stronger than the induction results alone would suggest, which may mean other staff are already sorting well, or that those who completed the induction aren't representative of everyone using the space.`,
+              text: `<b>${streamLabel}: real recycling is notably better than the induction result suggests</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap. Worth understanding who is actually responsible for sorting decisions in this space - real behaviour looks stronger than the induction results alone would suggest, which may mean other staff are already sorting well, or that those who completed the induction aren't representative of everyone using the space.`,
               concern: false,
             });
           } else {
@@ -4090,7 +4090,7 @@ function showConfirm(message){
   }
 
   const BINTRACKER_INTRO = {
-    current: 'Compares induction results against real Bintracker collection data, for tenants with a confirmed Bintracker match, over the current filter. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Induction scores reflect only the people who completed the induction, not everyone who uses this tenant\'s waste streams - a mismatch may reflect limited induction participation as much as a real behavior gap. This reflects a snapshot of current data, not before/after impact - see the induction impact comparison for whether real behavior changed after training.',
+    current: 'Compares induction results against real Bintracker collection data, for tenants with a confirmed Bintracker match, over the current filter. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Induction scores reflect only the people who completed the induction, not everyone who uses this tenant\'s waste streams - a mismatch may reflect limited induction participation as much as a real behaviour gap. This reflects a snapshot of current data, not before/after impact - see the induction impact comparison for whether real behaviour changed after training.',
     impact: 'Compares each tenant\'s real Bintracker collection data before and after their most recent induction completion, for tenants with a confirmed Bintracker match. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Not limited to the current date filter - the before/after split is anchored to each tenant\'s own most recent induction date, not the viewing window.',
   };
 

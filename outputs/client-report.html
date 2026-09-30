@@ -124,7 +124,7 @@
   .finding-headline{font-family:var(--display); font-weight:700; font-size:13.5px; margin:0 0 4px;}
   .finding-detail{margin:0;}
   .finding-rec{margin:8px 0 0; font-size:12.5px; color:var(--ink-soft);}
-  .finding-rec b{color:var(--ink); font-weight:600;}
+  .finding-rec b{color:var(--ink); font-weight:500;}
 
   .missed-list{list-style:none; margin:0; padding:0;}
   .missed-list li{display:flex; justify-content:space-between; gap:16px; padding:10px 0; border-bottom:1px solid var(--line); font-family:var(--body); font-size:13.5px;}
@@ -934,25 +934,25 @@ function computeCurrentStateFindings(tenantRows, matches, bintrackerRows){
       if (inductionLow && realLow){
         findings.push({
           headline: `${streamLabel}: low induction result matches low real recycling`,
-          detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), and only ${realPct}% of their real ${streamLabel} collections (${M} loads) were successfully recycled — consistent with the induction result. Both point to the same gap worth addressing.`,
+          detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), and only ${realPct}% of their real ${streamLabel} collections (${M} loads) were successfully recycled - consistent with the induction result. Both point to the same gap worth addressing.`,
         });
       } else if (!inductionLow && !realLow){
         findings.push({
           headline: `${streamLabel}: strong induction result matches strong real recycling`,
-          detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), and ${realPct}% of their real ${streamLabel} collections (${M} loads) were successfully recycled — consistent with the induction result.`,
+          detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), and ${realPct}% of their real ${streamLabel} collections (${M} loads) were successfully recycled - consistent with the induction result.`,
         });
       } else if (!inductionLow && realLow){
         // Good induction result, low real recycling.
         if (large){
           findings.push({
             headline: `${streamLabel}: strong induction result, but a significant gap in real recycling`,
-            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but only ${realPct}% of their real collections (${M} loads) were successfully recycled — a ${gap}-point gap.`,
-            recommendation: 'Consider checking bin signage, and whether everyone using this space — not just those who completed the induction — has seen this information.',
+            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but only ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap.`,
+            recommendation: 'Consider checking bin signage, and whether everyone using this space - not just those who completed the induction - has seen this information.',
           });
         } else {
           findings.push({
             headline: `${streamLabel}: good induction result, with a modest gap in real recycling`,
-            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but only ${realPct}% of their real collections (${M} loads) were successfully recycled — a ${gap}-point gap, worth keeping an eye on.`,
+            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but only ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap, worth keeping an eye on.`,
           });
         }
       } else {
@@ -960,13 +960,13 @@ function computeCurrentStateFindings(tenantRows, matches, bintrackerRows){
         if (large){
           findings.push({
             headline: `${streamLabel}: real recycling is notably better than the induction result suggests`,
-            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled — a ${gap}-point gap.`,
-            recommendation: "Worth understanding who is actually responsible for sorting decisions in this space — real behavior looks stronger than the induction results alone would suggest, which may mean other staff are already sorting well, or that those who completed the induction aren't representative of everyone using the space.",
+            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap.`,
+            recommendation: "Worth understanding who is actually responsible for sorting decisions in this space - real behaviour looks stronger than the induction results alone would suggest, which may mean other staff are already sorting well, or that those who completed the induction aren't representative of everyone using the space.",
           });
         } else {
           findings.push({
             headline: `${streamLabel}: real recycling is somewhat better than the induction result suggests`,
-            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled — a ${gap}-point gap, worth keeping an eye on.`,
+            detail: `${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap, worth keeping an eye on.`,
           });
         }
       }
@@ -1015,12 +1015,12 @@ function computeInductionImpactFindings(allSubs, matches, bintrackerRows){
           headline: large
             ? `${streamLabel}: real recycling improved significantly after the induction`
             : `${streamLabel}: real recycling improved after the induction`,
-          detail: `${who}'s real ${streamLabel} collections were ${beforePct}% successfully recycled before their induction (${M1} loads), and ${afterPct}% after (${M2} loads) — a ${gap}-point improvement.`,
+          detail: `${who}'s real ${streamLabel} collections were ${beforePct}% successfully recycled before their induction (${M1} loads), and ${afterPct}% after (${M2} loads) - a ${gap}-point improvement.`,
         });
       } else {
         findings.push({
           headline: `${streamLabel}: real recycling dropped after the induction`,
-          detail: `${who}'s real ${streamLabel} collections were ${beforePct}% successfully recycled before their induction (${M1} loads), and ${afterPct}% after (${M2} loads) — a ${gap}-point drop.`,
+          detail: `${who}'s real ${streamLabel} collections were ${beforePct}% successfully recycled before their induction (${M1} loads), and ${afterPct}% after (${M2} loads) - a ${gap}-point drop.`,
           recommendation: "Worth checking whether something changed in this tenant's space (turnover, new bin setup, etc.) around this time.",
         });
       }
@@ -1150,7 +1150,7 @@ async function generateReport(){
               if (bFindingsCurrent.length){
                 bintrackerHtml += `
                   <h4>Real-world data: current state</h4>
-                  <p class="block-sub">Compares this building's induction results against real Bintracker collection data for tenants with a confirmed match, over this period. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Induction scores reflect only the people who completed the induction, not everyone who uses this tenant's waste streams - a mismatch may reflect limited induction participation as much as a real behavior gap. This reflects a snapshot of current data, not before/after impact.</p>
+                  <p class="block-sub">Compares this building's induction results against real Bintracker collection data for tenants with a confirmed match, over this period. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Induction scores reflect only the people who completed the induction, not everyone who uses this tenant's waste streams - a mismatch may reflect limited induction participation as much as a real behaviour gap. This reflects a snapshot of current data, not before/after impact.</p>
                   <ul class="findings-list">${renderFindingsList(bFindingsCurrent)}</ul>`;
               }
             }
@@ -1191,7 +1191,7 @@ async function generateReport(){
     document.getElementById('reportDoc').style.display = 'block';
   } catch (err){
     console.error('Failed to generate report:', err);
-    configError.textContent = 'Something went wrong generating the report — check the console for details.';
+    configError.textContent = 'Something went wrong generating the report - check the console for details.';
     configError.style.display = 'block';
   } finally {
     generateBtn.disabled = false;
@@ -1265,7 +1265,7 @@ printReportBtn.addEventListener('click', () => {
   overlay.innerHTML = `
     <div class="print-overlay-box">
       <p id="printOverlayMsg">Preparing your report for printing…</p>
-      <p class="print-overlay-note">In the print dialog, turn off "Headers and footers" — otherwise your browser adds its own page title, date and file path on top of this report's own design.</p>
+      <p class="print-overlay-note">In the print dialog, turn off "Headers and footers" - otherwise your browser adds its own page title, date and file path on top of this report's own design.</p>
       <button type="button" class="btn secondary" id="cancelPrintBtn">Cancel</button>
     </div>`;
   document.body.appendChild(overlay);
@@ -1348,7 +1348,7 @@ document.getElementById('emailSignInForm').addEventListener('submit', async (e) 
   try { await signInWithEmailAndPassword(auth, email, password); }
   catch (err){
     console.error('Email sign-in failed:', err);
-    document.getElementById('authStatus').textContent = 'Sign-in failed — check the email and password and try again.';
+    document.getElementById('authStatus').textContent = 'Sign-in failed - check the email and password and try again.';
   }
 });
 

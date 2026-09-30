@@ -73,7 +73,7 @@
   .upload-actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap;}
 
   .tab-btn{
-    font-family:var(--body); font-weight:600; font-size:14.5px; color:var(--ink-soft);
+    font-family:var(--body); font-weight:500; font-size:14.5px; color:var(--ink-soft);
     background:none; border:none; border-bottom:2.5px solid transparent; padding:10px 4px; margin-bottom:-1.5px;
     cursor:pointer;
   }
@@ -204,7 +204,7 @@
      looked "open" at the bottom, exactly the bug the user found. Plain tenant-list rows still get
      their bottom border removed as the last item, same as before. */
   .tenant-list li:last-child:not(.discovered-building-row){border-bottom:none;}
-  .tenant-list .tenant-name{font-weight:600;}
+  .tenant-list .tenant-name{font-weight:500;}
   .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
   .tenant-row-actions{display:flex; gap:8px; flex-shrink:0; margin-left:auto;}
   /* ".tenant-list li" (a descendant selector) beats a plain ".tenant-edit-row" class selector on
@@ -294,7 +294,7 @@
      default state, so reusing it here would have leaked this styling into the sidebar too. */
   .folder-tabs{display:flex; gap:6px; align-items:flex-end; border-bottom:1.5px solid var(--line); margin-bottom:20px; padding-left:2px;}
   .folder-tab{
-    font-family:var(--body); font-weight:600; font-size:14.5px; color:var(--ink-soft);
+    font-family:var(--body); font-weight:500; font-size:14.5px; color:var(--ink-soft);
     background:color-mix(in srgb, var(--paper), var(--ink) 9%);
     border:1.5px solid var(--line); border-bottom:none; border-radius:8px 8px 0 0;
     padding:10px 20px 9px; margin-bottom:-1.5px;
@@ -428,8 +428,8 @@
       </div>
 
       <div class="report-block">
-        <h3>Synchronize a building's tenants</h3>
-        <p class="block-sub">Only buildings with a Bintracker mapping saved (in the Buildings tab) appear here. Synchronizing compares the last 30 days of Bintracker collections against this building's real tenant list - nothing is changed until you review and act on each item.</p>
+        <h3>Synchronise a building's tenants</h3>
+        <p class="block-sub">Only buildings with a Bintracker mapping saved (in the Buildings tab) appear here. Synchronising compares the last 30 days of Bintracker collections against this building's real tenant list - nothing is changed until you review and act on each item.</p>
         <div id="bintrackerSyncBuildingsList"></div>
       </div>
     </div>
@@ -997,7 +997,7 @@ function renderBintrackerTenantMatchHtml(building, tenant, distinctBintrackerTen
   const changeKey = `${building.id}__${tenant.id}`;
   const confirmed = matches.get(tenant.id);
   if (bintrackerChangeOpenKey === changeKey){
-    const options = ['<option value="">— pick a Bintracker tenant —</option>']
+    const options = ['<option value="">- pick a Bintracker tenant -</option>']
       .concat(distinctBintrackerTenantRaws.map(raw =>
         `<option value="${esc(raw)}"${confirmed && confirmed.bintrackerTenantRaw === raw ? ' selected' : ''}>${esc(raw)}</option>`));
     return `<div class="bintracker-match-row" data-building-id="${esc(building.id)}" data-tenant-id="${esc(tenant.id)}">
@@ -1306,7 +1306,7 @@ function renderBintrackerSyncResultHtml(building, result){
           ${visibleMismatches.map(m => `
             <li data-tenant-id="${esc(m.tenantId)}">
               <span class="tenant-name">${esc(m.tenantName)}</span>
-              <span class="tenant-levels">Stored: ${esc(m.currentLevels.join(', ') || '(none)')} — Bintracker also shows: ${esc(m.newLevels.join(', '))}</span>
+              <span class="tenant-levels">Stored: ${esc(m.currentLevels.join(', ') || '(none)')} - Bintracker also shows: ${esc(m.newLevels.join(', '))}</span>
               <span class="tenant-row-actions">
                 <button type="button" class="btn update-level-mismatch-btn">Update</button>
                 <button type="button" class="btn secondary ignore-level-mismatch-btn">Ignore</button>
@@ -1337,7 +1337,7 @@ function renderBintrackerSyncBuildingsList(){
         <div class="building-header-row">
           <h3>${esc(b.name)}</h3>
           <div class="building-header-actions">
-            <button type="button" class="btn secondary sync-tenants-btn"${isSyncing ? ' disabled' : ''}>${isSyncing ? 'Synchronizing…' : 'Synchronize'}</button>
+            <button type="button" class="btn secondary sync-tenants-btn"${isSyncing ? ' disabled' : ''}>${isSyncing ? 'Synchronising…' : 'Synchronise'}</button>
           </div>
         </div>
         ${result ? renderBintrackerSyncResultHtml(b, result) : ''}
@@ -1365,7 +1365,7 @@ async function runBintrackerSync(buildingId){
     });
   } catch (err){
     console.error('Failed to synchronize Bintracker tenants:', err);
-    await showAlert(err.message || 'Failed to synchronize - check the console for details.');
+    await showAlert(err.message || 'Failed to synchronise - check the console for details.');
   } finally {
     bintrackerSyncInFlightBuildingId = null;
     renderBintrackerSyncBuildingsList();

@@ -188,7 +188,7 @@
   .bin-tab:focus-visible{outline:3px solid var(--forest); outline-offset:-3px;}
   .bin-tab .code{font-family:var(--mono); font-size:11px; letter-spacing:0.08em; color:var(--ink-soft);}
   .bin-tab .swatch{width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center;}
-  .bin-tab .name{font-size:12.5px; font-weight:600; line-height:1.2;}
+  .bin-tab .name{font-size:12.5px; font-weight:500; line-height:1.2;}
   .bin-tab.active{background:#FDFCF8;}
   .bin-tab.active::after{
     content:""; position:absolute; left:0; right:0; bottom:-1px; height:3px;
@@ -312,7 +312,7 @@
   .board-item:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
   .board-item .item-icon{width:40px; height:40px; display:flex; align-items:center; justify-content:center;}
   .board-item .item-icon svg{width:100%; height:100%;}
-  .board-item .item-name{font-size:12.5px; font-weight:600; line-height:1.25;}
+  .board-item .item-name{font-size:12.5px; font-weight:500; line-height:1.25;}
   /* On mobile, the base minmax(120px,1fr) grid only ever fits 2 columns, leaving each card
      much wider/taller than its actual content (icon + one short line of text) needs - reads as
      oversized. 3 tighter columns with a smaller icon and less padding fits the same information
@@ -352,7 +352,7 @@
   }
   .bin-drop .bin-icon{width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center;}
   .bin-drop .bin-icon svg{width:18px; height:18px;}
-  .bin-drop .bin-label{font-size:12px; font-weight:600; line-height:1.2;}
+  .bin-drop .bin-label{font-size:12px; font-weight:500; line-height:1.2;}
 
   .feedback{margin-top:20px; padding:14px 18px; font-size:14.5px; display:none; border:1px solid var(--line); background:var(--paper); align-items:center; gap:14px;}
   .feedback.show{display:flex; animation:fade .25s ease;}
@@ -380,13 +380,13 @@
   .gauge-label span:first-child{left:0;}
   .gauge-label span:last-child{right:0;}
   .gauge-label span:nth-child(2){left:75%; transform:translateX(-50%);}
-  .verdict{font-size:17px; font-weight:600; margin:22px 0 6px;}
+  .verdict{font-size:17px; font-weight:500; margin:22px 0 6px;}
   .verdict-sub{color:var(--ink-soft); font-size:14.5px; margin-bottom:26px;}
 
   .save-warning{
     display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
     background:var(--gw-tint); border:1.5px solid var(--gw); color:var(--gw);
-    padding:14px 18px; margin-bottom:20px; font-size:14px; font-weight:600;
+    padding:14px 18px; margin-bottom:20px; font-size:14px; font-weight:500;
   }
   .save-warning .btn.secondary{border-color:var(--gw); color:var(--gw); padding:8px 16px; font-size:13px; white-space:nowrap;}
   .save-warning .btn.secondary:hover{background:var(--gw); color:var(--paper);}
@@ -403,7 +403,7 @@
   }
   .email-result-panel input[type="email"]:focus-visible{outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);}
   .email-result-actions{display:flex; gap:10px; flex-wrap:wrap;}
-  .email-result-status{font-size:13.5px; font-weight:600;}
+  .email-result-status{font-size:13.5px; font-weight:500;}
   .email-result-status.error{color:var(--gw);}
   .email-result-status.success{color:var(--forest-dark);}
 
@@ -429,8 +429,8 @@
   .review-wrong-list{display:flex; flex-direction:column; gap:8px; margin-top:10px;}
   .review-wrong-item{display:flex; gap:10px; align-items:flex-start; font-size:13.5px;}
   .review-wrong-item .item-thumb{flex-shrink:0; width:26px; height:26px;}
-  .review-wrong-item .review-wrong-name{font-weight:600;}
-  .review-wrong-item .review-wrong-dest{font-weight:600;}
+  .review-wrong-item .review-wrong-name{font-weight:500;}
+  .review-wrong-item .review-wrong-dest{font-weight:500;}
   .review-wrong-item .review-wrong-reason{color:var(--ink-soft); font-size:12.5px;}
   .review-all-correct{font-size:13px; color:var(--ink-soft); font-style:italic;}
   .item-thumb{display:flex; align-items:center; justify-content:center;}
@@ -2351,7 +2351,7 @@ try {
       const sendMyResultEmail = httpsCallable(functionsInstance, 'sendMyResultEmail');
       await sendMyResultEmail({ submissionId: lastSubmissionId, confirmedEmail: email });
       siteContext.email = email; // the trainee's own correction, reflected back in this session too
-      status.textContent = 'Sent ✓ — check your inbox.';
+      status.textContent = 'Sent ✓ - check your inbox.';
       status.classList.add('success');
       status.style.display = 'block';
     } catch (err){

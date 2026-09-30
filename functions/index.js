@@ -159,7 +159,7 @@ async function checkRateLimitGeneric(collectionName, key, windowMs, maxCount, ac
     if (data.count >= maxCount) {
       throw new HttpsError(
         'resource-exhausted',
-        `Too many ${actionLabel} recently — wait a few minutes and try again ` +
+        `Too many ${actionLabel} recently - wait a few minutes and try again ` +
           `(limit: ${maxCount} per ${windowMs / 60000} minutes).`
       );
     }
@@ -396,7 +396,7 @@ function esc(str) {
 // so the email reads as a continuation of what the trainee already saw, not a different voice.
 function verdictText(score) {
   return score >= PASS_MARK
-    ? "Passed — solid grasp of what doesn't belong."
+    ? "Passed - solid grasp of what doesn't belong."
     : 'Not quite at the pass mark yet.';
 }
 
@@ -458,7 +458,7 @@ function buildResultEmailContent(data) {
           ${i < missed.length - 1 ? '<tr><td style="height:14px; line-height:14px; font-size:0;">&nbsp;</td></tr>' : ''}
         `).join('')
       }</table>`
-    : '<p style="margin:0; font-size:14px; color:#4A5850;">Nothing missed — every item was sorted correctly.</p>';
+    : '<p style="margin:0; font-size:14px; color:#4A5850;">Nothing missed - every item was sorted correctly.</p>';
   const missedText = missed.length
     ? missed.map((it) => `- ${it.name}: ${it.explain}`).join('\n')
     : 'Nothing missed - every item was sorted correctly.';

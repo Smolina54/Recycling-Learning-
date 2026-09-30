@@ -295,16 +295,16 @@ async function runFlow(page){
   check('the new building was also auto-enrolled in Recycling Sorting, same as a plain "+ Add building"',
     enrollmentCount === 1, enrollmentCount);
 
-  // --- Clicking "Synchronize" with no reachable Cloud Function also fails gracefully ---
+  // --- Clicking "Synchronise" with no reachable Cloud Function also fails gracefully ---
   let mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
   const alertCountBeforeSync = await page.evaluate(() => window.__alertCalls.length);
   await mappedRow.$eval('.sync-tenants-btn', el => el.click());
   await page.waitForFunction((n) => window.__alertCalls.length > n, { timeout: 8000 }, alertCountBeforeSync);
-  check('a failed "Synchronize" call shows an error alert instead of crashing', true);
+  check('a failed "Synchronise" call shows an error alert instead of crashing', true);
   mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
   const syncBtnAfterFailure = await mappedRow.$eval('.sync-tenants-btn', el => ({ text: el.textContent, disabled: el.disabled }));
-  check('the "Synchronize" button resets to normal (not stuck on "Synchronizing…") after the failure',
-    syncBtnAfterFailure.text === 'Synchronize' && !syncBtnAfterFailure.disabled, JSON.stringify(syncBtnAfterFailure));
+  check('the "Synchronise" button resets to normal (not stuck on "Synchronising…") after the failure',
+    syncBtnAfterFailure.text === 'Synchronise' && !syncBtnAfterFailure.disabled, JSON.stringify(syncBtnAfterFailure));
 
   // --- Inject a realistic syncBintrackerTenants result via the test-only seam, and drive the
   // resulting New/Missing/Mismatch review UI for real ---
