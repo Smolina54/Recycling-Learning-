@@ -104,11 +104,10 @@
     display:flex; align-items:center; justify-content:space-between; gap:16px;
   }
   .topbar .brand-row{display:flex; align-items:center; gap:10px;}
-  /* 32px by default (desktop) - matches the id-gate's own logo size, which already reads fine at
-     both desktop and mobile widths. The 26px mobile-only override below is unchanged from before -
-     a user review found this same 26px size left the logo looking lost on a wide desktop topbar
-     even though it worked fine on a narrow mobile one. */
-  .topbar .brand-row img{height:32px; width:auto; display:block;}
+  /* 44px by default (desktop) - a user review found the earlier 32px size left the logo looking
+     lost on a wide desktop topbar. The 26px mobile-only override below is unchanged from the
+     original fix - mobile already read fine at that size, this round only touched desktop. */
+  .topbar .brand-row img{height:44px; width:auto; display:block;}
   .topbar .brand-row .brand-divider{width:1px; align-self:stretch; background:var(--line);}
   @media (max-width:640px){.topbar .brand-row img{height:26px;}}
   .brand{
