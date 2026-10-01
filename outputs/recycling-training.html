@@ -104,8 +104,13 @@
     display:flex; align-items:center; justify-content:space-between; gap:16px;
   }
   .topbar .brand-row{display:flex; align-items:center; gap:10px;}
-  .topbar .brand-row img{height:26px; width:auto; display:block;}
+  /* 32px by default (desktop) - matches the id-gate's own logo size, which already reads fine at
+     both desktop and mobile widths. The 26px mobile-only override below is unchanged from before -
+     a user review found this same 26px size left the logo looking lost on a wide desktop topbar
+     even though it worked fine on a narrow mobile one. */
+  .topbar .brand-row img{height:32px; width:auto; display:block;}
   .topbar .brand-row .brand-divider{width:1px; align-self:stretch; background:var(--line);}
+  @media (max-width:640px){.topbar .brand-row img{height:26px;}}
   .brand{
     font-family:var(--mono); font-size:12px; letter-spacing:0.14em; text-transform:uppercase;
     color:var(--ink-soft);
@@ -1205,10 +1210,20 @@ try {
   const panels = document.querySelectorAll('.detail-panel');
   const progressFill = document.getElementById('progressFill');
   const progressLabel = document.getElementById('progressLabel');
-  const visited = new Set([streams[0]]); // the first stream's panel is shown by default, before any click
+  // Starts empty, not pre-seeded with the first stream - a pre-production review found the old
+  // new Set([streams[0]]) made the progress bar show 12% the instant the page loaded, before the
+  // trainee had actually done anything (the first panel is shown by default, so it used to count
+  // as "visited" for free). Now a panel only counts once the trainee actually navigates AWAY from
+  // it (see showStream() below, which marks the outgoing panel as visited, not just the
+  // destination) - the first panel still correctly reaches 100% stream-review credit once the
+  // trainee clicks "Next" off of it, same as every other panel, so updateGameLock()'s "all 5
+  // reviewed" unlock condition is unaffected.
+  const visited = new Set();
   let gameStarted = false;
 
   function showStream(id){
+    const outgoing = document.querySelector('.detail-panel.active');
+    if (outgoing) visited.add(outgoing.dataset.stream);
     tabs.forEach(t => { const a = t.dataset.stream===id; t.classList.toggle('active', a); t.setAttribute('aria-selected', a); });
     panels.forEach(p => p.classList.toggle('active', p.dataset.stream===id));
     visited.add(id);
