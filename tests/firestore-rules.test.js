@@ -25,6 +25,13 @@ const validAttempt = {
   name: 'Jane Doe', email: 'jane@example.com', programId: 'recycling-sorting',
 };
 
+// Recycling Sorting submissions now require a deterministic doc id (2026-10-02 - "one real result
+// per person per building") - mirrors the exact formula firestore.rules checks, so a genuinely
+// valid payload's write actually succeeds instead of being rejected only on this new id condition.
+function submissionDocId(data){
+  return `${data.programId}__${data.buildingId}__${data.email.toLowerCase()}`;
+}
+
 const results = [];
 function record(label, fn){
   return fn().then(
@@ -69,7 +76,7 @@ async function main(){
     assertSucceeds(setDoc(doc(allowedUser, 'buildings', 'building-new'), { itemOverrides: { 'pc-box': { stream: 'mr' } } }, { merge: true })));
 
   await record('anon can create a valid submission', () =>
-    assertSucceeds(addDoc(collection(anon, 'submissions'), validSubmission)));
+    assertSucceeds(setDoc(doc(anon, 'submissions', submissionDocId(validSubmission)), validSubmission)));
   await record('anon CANNOT create a submission missing email', () =>
     assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, email: '' })));
   await record('anon CANNOT create a submission missing buildingId', () => {
@@ -103,8 +110,10 @@ async function main(){
     assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, duration_seconds: 999999 })));
   await record('anon CANNOT create a submission with an oversized device_type string', () =>
     assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, device_type: 'x'.repeat(51) })));
-  await record('anon CAN create a submission with realistic avoided/total/duration_seconds/device_type values', () =>
-    assertSucceeds(addDoc(collection(anon, 'submissions'), { ...validSubmission, avoided: 20, total: 25, duration_seconds: 180, device_type: 'mobile-touch' })));
+  await record('anon CAN create a submission with realistic avoided/total/duration_seconds/device_type values', () => {
+    const data = { ...validSubmission, email: 'jane-realistic@example.com', avoided: 20, total: 25, duration_seconds: 180, device_type: 'mobile-touch' };
+    return assertSucceeds(setDoc(doc(anon, 'submissions', submissionDocId(data)), data));
+  });
   await record('anon CANNOT create a submission missing programId', () => {
     const bad = { ...validSubmission }; delete bad.programId;
     return assertFails(addDoc(collection(anon, 'submissions'), bad));
@@ -112,11 +121,17 @@ async function main(){
   await record('anon can create a submission carrying a linkId with no expiresAt (permanent link)', () =>
     testEnv.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'links', 'link-no-expiry'), { programId: 'recycling-sorting', buildingId: 'building-1', tenantId: null });
-    }).then(() => assertSucceeds(addDoc(collection(anon, 'submissions'), { ...validSubmission, linkId: 'link-no-expiry' }))));
+    }).then(() => {
+      const data = { ...validSubmission, email: 'jane-linknoexpiry@example.com', linkId: 'link-no-expiry' };
+      return assertSucceeds(setDoc(doc(anon, 'submissions', submissionDocId(data)), data));
+    }));
   await record('anon can create a submission carrying a linkId that has not expired yet', () =>
     testEnv.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'links', 'link-future'), { programId: 'recycling-sorting', buildingId: 'building-1', tenantId: null, expiresAt: new Date(Date.now() + 3600000) });
-    }).then(() => assertSucceeds(addDoc(collection(anon, 'submissions'), { ...validSubmission, linkId: 'link-future' }))));
+    }).then(() => {
+      const data = { ...validSubmission, email: 'jane-linkfuture@example.com', linkId: 'link-future' };
+      return assertSucceeds(setDoc(doc(anon, 'submissions', submissionDocId(data)), data));
+    }));
   await record('anon CANNOT create a submission carrying a linkId that already expired', () =>
     testEnv.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'links', 'link-past'), { programId: 'recycling-sorting', buildingId: 'building-1', tenantId: null, expiresAt: new Date(Date.now() - 3600000) });

@@ -219,7 +219,17 @@ service cloud.firestore {
         && hasOnlyKnownSubmissionFields(request.resource.data)
         && hasReasonableSizes(request.resource.data)
         && request.resource.data.score is number
-        && request.resource.data.score >= 0 && request.resource.data.score <= 100;
+        && request.resource.data.score >= 0 && request.resource.data.score <= 100
+        // Recycling Sorting only (2026-10-02): one real, saved result per person per building - a
+        // retake still plays through the game, but its write targets this SAME deterministic doc
+        // id (programId+buildingId+lowercased-email, matching the composite-key convention
+        // enrollments/buildingAccess already use elsewhere in this file), so Firestore itself
+        // reclassifies a second write as an "update" rather than a "create" - allow update stays
+        // false below, so it's rejected automatically with no extra logic needed. Organics/Battery
+        // (confirmed dummy/example programs, not real content) are deliberately excluded - they
+        // keep today's one-row-per-playthrough behavior via their own random-id addDoc() calls.
+        && (request.resource.data.programId != 'recycling-sorting' ||
+            submissionId == request.resource.data.programId + '__' + request.resource.data.buildingId + '__' + request.resource.data.email.lower());
       // read: a global reviewer sees any submission; a scoped client (via /buildingAccess)
       // sees only submissions for their own granted building(s). delete stays reviewer-only —
       // a scoped client is view-only, never allowed to remove a training record.

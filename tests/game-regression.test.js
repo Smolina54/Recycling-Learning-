@@ -11,7 +11,7 @@ const url = require('url');
 const fs = require('fs');
 const puppeteer = require('puppeteer-core');
 const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
-const { doc, setDoc } = require('firebase/firestore');
+const { doc, setDoc, getDocs, collection, query, where } = require('firebase/firestore');
 
 // Known limitation: hardcoded to Sergio's installed Edge path — single-machine internal tool, not solved with OS-detection.
 // Override via TEST_BROWSER_PATH if this machine's security software blocks Edge automation
@@ -128,7 +128,7 @@ async function main(){
   page.on('pageerror', (err) => consoleErrors.push('pageerror: ' + err.message));
 
   try {
-    await runFlow(page);
+    await runFlow(page, seedEnv);
   } catch (err) {
     console.error('CRASHED — dumping diagnostics:', err.message);
     console.error('Console errors so far:', JSON.stringify(consoleErrors, null, 2));
@@ -142,7 +142,7 @@ async function main(){
   await finishAndReport(page, browser, consoleErrors);
 }
 
-async function runFlow(page){
+async function runFlow(page, seedEnv){
 
   // --- Invalid-link fallback still works with a bogus buildingId ---
   // This is the very first Firestore call of the whole test run, right after a fresh emulator
@@ -323,6 +323,47 @@ async function runFlow(page){
   await new Promise(r => setTimeout(r, 500));
   check('save SUCCEEDS against the emulator with valid gate data (no warning banner shown)',
     await page.$eval('#saveWarning', el => getComputedStyle(el).display === 'none'));
+
+  // One real result per person per building (2026-10-02) - a retake must play through fine but
+  // must NOT create a second submissions doc, and must show the practice notice instead of the
+  // save-warning banner (that banner means a real failure, which this isn't).
+  async function countRealSubmissions(){
+    let count = 0;
+    await seedEnv.withSecurityRulesDisabled(async (context) => {
+      const snap = await getDocs(query(collection(context.firestore(), 'submissions'),
+        where('buildingId', '==', TEST_BUILDING_ID), where('email', '==', 'jane@example.com')));
+      count = snap.size;
+    });
+    return count;
+  }
+
+  const countAfterFirstRun = await countRealSubmissions();
+  check('exactly one real submission exists after the first completion', countAfterFirstRun === 1, countAfterFirstRun);
+
+  await page.click('#retryBtn');
+  await new Promise(r => setTimeout(r, 300));
+  check('retake restarts the game (game stage visible again)',
+    await page.$eval('#gameStage', el => getComputedStyle(el).display !== 'none'));
+
+  await resolveAllBoardItems(page);
+  await page.click('#nextPhaseBtn');
+  await new Promise(r => setTimeout(r, 300));
+  for (let phase = 1; phase < 5; phase++){
+    const reachedFive = await resolvePhase(page);
+    if (!reachedFive) break;
+    await page.click('#nextPhaseBtn');
+    await new Promise(r => setTimeout(r, 300));
+  }
+  await new Promise(r => setTimeout(r, 500));
+
+  check('practice notice shows after a retake past the first real completion',
+    await page.$eval('#practiceNotice', el => getComputedStyle(el).display !== 'none').catch(() => false));
+  check('save-warning stays hidden on a retake (expected, not a failure)',
+    await page.$eval('#saveWarning', el => getComputedStyle(el).display === 'none'));
+
+  const countAfterRetake = await countRealSubmissions();
+  check('retake does NOT create a second submissions doc - still exactly one',
+    countAfterRetake === 1, countAfterRetake);
 
   await checkRecyclingLevelBanner(page);
 }

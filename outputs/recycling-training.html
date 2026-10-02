@@ -395,6 +395,14 @@
   .save-warning .btn.secondary{border-color:var(--gw); color:var(--gw); padding:8px 16px; font-size:13px; white-space:nowrap;}
   .save-warning .btn.secondary:hover{background:var(--gw); color:var(--paper);}
 
+  /* Shown instead of save-warning on a retake past the first real completion (2026-10-02) - a
+     calm, informational tone (not the red/alarm save-warning look), since this isn't a failure. */
+  .practice-notice{
+    display:flex; align-items:center; gap:10px; border-left:4px solid var(--forest);
+    background:rgba(47,111,78,0.09); border-radius:var(--radius);
+    padding:14px 16px; margin-bottom:20px; font-size:14px; color:var(--ink);
+  }
+
   .email-result-panel{
     background:var(--panel); border:1.5px solid var(--line); border-radius:var(--radius);
     padding:18px 20px; margin-top:16px; display:flex; flex-direction:column; gap:12px;
@@ -793,6 +801,9 @@
       <span>We couldn't save your results - check your connection and try again.</span>
       <button class="btn secondary" id="retrySaveBtn">Retry</button>
     </div>
+    <div class="practice-notice" id="practiceNotice" style="display:none;">
+      <span>This run is just practice - your real result was already recorded the first time you completed this check.</span>
+    </div>
     <div class="score-row">
       <div class="score-big" id="scorePct">0%</div>
       <div class="score-of" id="scoreOf">0 / 25 correctly avoided</div>
@@ -832,7 +843,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  getFirestore, doc, getDoc, collection, getDocs, addDoc, serverTimestamp, connectFirestoreEmulator
+  getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, serverTimestamp, connectFirestoreEmulator
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
 import { getFunctions, httpsCallable, connectFunctionsEmulator } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
@@ -2146,12 +2157,36 @@ try {
     startPhase(0);
   });
 
+  // One real, saved result per person per building (2026-10-02) - the doc id is deterministic
+  // (programId__buildingId__email, lowercased) instead of addDoc()'s random id, matching
+  // firestore.rules' own matching check there. A retake still plays through the game normally,
+  // but its write targets this SAME id, which Firestore classifies as an "update" rather than a
+  // "create" once the real doc already exists - and the rules' `allow update: if false` rejects
+  // that automatically, with no extra logic needed here beyond recognizing that specific,
+  // expected rejection and treating it as "already recorded", not a real failure.
+  async function setDocWithRetry(ref, payload, attempts = 3){
+    for (let i = 0; i < attempts; i++){
+      try {
+        await setDoc(ref, payload);
+        return { ok: true, alreadyExisted: false };
+      } catch (err){
+        if (err && err.code === 'permission-denied'){
+          return { ok: false, alreadyExisted: true };
+        }
+        if (i === attempts - 1){ console.error('setDocWithRetry: all attempts failed:', err); return { ok: false, alreadyExisted: false }; }
+        await new Promise(r => setTimeout(r, 500 * (i + 1)));
+      }
+    }
+    return { ok: false, alreadyExisted: false };
+  }
+
   async function submitResults(payload){
     // Preview/demo mode: nothing real to save (no building/tenant context to attach it to) —
     // report success so no warning banner shows, but there's no id for the email feature either.
-    if (isPreviewMode) return { ok: true, id: null };
-    const ref = await addDocWithRetry(collection(db, 'submissions'), payload);
-    return { ok: !!ref, id: ref ? ref.id : null };
+    if (isPreviewMode) return { ok: true, id: null, alreadyExisted: false };
+    const id = `${payload.programId}__${payload.buildingId}__${payload.email.toLowerCase()}`;
+    const { ok, alreadyExisted } = await setDocWithRetry(doc(db, 'submissions', id), payload);
+    return { ok, id, alreadyExisted };
   }
 
   let lastResultsPayload = null;
@@ -2159,9 +2194,10 @@ try {
 
   async function trySubmitResults(payload){
     lastResultsPayload = payload;
-    const { ok, id } = await submitResults(payload);
+    const { ok, id, alreadyExisted } = await submitResults(payload);
     lastSubmissionId = id;
-    document.getElementById('saveWarning').style.display = ok ? 'none' : 'flex';
+    document.getElementById('saveWarning').style.display = (ok || alreadyExisted) ? 'none' : 'flex';
+    document.getElementById('practiceNotice').style.display = alreadyExisted ? 'flex' : 'none';
   }
 
   document.getElementById('retrySaveBtn').addEventListener('click', () => {
