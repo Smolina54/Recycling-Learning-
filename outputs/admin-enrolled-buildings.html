@@ -1067,9 +1067,9 @@ async function loadAllActiveBuildings(){
 }
 
 // Scoped to whichever program this page was opened for — a building only shows up here once
-// it's enrolled in that program (enrollments.active !== false). Every existing building was
-// auto-enrolled in Recycling (either at creation time or by the one-time migration script), so
-// this is a no-op change in behavior for that program's default case.
+// it's enrolled in that program (enrollments.active !== false). Building creation no longer
+// auto-enrols in anything (follow-up fix, 2026-10-01) - enrolling via "Enrol an existing building"
+// below is the only way a building ends up here now, for every program including Recycling.
 async function loadEnrolledData(){
   const [enrollmentsSnap, allBuildingDocs] = await Promise.all([
     getDocs(query(collection(db, 'enrollments'), where('programId', '==', currentProgram.id))),

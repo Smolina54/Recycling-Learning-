@@ -203,7 +203,10 @@ async function runFlow(page){
 
   const tabs = await page.$$('.bin-tab');
   check('found 5 stream tabs', tabs.length === 5, tabs.length);
-  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 80)); }
+  // 600ms, not a token delay - showStream()'s scrollIntoView({behavior:'smooth'}) animation takes
+  // longer than the 80ms this used to wait, and a puppeteer click mid-animation can land on an
+  // element Chromium considers "not clickable" (still mid-scroll) and throw - found 2026-10-01.
+  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 600)); }
   await new Promise(r => setTimeout(r, 200));
   check('"Begin the sort" enabled after visiting all 5 streams',
     await page.$eval('#startGameBtn', el => !el.disabled));

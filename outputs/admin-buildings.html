@@ -1506,12 +1506,9 @@ document.getElementById('addBuildingBtn').addEventListener('click', async () => 
     // its mapping AND its checked tenants directly, in one action, without ever touching this
     // plain name-only form.
     const newBuildingId = await generateUniqueSlugAndCreate('buildings', name, { name });
-    // Every building does Recycling by default, same as before programs existed — so a new
-    // building is auto-enrolled here rather than requiring a manual step every single time.
-    await setDoc(doc(db, 'enrollments', `recycling-sorting__${newBuildingId}`), {
-      programId: 'recycling-sorting', buildingId: newBuildingId, itemOverrides: {}, enabledTenantIds: null,
-      createdAt: serverTimestamp(),
-    });
+    // This used to also auto-enrol the building in Recycling Sorting, from back when that was the
+    // only program that existed. Now that there's a real multi-program Catalog, enrollment is
+    // always a deliberate, separate step - see "Enrol an existing building" in Enrolled Buildings.
     nameInput.value = '';
     status.textContent = `Added "${name}".`;
     expandedBuildingIds.add(newBuildingId); // open it up right away — you almost always want to add tenants next
@@ -1593,14 +1590,15 @@ document.getElementById('discoveredBuildingsList').addEventListener('click', asy
     addDiscoveredBuildingInFlight = bintrackerName;
     renderDiscoveredBuildingsList();
     try {
-      // The building doc + its enrollment + its checked tenants are all written in ONE Firestore
-      // transaction, not 3 separate sequential calls as this used to be — a pre-production audit
-      // found the old version could fail partway through (a network blip between steps) and leave
-      // a real orphaned state: a building with no enrollment (invisible to enrollment-scoped
-      // reports) or a building+enrollment with no tenants, with only a generic alert and no way to
-      // tell what had actually been created. Same slug-retry-with-suffix-on-conflict loop as
-      // generateUniqueSlugAndCreate above, just extended to write everything atomically instead of
-      // only the building doc — either the whole thing lands, or none of it does.
+      // The building doc + its checked tenants are all written in ONE Firestore transaction, not
+      // separate sequential calls as this used to be — a pre-production audit found the old version
+      // could fail partway through (a network blip between steps) and leave a real orphaned state:
+      // a building with no tenants, with only a generic alert and no way to tell what had actually
+      // been created. Same slug-retry-with-suffix-on-conflict loop as generateUniqueSlugAndCreate
+      // above, just extended to write everything atomically instead of only the building doc —
+      // either the whole thing lands, or none of it does. (No longer also writes an enrollment doc
+      // here - adding a building, discovered via Bintracker or not, no longer auto-enrols it in any
+      // program; see "Enrol an existing building" in Enrolled Buildings for that deliberate step.)
       const base = slugify(displayName) || crypto.randomUUID();
       let newBuildingId = null;
       for (let attempt = 0; attempt < 5 && !newBuildingId; attempt++){
@@ -1611,10 +1609,6 @@ document.getElementById('discoveredBuildingsList').addEventListener('click', asy
             const snap = await tx.get(buildingRef);
             if (snap.exists()) throw new Error('slug-taken');
             tx.set(buildingRef, { name: displayName, bintrackerBuildingName: bintrackerName });
-            tx.set(doc(db, 'enrollments', `recycling-sorting__${candidate}`), {
-              programId: 'recycling-sorting', buildingId: candidate, itemOverrides: {}, enabledTenantIds: null,
-              createdAt: serverTimestamp(),
-            });
             checkedIndices.forEach(i => {
               const t = b.tenants[i];
               if (!t) return;

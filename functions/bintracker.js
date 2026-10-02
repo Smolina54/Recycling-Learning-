@@ -12,9 +12,9 @@
 const crypto = require('crypto');
 const https = require('https');
 
-const BASE_URL = 'https://dsdev.bintracker.com.au'; // dev/test environment - stays here per the
-// user's explicit decision (2026-09-17/22); moving to a production hostname is a deliberate
-// later step, not part of this feature.
+const BASE_URL = 'https://ds.bintracker.com.au'; // production environment - cut over 2026-10-01,
+// once the user received real production credentials (was https://dsdev.bintracker.com.au, the
+// dev/test sandbox used throughout 2026-09-17 to 2026-09-30).
 const COLLECTIONS_PATH = '/api/Collections/GetAsync';
 const PAGE_SIZE = 500;
 const MAX_PAGES = 50; // safety cap against the Cloud Function's own timeout - the real test pull
@@ -63,13 +63,44 @@ function httpGet(url, headers) {
   });
 }
 
+// Found against real production data (2026-10-01): Bintracker's prod environment does not
+// reliably honor request.page/request.pageSize the way the dev sandbox did - a single page came
+// back with 4,123 rows instead of the requested 500, each page taking ~10s. Without a guard, the
+// old "keep going while rows.length >= PAGE_SIZE" loop would re-request up to MAX_PAGES (50) times,
+// blowing well past this function's own 300s timeout (confirmed: that's exactly what happened).
+// Two independent, defensive stops, neither depending on knowing which failure mode is real:
+// (1) if a page's content is identical to the previous page's, the API isn't actually advancing -
+//     stop immediately instead of re-fetching the same (possibly huge) blob up to 50 times.
+// (2) a wall-clock time budget, well under the function's own timeout - if genuinely distinct,
+//     large data keeps coming back, stop and return what's been gathered so far rather than being
+//     hard-killed with nothing to show for it.
+const LOOP_TIME_BUDGET_MS = 200000; // leaves headroom under every caller's 300s function timeout
+
+function pageSignature(rows) {
+  if (!rows.length) return 'empty';
+  const first = JSON.stringify(rows[0]);
+  const last = JSON.stringify(rows[rows.length - 1]);
+  return rows.length + '|' + first + '|' + last;
+}
+
 // Fetches every page of Collections for a date range, optionally scoped to one building name.
 // Omitting `building` (undefined/null) queries across every building the credentials can see -
 // used by discoverBintrackerBuildings; a real building name scopes to just that one, used by
 // both refreshBintrackerData and syncBintrackerTenants.
-async function fetchBintrackerCollections({ building, collectDateFrom, collectDateTo, appId, appKey }) {
+// `onPage(rows, allRowsSoFar)` is an optional callback invoked after each page is fetched and
+// added to the running total - return true to stop fetching further pages early. Used by
+// discoverBintrackerBuildings (see its own comment) to stop once distinct building names have
+// stopped appearing, instead of blindly fetching every row Bintracker has for the window.
+async function fetchBintrackerCollections({ building, wasteType, collectDateFrom, collectDateTo, appId, appKey, onPage }) {
   const allRows = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
+  const startedAt = Date.now();
+  let prevSignature = null;
+  let page = 1;
+  for (; page <= MAX_PAGES; page++) {
+    if (Date.now() - startedAt > LOOP_TIME_BUDGET_MS) {
+      console.log(`[bintracker] stopped: time budget exceeded after page ${page - 1}, ${allRows.length} rows so far`);
+      break;
+    }
     const queryParams = {
       'request.collectDateFrom': collectDateFrom,
       'request.collectDateTo': collectDateTo,
@@ -77,14 +108,31 @@ async function fetchBintrackerCollections({ building, collectDateFrom, collectDa
       'request.pageSize': String(PAGE_SIZE),
     };
     if (building) queryParams['request.building'] = building;
+    if (wasteType) queryParams['request.wasteType'] = wasteType;
     const baseUrl = BASE_URL + COLLECTIONS_PATH;
     const header = oauth1Header('GET', baseUrl, queryParams, appId, appKey);
     const qs = Object.keys(queryParams).map((k) => `${k}=${encodeURIComponent(queryParams[k])}`).join('&');
+    const pageStartedAt = Date.now();
     const json = await httpGet(`${baseUrl}?${qs}`, { Authorization: header, Accept: 'application/json' });
     const rows = json.data || [];
+    console.log(`[bintracker] page ${page}: ${rows.length} rows in ${Date.now() - pageStartedAt}ms (total so far: ${allRows.length + rows.length})`);
+    const signature = pageSignature(rows);
+    if (signature === prevSignature) {
+      console.log(`[bintracker] stopped: page ${page} identical to page ${page - 1}, pagination isn't advancing`);
+      break;
+    }
+    prevSignature = signature;
     allRows.push(...rows);
-    if (rows.length < PAGE_SIZE) break;
+    if (onPage && onPage(rows, allRows)) {
+      console.log(`[bintracker] stopped: onPage callback signaled no more pages needed after page ${page}`);
+      break;
+    }
+    if (rows.length < PAGE_SIZE) {
+      console.log(`[bintracker] stopped: page ${page} returned fewer than ${PAGE_SIZE} rows (real last page)`);
+      break;
+    }
   }
+  if (page > MAX_PAGES) console.log(`[bintracker] stopped: reached MAX_PAGES (${MAX_PAGES}), ${allRows.length} rows total`);
   return allRows;
 }
 
@@ -292,6 +340,7 @@ function diffBintrackerTenants(rawRows, existingTenants) {
 
 module.exports = {
   fetchBintrackerCollections,
+  _pageSignature: pageSignature, // exported for the isolated unit test only, same pattern as _oauth1Header
   mapWasteTypeToStream,
   WASTE_TYPE_TO_STREAM,
   normalizeForMatching,

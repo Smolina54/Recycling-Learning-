@@ -292,8 +292,8 @@ async function runFlow(page){
     newBuildingDocData && newBuildingDocData.bintrackerBuildingName === 'New Tower Pty Ltd', newBuildingDocData && newBuildingDocData.bintrackerBuildingName);
   check('only the CHECKED tenant (Acme Startup) was created, not the unchecked one (Beta Co)',
     newTenantNames.length === 1 && newTenantNames[0] === 'Acme Startup', JSON.stringify(newTenantNames));
-  check('the new building was also auto-enrolled in Recycling Sorting, same as a plain "+ Add building"',
-    enrollmentCount === 1, enrollmentCount);
+  check('the new building is NOT auto-enrolled in anything, same as a plain "+ Add building"',
+    enrollmentCount === 0, enrollmentCount);
 
   // --- Clicking "Synchronise" with no reachable Cloud Function also fails gracefully ---
   let mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);

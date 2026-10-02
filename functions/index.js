@@ -849,13 +849,19 @@ exports.refreshBintrackerData = onCall(
 // 3 functions below either do a pure read/diff (nothing persisted) or a single, explicit,
 // admin-confirmed delete - there's nothing here that needs history the way the induction-vs-real-
 // data comparison feature's bintrackerRows/bintrackerTenantMatches do.
-// Same 30-day window used for both "check for new buildings" and "synchronize this building" -
-// collections happen daily, so 30 days gives ample margin without risking MAX_PAGES/timeout on an
-// unscoped, all-buildings pull.
-function last30DayRange() {
+// `syncBintrackerTenants`/`refreshBintrackerData` are scoped to ONE building (via
+// request.building), so their per-call data volume stays small regardless of window length - they
+// keep the full 30 days for better sample size. `discoverBintrackerBuildings` is different: it
+// omits `building` entirely to pull EVERY building's rows in one unscoped call, and real
+// production data (confirmed 2026-10-01) made that genuinely huge - 30 days x ~22 buildings
+// weighed Monday-Friday was enough data that pagination couldn't finish inside the function's own
+// timeout. It only needs to see each active building's name at least once, not build any
+// statistic, so a much shorter window is correct here, not just a workaround - 10 calendar days
+// always covers at least one full Mon-Fri business week even around a long weekend/public holiday.
+function recentDayRange(days) {
   const toDate = new Date();
   const fromDate = new Date(toDate);
-  fromDate.setDate(fromDate.getDate() - 30);
+  fromDate.setDate(fromDate.getDate() - days);
   const fmt = (d) => d.toISOString().slice(0, 10);
   return { fromDate: fmt(fromDate), toDate: fmt(toDate) };
 }
@@ -864,19 +870,47 @@ function last30DayRange() {
 // fetchBintrackerCollections's own comment), so it queries across every building the credentials
 // can see, then surfaces any distinct `building` value not yet mapped to one of this app's own
 // buildings via bintrackerBuildingName. Pure read - no Firestore writes.
+//
+// Found against real production data (2026-10-01): Bintracker's prod environment ignores
+// request.pageSize entirely and always returns 1000 real, DISTINCT rows per page (confirmed via
+// logging - no two pages were ever identical), so this can't rely on "stop when a page comes back
+// short" or on detecting a repeated page - the data genuinely never runs out within any reasonable
+// time. But this function only needs to see each real building's name once, not read every row -
+// with ~22 total buildings, every name has almost certainly already shown up within the first
+// couple of pages. The onPage callback below tracks the running count of distinct building names
+// seen and stops once 5 consecutive pages add zero new ones, instead of fetching for minutes.
+// Also filters to wasteType "General waste" (confirmed from a real row's exact casing) - virtually
+// every commercial building generates some general waste, so this is very unlikely to miss a real
+// building, while cutting out the Mixed Recycling/Organics/E-Waste rows that don't help this
+// function at all and were making each page far bigger than it needed to be.
 exports.discoverBintrackerBuildings = onCall(
   { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300, maxInstances: 3, concurrency: 5 },
   async (request) => {
     await assertIsAdmin(request.auth);
     await checkRateLimitGeneric('bintrackerRateLimits', request.auth.token.email, BINTRACKER_RATE_LIMIT_WINDOW_MS, BINTRACKER_RATE_LIMIT_MAX_CALLS, 'Bintracker calls made');
 
-    const { fromDate, toDate } = last30DayRange();
+    const { fromDate, toDate } = recentDayRange(10);
+    const seenBuildingNames = new Set();
+    let staleStreak = 0;
     const rawRows = await fetchBintrackerCollections({
       // `building` deliberately omitted - queries every building the credentials can see.
+      wasteType: 'General waste',
       collectDateFrom: fromDate,
       collectDateTo: toDate,
       appId: BINTRACKER_APP_ID.value(),
       appKey: BINTRACKER_APP_KEY.value(),
+      onPage: (pageRows) => {
+        const before = seenBuildingNames.size;
+        for (const row of pageRows) {
+          const norm = row && row.building && normalizeForMatching(row.building);
+          if (norm) seenBuildingNames.add(norm);
+        }
+        staleStreak = seenBuildingNames.size === before ? staleStreak + 1 : 0;
+        // Started at 2 consecutive stale pages - too impatient in practice (2026-10-02): 4 real
+        // buildings with lower-frequency collections didn't show up until later pages, so this
+        // was stopping before they'd ever had a chance to appear. Bumped to 5 for more headroom.
+        return staleStreak >= 5;
+      },
     });
 
     const buildingsSnap = await admin.firestore().collection('buildings').get();
@@ -931,7 +965,7 @@ exports.syncBintrackerTenants = onCall(
       throw new HttpsError('failed-precondition', 'No Bintracker mapping set for this building yet.');
     }
 
-    const { fromDate, toDate } = last30DayRange();
+    const { fromDate, toDate } = recentDayRange(30);
     const rawRows = await fetchBintrackerCollections({
       building: bintrackerBuildingName,
       collectDateFrom: fromDate,

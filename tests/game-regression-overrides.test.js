@@ -178,7 +178,10 @@ async function runFlow(page){
 
   const tabs = await page.$$('.bin-tab');
   check('still 5 walkthrough tabs even with a redirected stream', tabs.length === 5, tabs.length);
-  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 80)); }
+  // 600ms, not a token delay - showStream()'s scrollIntoView({behavior:'smooth'}) animation takes
+  // longer than 80ms, and a puppeteer click mid-animation can land on an element Chromium
+  // considers "not clickable" (still mid-scroll) and throw - found 2026-10-01.
+  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 600)); }
   await new Promise(r => setTimeout(r, 200));
 
   const pcNoteText = await page.$eval('.building-note[data-stream="pc"]', el => el.textContent).catch(() => '');
@@ -251,7 +254,7 @@ async function runFlow(page){
   const page2 = await page.browser().newPage();
   await passIdGate(page2, 'jane-overrides-2@example.com', GAME_URL, TEST_TENANT_ID);
   const tabs2 = await page2.$$('.bin-tab');
-  for (const tab of tabs2){ await tab.click(); await new Promise(r => setTimeout(r, 60)); }
+  for (const tab of tabs2){ await tab.click(); await new Promise(r => setTimeout(r, 600)); }
   await new Promise(r => setTimeout(r, 150));
   await page2.click('#startGameBtn');
   await new Promise(r => setTimeout(r, 300));
@@ -324,7 +327,10 @@ async function runAcceptableFlow(browser, consoleErrors){
 
   await passIdGate(page, 'jane-acceptable@example.com', ACCEPTABLE_GAME_URL, ACCEPTABLE_TENANT_ID);
   const tabs = await page.$$('.bin-tab');
-  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 80)); }
+  // 600ms, not a token delay - showStream()'s scrollIntoView({behavior:'smooth'}) animation takes
+  // longer than 80ms, and a puppeteer click mid-animation can land on an element Chromium
+  // considers "not clickable" (still mid-scroll) and throw - found 2026-10-01.
+  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 600)); }
   await new Promise(r => setTimeout(r, 200));
   await page.click('#startGameBtn');
   await new Promise(r => setTimeout(r, 300));
@@ -410,7 +416,10 @@ async function runBlockedFlow(browser, consoleErrors){
 
   await passIdGate(page, 'jane-blocked@example.com', BLOCKED_GAME_URL, BLOCKED_TENANT_ID);
   const tabs = await page.$$('.bin-tab');
-  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 80)); }
+  // 600ms, not a token delay - showStream()'s scrollIntoView({behavior:'smooth'}) animation takes
+  // longer than 80ms, and a puppeteer click mid-animation can land on an element Chromium
+  // considers "not clickable" (still mid-scroll) and throw - found 2026-10-01.
+  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 600)); }
   await new Promise(r => setTimeout(r, 200));
 
   // Nothing to narrate — the swapped-in backup already has 'og' as its own catalog default,
@@ -478,7 +487,10 @@ async function runFullMergeFlow(browser, consoleErrors){
 
   await passIdGate(page, 'jane-full-merge@example.com', FULL_MERGE_GAME_URL, FULL_MERGE_TENANT_ID);
   const tabs = await page.$$('.bin-tab');
-  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 80)); }
+  // 600ms, not a token delay - showStream()'s scrollIntoView({behavior:'smooth'}) animation takes
+  // longer than 80ms, and a puppeteer click mid-animation can land on an element Chromium
+  // considers "not clickable" (still mid-scroll) and throw - found 2026-10-01.
+  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 600)); }
   await new Promise(r => setTimeout(r, 200));
   await page.click('#startGameBtn');
   await new Promise(r => setTimeout(r, 300));

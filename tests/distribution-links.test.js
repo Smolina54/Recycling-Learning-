@@ -126,7 +126,10 @@ async function runTenantLockedFlow(page, seedEnv){
   // startGameBtn stays disabled (updateGameLock()) until all 5 walkthrough tabs have been
   // visited — same as every other test that reaches the real game engine.
   const tabs = await page.$$('.bin-tab');
-  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 60)); }
+  // 600ms, not a token delay - showStream()'s scrollIntoView({behavior:'smooth'}) animation takes
+  // longer than 60ms, and a puppeteer click mid-animation can land on an element Chromium
+  // considers "not clickable" (still mid-scroll) and throw - found 2026-10-01.
+  for (const tab of tabs){ await tab.click(); await new Promise(r => setTimeout(r, 600)); }
   await new Promise(r => setTimeout(r, 150));
 
   await page.click('#startGameBtn');

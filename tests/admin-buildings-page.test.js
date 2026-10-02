@@ -397,6 +397,25 @@ async function runFlow(page, consoleErrors){
   check('other tenants in the same building survive an unrelated tenant delete',
     tenantEntriesLive.some(t => t.includes('Widgetco')), tenantEntriesLive.join(' || '));
 
+  // Building creation no longer auto-enrols in Recycling Sorting (follow-up fix, 2026-10-01) — the
+  // real id-gate check below needs the building actually enrolled first, via the same "Enrol an
+  // existing building" flow a real admin would use, not a direct Firestore seed (this test file
+  // has no Firestore-seeding harness of its own, unlike some others — driving the real UI is both
+  // simpler here and doubles as live coverage of the manual-enroll replacement path itself).
+  const enrollPage = await page.browser().newPage();
+  await enrollPage.goto(`${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'admin-enrolled-buildings.html')).href}?emulator=1&program=recycling-sorting`, { waitUntil: 'domcontentloaded' });
+  await enrollPage.waitForFunction(
+    (id) => !!document.querySelector(`#enrollBuildingSelect option[value="${id}"]`),
+    { timeout: 10000 }, buildingId
+  );
+  await enrollPage.select('#enrollBuildingSelect', buildingId);
+  await enrollPage.$eval('#enrollBuildingBtn', el => el.click());
+  await enrollPage.waitForFunction(
+    () => document.getElementById('enrollBuildingStatus').textContent.includes('Enrolled'),
+    { timeout: 10000 }
+  );
+  await enrollPage.close();
+
   // "Delete" on a tenant is also a soft-delete (active:false) — confirm the real id-gate's
   // company dropdown no longer offers it, even though the building's own link still works.
   const tenantCheckPage = await page.browser().newPage();

@@ -5,13 +5,13 @@
 // both depend on this).
 // Run: npm run test:bintracker-unit
 const assert = require('assert');
-const { mapWasteTypeToStream, normalizeForMatching, findBestMatch, computeRecyclingLevelPct, MIN_ROWS_FOR_RECYCLING_LEVEL, _oauth1Header } = require('../functions/bintracker');
+const { mapWasteTypeToStream, normalizeForMatching, findBestMatch, computeRecyclingLevelPct, MIN_ROWS_FOR_RECYCLING_LEVEL, _oauth1Header, _pageSignature } = require('../functions/bintracker');
 
 const results = [];
 function check(label, cond, extra) { results.push({ label, ok: Boolean(cond), extra: extra || '' }); }
 
 // --- OAuth1 header format ---
-const header = _oauth1Header('GET', 'https://dsdev.bintracker.com.au/api/Collections/GetAsync', {
+const header = _oauth1Header('GET', 'https://ds.bintracker.com.au/api/Collections/GetAsync', {
   'request.building': 'Demo Building',
   'request.collectDateFrom': '2026-01-01',
   'request.collectDateTo': '2026-01-31',
@@ -29,7 +29,7 @@ check('header does NOT include oauth_version (Bintracker\'s own config leaves it
 // Same base string signed twice with the same inputs except nonce/timestamp (which are
 // time/random-based) should differ - proves the signature actually depends on the nonce/timestamp,
 // not a hardcoded stub.
-const header2 = _oauth1Header('GET', 'https://dsdev.bintracker.com.au/api/Collections/GetAsync', {
+const header2 = _oauth1Header('GET', 'https://ds.bintracker.com.au/api/Collections/GetAsync', {
   'request.building': 'Demo Building',
 }, 'fake-app-id', 'fake-app-key');
 check('two calls produce different nonces (real randomness, not a stub)', header !== header2);
@@ -123,6 +123,19 @@ const noneRecycled = [row('mr', true, 'Non-Recycled'), row('mr', true, 'Non-Recy
 check('all-qualifying-rows-non-recycled computes 0%', computeRecyclingLevelPct(noneRecycled) === 0, computeRecyclingLevelPct(noneRecycled));
 
 check('an empty row array returns null', computeRecyclingLevelPct([]) === null, computeRecyclingLevelPct([]));
+
+// --- pageSignature (found 2026-10-01 against real production data: Bintracker doesn't reliably
+// honor request.page/pageSize, so the pagination loop needs to detect a repeated page and stop) ---
+const rowsA = [{ id: 1, collectDate: '2026-09-01' }, { id: 2, collectDate: '2026-09-02' }];
+const rowsA2 = [{ id: 1, collectDate: '2026-09-01' }, { id: 2, collectDate: '2026-09-02' }]; // same content, different array instance
+const rowsB = [{ id: 1, collectDate: '2026-09-01' }, { id: 3, collectDate: '2026-09-03' }];
+check('identical page content produces the same signature (even as a different array instance)',
+  _pageSignature(rowsA) === _pageSignature(rowsA2));
+check('different page content produces a different signature',
+  _pageSignature(rowsA) !== _pageSignature(rowsB));
+check('different row counts produce a different signature even if first/last rows happen to match',
+  _pageSignature(rowsA) !== _pageSignature([rowsA[0], rowsA[1], rowsA[1]]));
+check('an empty page has its own stable signature', _pageSignature([]) === _pageSignature([]), _pageSignature([]));
 
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.ok ? '' : ' :: ' + r.extra}`);
 const failed = results.filter(r => !r.ok);

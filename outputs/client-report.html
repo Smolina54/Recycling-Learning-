@@ -627,9 +627,12 @@ function chunkArray(arr, size){
 
 // Accurate, date-range-scoped fetch — unlike the live Reports screen's own loadLiveData()
 // (capped at MAX_ROWS most-recent submissions, date filter applied only after that cap), a
-// formal client deliverable must never silently omit data from its stated period. The existing
-// composite indexes (programId+buildingId+timestamp, already in firestore.indexes.json for the
-// per-building-access-scope queries) already support this exact shape — no new index needed.
+// formal client deliverable must never silently omit data from its stated period. This needs its
+// OWN composite index (buildingId+programId+timestamp, ASCENDING) in firestore.indexes.json — the
+// existing programId+buildingId+timestamp-DESCENDING index (for the per-building-access-scope
+// queries) does NOT cover this shape, confirmed the hard way (2026-10-01): the `buildingId IN [...]`
+// clause here, combined with a timestamp range, makes Firestore require a different field order
+// and an ASCENDING direction, which the emulator never enforces so no test ever caught the gap.
 async function fetchSubmissionsInRange(programId, buildingIds, fromDate, toDate){
   const fromTs = Timestamp.fromDate(fromDate);
   const toTs = Timestamp.fromDate(toDate);
@@ -682,8 +685,8 @@ async function fetchAllSubmissionTimestamps(programId, buildingIds){
 
 // Same date-range accuracy guarantee as fetchSubmissionsInRange, over 'attempts' (recorded when
 // someone clicks "Begin the sort") — needed to tell a client how many people STARTED the
-// induction, not just how many finished it. Mirrors the existing composite index shape
-// (programId+buildingId+startedAt, already in firestore.indexes.json) so no new index is needed.
+// induction, not just how many finished it. Needs its own composite index too, same reason as
+// fetchSubmissionsInRange above (buildingId+programId+startedAt, ASCENDING).
 async function fetchAttemptsInRange(programId, buildingIds, fromDate, toDate){
   const fromTs = Timestamp.fromDate(fromDate);
   const toTs = Timestamp.fromDate(toDate);
