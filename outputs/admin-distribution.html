@@ -2498,8 +2498,15 @@ var qrcode = function() {
        identical proportions this file mirrors. Both were fixed together: one consistent 28mm
        margin on all 4 sides (154mm content width, matching flyer.js's own marginX/marginY), and
        the QR grown to ~108mm to actually fill the freed-up vertical space instead of leaving it
-       empty. */
-    .flyer-print-page{width:154mm; max-width:154mm; padding:28mm;}
+       empty.
+       Found again 2026-10-02 (same day): the fix above still left real ~28mm blank margins on an
+       actual printed A4 sheet - this file sets `*{box-sizing:border-box}` globally, so
+       `width:154mm; padding:28mm` made the WHOLE box (padding included) only 154mm wide instead of
+       the intended 154mm of content PLUS 28mm padding on each side (210mm total, filling the real
+       A4 width). Fixed by sizing the box to the full 210mm page width instead - border-box then
+       correctly leaves exactly 154mm of content area inside the 28mm padding, matching the
+       original intent (and flyer.js's own PDF) without the leftover outer margin. */
+    .flyer-print-page{width:210mm; max-width:210mm; padding:28mm;}
     .flyer-qr{width:108mm; height:108mm; margin:0 auto 16mm;}
   }
   .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
