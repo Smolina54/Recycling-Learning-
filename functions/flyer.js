@@ -76,7 +76,17 @@ async function buildFlyerPdf({ buildingName, link }) {
 
   const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   const centerX = PAGE_WIDTH / 2;
-  const marginX = 79; // 56pt (A5 design) x √2 ≈ 28mm
+  // Found 2026-10-02: the original "scale every A5 number by √2" approach (see the comment on
+  // PAGE_WIDTH/PAGE_HEIGHT above) preserved the OLD A5 design's own already-too-generous margins
+  // at a bigger absolute size instead of fixing them - the A5 design itself was never actually
+  // edge-to-edge (per the original diagnosis: "roughly a third of the page's height was empty
+  // margin"), so multiplying that same layout by a constant factor just produced a bigger poster
+  // with the same proportion of wasted space, which is exactly what this page looked like when
+  // rendered and reviewed. Fixed by using one consistent margin (28mm) on all 4 sides and sizing
+  // the QR code dynamically to fill whatever vertical space is actually left over, instead of a
+  // fixed-size QR with a large unexplained gap below it.
+  const marginX = 79; // 28mm
+  const marginY = 79; // 28mm - same as marginX, for a symmetric, deliberate margin all around
   const contentWidth = PAGE_WIDTH - marginX * 2;
 
   // Full-page cream background - drawn FIRST so every subsequent element sits on top of it.
@@ -105,7 +115,7 @@ async function buildFlyerPdf({ buildingName, link }) {
   const logoRowWidth = tradeflexDims.width + LOGO_GAP + futuregreenDims.width;
   const logoRowX = centerX - logoRowWidth / 2;
 
-  let y = PAGE_HEIGHT - 127; // 90pt x √2
+  let y = PAGE_HEIGHT - marginY;
   page.drawImage(tradeflexLogo, { x: logoRowX, y: y - LOGO_HEIGHT, width: tradeflexDims.width, height: LOGO_HEIGHT });
   page.drawImage(futuregreenLogo, {
     x: logoRowX + tradeflexDims.width + LOGO_GAP, y: y - LOGO_HEIGHT,
@@ -126,21 +136,35 @@ async function buildFlyerPdf({ buildingName, link }) {
     y -= 25; // 18pt x √2
   }
 
-  // QR at ~78mm square (55mm x √2) - the original A5 design's own comfortable close-range scan
-  // size, scaled up proportionally along with everything else, not left at its old absolute size
-  // (which would have left the QR looking small and under-filling the larger A4 page).
-  const QR_SIZE = 78 * MM_TO_PT;
-  const qrPngBuffer = await QRCode.toBuffer(link, { errorCorrectionLevel: 'M', margin: 1, width: 600 });
+  // QR sized dynamically to fill whatever vertical space is actually left, instead of a fixed
+  // ~78mm constant that (per the comment on marginY above) left a large, unexplained empty gap
+  // between the QR and the bottom margin. Floored/capped to a sane range (65mm-140mm) so a future
+  // copy change (e.g. a longer building name wrapping the kicker/body onto more lines) can't make
+  // this collapse to something too small to scan, or balloon absurdly large on a near-empty page.
+  const GAP_BEFORE_QR = 28;
+  const GAP_QR_TO_FOOTER = 45;
+  const FOOTER_FONT_SIZE = 13;
+  const QR_BOX_PADDING = 11; // each side - matches the box drawn around the QR below
+  const footerLineHeight = mono.heightAtSize(FOOTER_FONT_SIZE);
+  const availableForQrBox = (y - GAP_BEFORE_QR) - marginY - GAP_QR_TO_FOOTER - footerLineHeight;
+  const QR_SIZE = Math.min(140 * MM_TO_PT, Math.max(65 * MM_TO_PT, availableForQrBox - QR_BOX_PADDING * 2));
+  // QR_SIZE is now dynamic (65-140mm) - 600px was fine for the old fixed 78mm size (~195 DPI) but
+  // would print visibly soft/pixelated at the larger end of this range (600px / 140mm is only
+  // ~109 DPI; print quality wants ~300 DPI). 1800px comfortably covers the whole range (≥300 DPI
+  // even at the 140mm cap) at a negligible file-size cost - a QR is pure black/white, compresses
+  // to a few KB regardless of pixel count.
+  const qrPngBuffer = await QRCode.toBuffer(link, { errorCorrectionLevel: 'M', margin: 1, width: 1800 });
   const qrImage = await pdfDoc.embedPng(qrPngBuffer);
-  y -= 28; // 20pt x √2
+  y -= GAP_BEFORE_QR;
   const qrY = y - QR_SIZE;
   page.drawRectangle({
-    x: centerX - QR_SIZE / 2 - 11, y: qrY - 11, width: QR_SIZE + 22, height: QR_SIZE + 22, // 8pt x √2
+    x: centerX - QR_SIZE / 2 - QR_BOX_PADDING, y: qrY - QR_BOX_PADDING,
+    width: QR_SIZE + QR_BOX_PADDING * 2, height: QR_SIZE + QR_BOX_PADDING * 2,
     borderWidth: 1, borderColor: COLOR_INK_SOFT, color: rgb(1, 1, 1),
   });
   page.drawImage(qrImage, { x: centerX - QR_SIZE / 2, y: qrY, width: QR_SIZE, height: QR_SIZE });
 
-  drawCentered(page, buildingName.toUpperCase(), mono, 13, COLOR_INK_SOFT, centerX, qrY - 45); // 9pt/32pt x √2
+  drawCentered(page, buildingName.toUpperCase(), mono, FOOTER_FONT_SIZE, COLOR_INK_SOFT, centerX, qrY - GAP_QR_TO_FOOTER);
 
   const pdfBytes = await pdfDoc.save();
   return Buffer.from(pdfBytes);

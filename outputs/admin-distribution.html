@@ -2486,15 +2486,21 @@ var qrcode = function() {
     body > *:not(#flyerPrintOverlay){display:none !important;}
     #flyerPrintOverlay{display:flex !important; align-items:center; justify-content:center; min-height:100vh;}
     /* Physical A4 sizing (real poster dimensions, not just "a small card on whatever paper the
-       printer defaults to") - the QR at ~78mm (55mm x √2) scans comfortably from close range (near
-       a bin, in a lobby), same real-world distance the original A5 design was tuned for, just
-       scaled up. @page size/margin is NOT set here - this file already has an unrelated whole-
-       screen print stylesheet with its own @page rule further down, and @page rules aren't
-       scopeable by any selector/class, so the two would silently fight over which one wins by
-       source order. openFlyerPrint() instead injects/removes this one's own @page rule via a
-       temporary <style> tag right around the actual window.print() call - see that function. */
-    .flyer-print-page{width:167mm; max-width:167mm; padding:14mm 11mm;}
-    .flyer-qr{width:78mm; height:78mm; margin:0 auto 11mm;}
+       printer defaults to"). @page size/margin is NOT set here - this file already has an
+       unrelated whole-screen print stylesheet with its own @page rule further down, and @page
+       rules aren't scopeable by any selector/class, so the two would silently fight over which
+       one wins by source order. openFlyerPrint() instead injects/removes this one's own @page
+       rule via a temporary <style> tag right around the actual window.print() call - see that
+       function.
+       Found 2026-10-02: the original "scale every A5 number by √2" approach preserved the OLD A5
+       design's own already-too-generous margins at a bigger absolute size instead of fixing them -
+       confirmed by rendering functions/flyer.js's matching PDF and reviewing it, which uses the
+       identical proportions this file mirrors. Both were fixed together: one consistent 28mm
+       margin on all 4 sides (154mm content width, matching flyer.js's own marginX/marginY), and
+       the QR grown to ~108mm to actually fill the freed-up vertical space instead of leaving it
+       empty. */
+    .flyer-print-page{width:154mm; max-width:154mm; padding:28mm;}
+    .flyer-qr{width:108mm; height:108mm; margin:0 auto 16mm;}
   }
   .building-header-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
   .building-row:has(> .building-header-row:only-child) .building-header-row,
