@@ -2312,10 +2312,8 @@ var qrcode = function() {
 }));
 
 </script>
-<style>
-  @font-face{ font-family:'Gilroy'; src:url('branding/Gilroy-Bold.otf') format('opentype'); font-weight:700; font-display:swap; }
-  @font-face{ font-family:'Gilroy'; src:url('branding/Gilroy-Medium.otf') format('opentype'); font-weight:500; font-display:swap; }
-  @font-face{ font-family:'Gilroy'; src:url('branding/Gilroy-Light.otf') format('opentype'); font-weight:300; font-display:swap; }
+<link rel="stylesheet" href="admin-shared.css">
+  <style>
 
   :root{
     --paper:#EEEBE1;
@@ -2352,60 +2350,13 @@ var qrcode = function() {
     --mono: 'Space Mono', monospace;
   }
 
-  .brand-row{display:flex; align-items:center; gap:16px; margin-bottom:22px;}
-  .brand-row img{height:44px; width:auto; display:block;}
-  .brand-divider{width:1px; align-self:stretch; background:var(--line);}
 
-  *{box-sizing:border-box;}
-  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--body); font-weight:300; line-height:1.5;}
-  .wrap{max-width:920px; margin:0 auto; padding:0 24px 80px;}
 
-  header.top{padding:40px 0 28px; border-bottom:1px solid var(--line); margin-bottom:32px;}
-  .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:0.16em; text-transform:uppercase; color:var(--forest-dark); margin:0 0 12px;}
-  h1{font-family:var(--display); font-weight:700; text-transform:uppercase; font-size:clamp(28px,5vw,44px); line-height:1; margin:0 0 12px;}
-  .sub{color:var(--ink-soft); font-size:15px; max-width:600px;}
 
-  .btn{
-    font-family:var(--body); font-weight:500; font-size:14.5px;
-    padding:12px 22px; border-radius:var(--radius); border:none; cursor:pointer;
-    background:var(--ink); color:var(--paper);
-    display:inline-flex; align-items:center; gap:10px;
-  }
-  .btn.secondary{background:transparent; color:var(--ink); border:1.5px solid var(--ink);}
-  .btn:hover{background:var(--forest-dark);}
-  .btn.secondary:hover{background:var(--ink); color:var(--paper);}
-  /* This panel had almost no :focus-visible styling anywhere (only one rule, on the tenant
-     toggle switch) — a keyboard user got no visible indication of what's focused on the one
-     screen with real destructive actions (delete admin, remove building, etc.). The three
-     trainee-facing pages already style this consistently; matching that here. */
-  .btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
 
-  .upload-zone{
-    background:var(--panel); border:1.5px dashed var(--line); padding:36px; text-align:center; margin-bottom:16px;
-  }
-  .upload-zone p{color:var(--ink-soft); font-size:14.5px; margin:0 0 18px;}
-  .upload-actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap;}
 
   .admin-tabs{display:flex; gap:4px; align-items:flex-start; border-bottom:1.5px solid var(--line); margin-bottom:28px;}
-  .tab-btn{
-    font-family:var(--body); font-weight:500; font-size:14.5px; color:var(--ink-soft);
-    background:none; border:none; border-bottom:2.5px solid transparent; padding:10px 4px; margin-bottom:-1.5px;
-    cursor:pointer;
-  }
-  .tab-btn.active{color:var(--ink); border-bottom-color:var(--forest);}
-  .tab-btn:hover{color:var(--ink);}
-  .tab-btn:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
 
-  .corner-settings{
-    position:fixed; top:16px; right:16px; z-index:45; max-width:calc(100% - 32px);
-    display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;
-  }
-  /* .btn.secondary is transparent by design (the outline look used everywhere else in this
-     app) — fine for a button inline in the document flow, but these three live in
-     .corner-settings' fixed-position bar, floating over scrollable page content, so a
-     transparent background lets that content show through. Giving just these an opaque
-     background fixes it without changing the outline style anywhere it isn't a problem. */
-  .corner-btn{font-size:13px; padding:8px 14px; background:var(--panel);}
   /* "← Back to reports" is a real <a> here (this page has no in-page tab to switch back to),
      unlike every other .corner-btn on this page, which are <button>s that never needed this. */
   a.corner-btn{text-decoration:none;}
@@ -2570,10 +2521,7 @@ var qrcode = function() {
   .distribution-building-row:has(> .building-header-row:only-child){margin-bottom:12px; padding:18px 30px;}
   .building-edit-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
   .building-edit-row input{flex:1; min-width:160px;}
-  .tenant-list{list-style:none; margin:0 0 16px; padding:0; font-size:13.5px;}
-  .tenant-list li{padding:8px 0; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
   .tenant-list li:last-child{border-bottom:none;}
-  .tenant-list .tenant-name{font-weight:500;}
   .tenant-list .tenant-levels{color:var(--ink-soft); font-family:var(--mono); font-size:11.5px;}
   .tenant-row-actions{display:flex; gap:8px; flex-shrink:0; margin-left:auto;}
   .remove-admin-btn{margin-left:auto;}
@@ -2634,8 +2582,6 @@ var qrcode = function() {
 
   #reportSection{display:none;}
 
-  .report-header-row{display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px; margin:36px 0 20px;}
-  .report-header-row h2{font-family:var(--display); text-transform:uppercase; font-size:24px; margin:0;}
   .source-note{font-family:var(--mono); font-size:11.5px; color:var(--ink-soft);}
 
   /* Print-only document header (see the @media print rule further down for why it's hidden on
@@ -2650,9 +2596,6 @@ var qrcode = function() {
   .kpi-value.good{color:var(--forest-dark);}
   .kpi-value.bad{color:var(--gw);}
 
-  .report-block{background:var(--panel); border:1px solid var(--line); padding:28px 30px; margin-bottom:24px;}
-  .report-block h3{font-family:var(--display); text-transform:uppercase; font-size:17px; margin:0 0 6px;}
-  .block-sub{font-size:13.5px; color:var(--ink-soft); margin:0 0 20px;}
 
   .stream-bar-row{display:grid; grid-template-columns:150px 1fr 60px; align-items:center; gap:12px; margin-bottom:12px;}
   .stream-bar-row:last-child{margin-bottom:0;}
@@ -2705,15 +2648,11 @@ var qrcode = function() {
   .roster-details summary:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
   .roster-details > div{margin-top:14px;}
 
-  .print-row{display:flex; justify-content:flex-end; gap:12px; margin-top:8px; flex-wrap:wrap;}
 
-  .filter-row{display:flex; gap:16px; flex-wrap:wrap;}
-  .filter-field{display:flex; flex-direction:column; gap:6px; min-width:180px; flex:1;}
   /* Native date inputs don't stretch gracefully — filling the flex row's leftover space (like
      the <select> fields do) just leaves visible dead space around the small date control. Cap
      their growth instead of letting them inherit .filter-field's flex:1. */
   .filter-field-date{flex:0 1 170px; min-width:150px;}
-  .filter-field span{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft);}
   #trendChart{position:relative;}
   .trend-svg{width:100%; height:220px; display:block; cursor:crosshair;}
   .trend-tooltip{
@@ -2722,13 +2661,6 @@ var qrcode = function() {
     padding:4px 8px; border-radius:var(--radius); white-space:nowrap; pointer-events:none;
   }
 
-  .filter-field select, .filter-field input[type=date]{
-    font-family:var(--body); font-size:14px; padding:9px 12px; border:1.5px solid var(--line);
-    background:var(--paper); border-radius:var(--radius); color:var(--ink); width:100%;
-  }
-  .filter-field select:focus-visible, .filter-field input[type=date]:focus-visible{
-    outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);
-  }
 
   @media (max-width:640px){
     .stream-bar-row{grid-template-columns:100px 1fr 46px;}
@@ -2786,20 +2718,6 @@ var qrcode = function() {
     }
   }
 
-  /* In-app replacement for window.alert()/window.confirm() - see Workstream 11 in the plan.
-     Native alert()/confirm() always prefix "<host> says" and can't be repositioned/restyled by
-     any page CSS/JS; this is a real DOM overlay we fully control, centered on screen. */
-  .app-modal-overlay{
-    display:none; position:fixed; inset:0; background:rgba(30,42,34,0.55); z-index:9999;
-    align-items:center; justify-content:center; padding:20px;
-  }
-  .app-modal-overlay.open{display:flex;}
-  .app-modal-box{
-    background:var(--paper); border-radius:8px; max-width:440px; width:100%;
-    padding:24px 26px; box-shadow:0 12px 40px rgba(0,0,0,0.35);
-  }
-  .app-modal-message{margin:0 0 20px; font-family:var(--body); font-size:15px; color:var(--ink); line-height:1.5; white-space:pre-wrap;}
-  .app-modal-actions{display:flex; justify-content:flex-end; gap:10px;}
 </style>
 </head>
 <body>
