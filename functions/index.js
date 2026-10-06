@@ -947,8 +947,13 @@ async function processBintrackerRowsAndStore(rawRows, fromDate, toDate) {
   return stats;
 }
 
+// Cloud Scheduler has no presence in australia-southeast2 (Melbourne) - only
+// australia-southeast1 (Sydney) is a valid Cloud Scheduler location in Australia, so this one
+// function is pinned there instead of inheriting setGlobalOptions' Melbourne default. Firestore
+// itself stays in australia-southeast2 either way; this only moves where the nightly trigger fires
+// from, still entirely within Australia.
 exports.scheduledBintrackerRefreshNightly = onSchedule(
-  { schedule: '0 3 * * *', timeZone: 'Australia/Melbourne', secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 900, memory: '512MiB' },
+  { region: 'australia-southeast1', schedule: '0 3 * * *', timeZone: 'Australia/Melbourne', secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 900, memory: '512MiB' },
   async () => {
     const { fromDate, toDate } = recentDayRange(90);
     await runBintrackerUnscopedNightlySync(fromDate, toDate);
