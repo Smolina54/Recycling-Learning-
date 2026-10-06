@@ -7,10 +7,16 @@ service cloud.firestore {
     // The owner email is a permanent fallback (can never be locked out); anyone else
     // is granted access by having a doc in /admins, managed from the report's Admins
     // panel — no rules edit/redeploy needed to add or remove a reviewer.
+    // A Super Admin (see isSuperAdmin() below) must ALSO count as an allowed reviewer even when
+    // they have no separate /admins doc of their own — Super Admin is a strictly higher tier, and
+    // without this a pure Super Admin (no /admins doc) couldn't even read /admins or /superAdmins
+    // themselves, which is exactly the lockout found in production on 2026-10-07 (smolina@/cgutierrez@,
+    // both Super Admins with no /admins doc, got "This account doesn't have access" on every admin page).
     function isAllowedReviewer() {
       return request.auth != null &&
         (request.auth.token.email == 'esgtradeflex@gmail.com' ||
-         exists(/databases/$(database)/documents/admins/$(request.auth.token.email)));
+         exists(/databases/$(database)/documents/admins/$(request.auth.token.email)) ||
+         exists(/databases/$(database)/documents/superAdmins/$(request.auth.token.email)));
     }
 
     // Workstream 15, Part 3 (2026-10-06): a third, narrower tier above Admin. The owner email is

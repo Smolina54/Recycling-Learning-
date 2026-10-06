@@ -274,6 +274,18 @@ async function main(){
 
   await record('the owner CAN grant a new super admin via /superAdmins', () =>
     assertSucceeds(setDoc(doc(allowedUser, 'superAdmins', SUPER_ADMIN_EMAIL), { addedAt: 'now', addedBy: ALLOWED_EMAIL })));
+  // Regression check for a real production bug found 2026-10-07: a Super Admin with NO separate
+  // /admins doc of their own (the normal case - Super Admin is meant to be a standing grant, not a
+  // second doc an admin also needs) got "This account doesn't have access" on every admin page,
+  // because isAllowedReviewer() - which every admin page's gate reads /admins and /superAdmins
+  // through - only ever checked /admins, never /superAdmins. Fixed by having isAllowedReviewer()
+  // also accept a /superAdmins doc. These 3 checks lock that fix in.
+  await record('a super admin with NO /admins doc of their own CAN still read /admins (isAllowedReviewer must accept superAdmins too)', () =>
+    assertSucceeds(getDocs(collection(superAdminUser, 'admins'))));
+  await record('...and CAN read /superAdmins the same way', () =>
+    assertSucceeds(getDocs(collection(superAdminUser, 'superAdmins'))));
+  await record('...and CAN read submissions too (isAllowedReviewer gates this everywhere else in the app)', () =>
+    assertSucceeds(getDocs(collection(superAdminUser, 'submissions'))));
   await record('that newly-granted super admin CAN now grant a plain admin via /admins (self-governing tier unlocks admin management too)', () =>
     assertSucceeds(setDoc(doc(superAdminUser, 'admins', 'granted-by-new-super-admin@example.com'), { addedAt: 'now', addedBy: SUPER_ADMIN_EMAIL })));
   await record('...and CAN grant another super admin too', () =>
