@@ -1,4 +1,4 @@
-// Verifies outputs/admin-admins.html — now the "Roles" page (Workstream 15, Part 3): granting/
+// Verifies outputs/admin-admins.html — now the "App Access" page (Workstream 15, Part 3): granting/
 // revoking Super Admin/Admin/Standard User access, the role-based view difference (a plain Admin
 // sees Admin/Super-Admin rows read-only), the immediate post-sign-in access gate, and that
 // navigating away to sorting-station-report.html and back preserves the signed-in session.
@@ -92,10 +92,10 @@ async function runFlow(page){
   check('the Super Admin role option is visible to the owner (a real Super Admin)',
     await page.$eval('#superAdminRoleOption', el => getComputedStyle(el).display !== 'none'));
 
-  // --- Sidebar nav label: renamed from "Admins" to "Roles" (Workstream 15, Part 3) ---
+  // --- Sidebar nav label: renamed from "Admins" to "Roles" to "App Access" (Workstream 15, Part 3) ---
   const selfHref = await page.$eval('a[href*="admin-admins.html"]', el => el.getAttribute('href')).catch(() => null);
   const selfLabel = await page.$eval('a[href*="admin-admins.html"]', el => el.textContent).catch(() => null);
-  check('the sidebar\'s own link now reads "Roles", not "Admins"', selfLabel === 'Roles', selfLabel);
+  check('the sidebar\'s own link now reads "App Access"', selfLabel === 'App Access', selfLabel);
   check('...but still points at the same admin-admins.html file (no route rename)', selfHref === 'admin-admins.html?emulator=1', selfHref);
   const backHref = await page.$eval('.settings-sidebar-exit a', el => el.getAttribute('href')).catch(() => null);
   check('"← Back to reports" points at sorting-station-report.html', backHref === 'sorting-station-report.html?emulator=1', backHref);
@@ -152,7 +152,79 @@ async function runFlow(page){
     rolesText.includes(newStandardEmail) && rolesText.includes('Standard User') && rolesText.includes('Roles Test Tower'),
     rolesText.slice(0, 600));
 
-  // --- Remove the admin ---
+  // --- Role change: an existing Admin granted Standard User access instead should REPLACE the
+  // Admin role (with a clear confirm naming the current role and the new one), not layer a
+  // redundant/orphaned buildingAccess grant on top of it - a real gap found in production
+  // (Workstream 15 Part 3 follow-up, 2026-10-06): an existing Admin who also picked up a
+  // buildingAccess grant stayed a full Admin (the grant was inert while they held that role), but
+  // would have silently dropped to Standard-User-scoped-to-that-building if their Admin role were
+  // ever later removed - something nobody explicitly decided. ---
+  await page.type('#newAccessEmail', newAdminEmail);
+  await page.select('#newAccessRole', 'standard');
+  await page.waitForFunction(
+    () => document.querySelectorAll('#newAccessBuildingsPicker input').length > 0, { timeout: 8000 }
+  );
+  await page.$$eval('#newAccessBuildingsPicker label', (labels, name) => {
+    const target = labels.find(l => l.textContent.includes(name));
+    if (target) target.querySelector('input').click();
+  }, 'Roles Test Tower');
+  await page.click('#addAccessBtn');
+  // Same race already documented above for the plain "+ Add access" flow: the handler sets
+  // status.textContent BEFORE awaiting loadRoles(), so waiting on status text alone can read the
+  // list before its own re-render finishes (the underlying Firestore writes are already done by
+  // then - this is a benign display-order lag, not a data-integrity issue - but the test still
+  // needs to wait for the real thing it's about to assert on, not a proxy that resolves earlier).
+  await page.waitForFunction(
+    (email) => {
+      const list = document.getElementById('rolesList');
+      const li = list && [...list.children].find(el => el.textContent.includes(email));
+      return Boolean(li) && li.textContent.includes('Standard User');
+    },
+    { timeout: 10000 }, newAdminEmail
+  );
+  const confirmCallsAfterRoleChange = await page.evaluate(() => window.__confirmCalls);
+  check('changing an existing Admin to Standard User shows a confirm naming the current role and the new one',
+    confirmCallsAfterRoleChange.some(m => m.includes(newAdminEmail) && m.includes('currently has: Admin') && m.includes('Standard User')),
+    JSON.stringify(confirmCallsAfterRoleChange));
+
+  const roleChangeLi = await page.$eval('#rolesList', (list, email) => {
+    const li = [...list.children].find(el => el.textContent.includes(email));
+    return li ? li.outerHTML : null;
+  }, newAdminEmail);
+  check('after the role change, the former Admin now appears as a Standard User, not Admin',
+    roleChangeLi && roleChangeLi.includes('Standard User') && !roleChangeLi.includes('role-tag admin"'),
+    roleChangeLi);
+
+  const adminDocGoneAfterChange = await page.evaluate(async (email) => {
+    const mod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
+    const appMod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
+    const db = mod.getFirestore(appMod.getApps()[0]);
+    const snap = await mod.getDoc(mod.doc(db, 'admins', email));
+    return !snap.exists();
+  }, newAdminEmail);
+  check('...and the old /admins doc was actually removed, not just hidden in the UI', adminDocGoneAfterChange);
+
+  // Re-granting the exact same role again should be a no-op (no confirm, no duplicate work).
+  const confirmCountBeforeNoop = confirmCallsAfterRoleChange.length;
+  await page.type('#newAccessEmail', newAdminEmail);
+  await page.select('#newAccessRole', 'standard');
+  await page.waitForFunction(
+    () => document.querySelectorAll('#newAccessBuildingsPicker input').length > 0, { timeout: 8000 }
+  );
+  await page.$$eval('#newAccessBuildingsPicker label', (labels, name) => {
+    const target = labels.find(l => l.textContent.includes(name));
+    if (target && !target.querySelector('input').checked) target.querySelector('input').click();
+  }, 'Roles Test Tower');
+  await page.click('#addAccessBtn');
+  await page.waitForFunction(
+    () => (document.getElementById('accessStatus')?.textContent || '').includes('already has this exact role'),
+    { timeout: 8000 }
+  );
+  const confirmCountAfterNoop = await page.evaluate(() => window.__confirmCalls.length);
+  check('re-granting the exact same role is a no-op - no confirm dialog shown', confirmCountAfterNoop === confirmCountBeforeNoop,
+    `before=${confirmCountBeforeNoop} after=${confirmCountAfterNoop}`);
+
+  // --- Remove access (newAdminEmail is now a Standard User, per the role-change test above) ---
   await page.$$eval('.remove-role-btn', (btns, email) => {
     const li = btns.find(b => b.closest('li').textContent.includes(email));
     if (li) li.click();
@@ -162,7 +234,7 @@ async function runFlow(page){
     { timeout: 8000 }, newAdminEmail
   );
   rolesText = await page.$eval('#rolesList', el => el.textContent);
-  check('the removed admin no longer appears in the list', !rolesText.includes(newAdminEmail), rolesText.slice(0, 400));
+  check('the removed account no longer appears in the list', !rolesText.includes(newAdminEmail), rolesText.slice(0, 400));
   check('...but the Standard User granted separately is untouched', rolesText.includes(newStandardEmail), rolesText.slice(0, 400));
 
   // --- Cross-page session persistence ---

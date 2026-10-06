@@ -102,7 +102,7 @@
     <div class="settings-sidebar-label">⚙ Settings</div>
     <nav class="settings-sidebar-nav">
       <a class="tab-btn" href="admin-buildings.html">Buildings</a>
-      <a class="tab-btn" href="admin-admins.html">Roles</a>
+      <a class="tab-btn" href="admin-admins.html">App Access</a>
       <a class="tab-btn active" href="admin-catalog.html" aria-current="page">Catalog</a>
     </nav>
     <div class="settings-sidebar-exit">
@@ -127,10 +127,10 @@
   </div>
 
   <div class="upload-zone" id="authZone">
-    <p id="authStatus">Sign in with an authorised account to manage the induction catalog.</p>
+    <p id="authStatus">Loading…</p>
     <div class="upload-actions">
-      <button class="btn" id="signInBtn">Sign in with Google</button>
-      <button class="btn secondary" id="showEmailSignInBtn">Sign in with email</button>
+      <button class="btn" id="signInBtn" style="display:none;">Sign in with Google</button>
+      <button class="btn secondary" id="showEmailSignInBtn" style="display:none;">Sign in with email</button>
     </div>
     <form id="emailSignInForm" style="display:none; margin-top:16px;">
       <div class="filter-row">
