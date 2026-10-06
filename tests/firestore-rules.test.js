@@ -250,6 +250,48 @@ async function main(){
   await record('after revocation, that user CANNOT read submissions anymore', () =>
     assertFails(getDocs(collection(newAdminUser, 'submissions'))));
 
+  // ---- Super Admin tier (Workstream 15, Part 3, 2026-10-06): a plain Admin can read /admins and
+  // /superAdmins (needed by the Roles screen) but CANNOT write to either — only a Super Admin can
+  // grant/revoke Admins or other Super Admins. Tightened from the previous behavior where any
+  // existing admin could grant another admin (a real privilege-escalation gap).
+  const PLAIN_ADMIN_EMAIL = 'plain-admin@example.com';
+  const plainAdmin = testEnv.authenticatedContext('u3b', { email: PLAIN_ADMIN_EMAIL }).firestore();
+  const SUPER_ADMIN_EMAIL = 'super-admin@example.com';
+  const superAdminUser = testEnv.authenticatedContext('u3c', { email: SUPER_ADMIN_EMAIL }).firestore();
+
+  await record('the owner CAN grant a plain admin via /admins', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'admins', PLAIN_ADMIN_EMAIL), { addedAt: 'now', addedBy: ALLOWED_EMAIL })));
+  await record('a plain admin CAN read the /admins list (needed by the Roles screen)', () =>
+    assertSucceeds(getDocs(collection(plainAdmin, 'admins'))));
+  await record('a plain admin CANNOT grant another admin via /admins (no longer anyone-admin-can-grant)', () =>
+    assertFails(setDoc(doc(plainAdmin, 'admins', 'someone-else@example.com'), { addedAt: 'now', addedBy: PLAIN_ADMIN_EMAIL })));
+  await record('a plain admin CANNOT revoke an existing admin via /admins either', () =>
+    assertFails(deleteDoc(doc(plainAdmin, 'admins', PLAIN_ADMIN_EMAIL))));
+  await record('a plain admin CANNOT self-grant super admin access by writing to /superAdmins', () =>
+    assertFails(setDoc(doc(plainAdmin, 'superAdmins', PLAIN_ADMIN_EMAIL), { addedAt: 'now' })));
+  await record('a plain admin CAN read the /superAdmins list too (same "see but can\'t change" reasoning)', () =>
+    assertSucceeds(getDocs(collection(plainAdmin, 'superAdmins'))));
+
+  await record('the owner CAN grant a new super admin via /superAdmins', () =>
+    assertSucceeds(setDoc(doc(allowedUser, 'superAdmins', SUPER_ADMIN_EMAIL), { addedAt: 'now', addedBy: ALLOWED_EMAIL })));
+  await record('that newly-granted super admin CAN now grant a plain admin via /admins (self-governing tier unlocks admin management too)', () =>
+    assertSucceeds(setDoc(doc(superAdminUser, 'admins', 'granted-by-new-super-admin@example.com'), { addedAt: 'now', addedBy: SUPER_ADMIN_EMAIL })));
+  await record('...and CAN grant another super admin too', () =>
+    assertSucceeds(setDoc(doc(superAdminUser, 'superAdmins', 'second-super-admin@example.com'), { addedAt: 'now', addedBy: SUPER_ADMIN_EMAIL })));
+  await record('the owner CAN revoke a super admin via /superAdmins', () =>
+    assertSucceeds(deleteDoc(doc(allowedUser, 'superAdmins', SUPER_ADMIN_EMAIL))));
+  await record('after revocation, that former super admin CANNOT grant an admin anymore', () =>
+    assertFails(setDoc(doc(superAdminUser, 'admins', 'should-fail@example.com'), { addedAt: 'now', addedBy: SUPER_ADMIN_EMAIL })));
+
+  // Clean up the admins this block granted, so the global "the global allowlisted admin is
+  // completely unaffected" check further below still sees a clean picture if it ever enumerates.
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await deleteDoc(doc(db, 'admins', PLAIN_ADMIN_EMAIL)).catch(() => {});
+    await deleteDoc(doc(db, 'admins', 'granted-by-new-super-admin@example.com')).catch(() => {});
+    await deleteDoc(doc(db, 'superAdmins', 'second-super-admin@example.com')).catch(() => {});
+  });
+
   // ---- Per-building scoped access via /buildingAccess (roadmap Workstream 1, Step B) ----
   // A scoped client is granted access to exactly ONE building — never full reviewer rights —
   // while the existing global allowlist above must keep working completely unchanged.

@@ -899,15 +899,23 @@ function bintrackerWho(tenantName, subsForTenant){
 // ---- Comparison #1 — "Current state": does what a tenant knows match what their bin shows now ----
 // Per tenant + one of the 3 recyclable streams, within the report's own configured date range:
 // induction accuracy = sum(breakdown[stream].avoided)/sum(...total) across that tenant's
-// submissions in range; real cleanliness = share of that tenant+stream's EXTERNAL
-// (externalOnly===true — excludes on-site/internal processing, which carries no external quality
-// judgment) Bintracker rows with wasteOutcome==='Recycled' (replaces the unreliable `contaminated`
-// boolean, which real-world Bintracker data often leaves unrecorded). Both sides classified
-// against the same 75% pass-mark bar used everywhere else in this app. Skips a tenant+stream pair
-// entirely (no finding) below the sample-size floor (<3 induction submissions contributing, or <5
-// matching external Bintracker rows) — too little data to say anything meaningful. A building that
-// composts a stream on-site simply has ~0 externalOnly:true rows for it, so the floor naturally
-// excludes it — no special-case code needed.
+// submissions in range; real cleanliness = share of that tenant+stream's INTERNAL
+// (externalOnly===false) Bintracker rows with contaminated===false. Both sides classified against
+// the same 75% pass-mark bar used everywhere else in this app. Skips a tenant+stream pair entirely
+// (no finding) below the sample-size floor (<3 induction submissions contributing, or <5 matching
+// internal Bintracker rows) — too little data to say anything meaningful.
+//
+// Revised 2026-10-05, two real findings from production data (Tower 2 - Collins Square,
+// Docklands): (1) `wasteOutcome` — originally used here as "the more reliable, 100%-populated
+// proxy" for `contaminated` — turned out to be a hardcoded constant ("Recycled" on every single one
+// of 15,612 real rows), carrying zero signal; `contaminated` is in fact the one that varies in real
+// data (2.6% true), so it's used here instead. (2) EXTERNAL (externalOnly===true) rows turned out
+// to have no per-tenant granularity at all in real Bintracker data — in that same building, only a
+// single building-wide waste-consolidation entry had any external rows; all 13 real tenants' own
+// activity is recorded internally. A per-tenant comparison can therefore only ever be computed from
+// internal rows — confirmed directly with the user. A building that composts a stream on-site
+// simply has too few internal rows recorded that way for it, so the floor still naturally excludes
+// it — no special-case code needed.
 function computeCurrentStateFindings(tenantRows, matches, bintrackerRows){
   const findings = [];
   matches.forEach(match => {
@@ -922,9 +930,9 @@ function computeCurrentStateFindings(tenantRows, matches, bintrackerRows){
       const inductionPct = Math.round((avoided / total) * 100);
 
       const realRows = bintrackerRows.filter(r =>
-        r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.ourStream === stream && r.externalOnly === true);
+        r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.ourStream === stream && r.externalOnly === false);
       if (realRows.length < 5) return;
-      const realPct = Math.round((realRows.filter(r => r.wasteOutcome === 'Recycled').length / realRows.length) * 100);
+      const realPct = Math.round((realRows.filter(r => r.contaminated === false).length / realRows.length) * 100);
 
       const inductionLow = inductionPct < 75;
       const realLow = realPct < 75;
@@ -983,10 +991,11 @@ function computeCurrentStateFindings(tenantRows, matches, bintrackerRows){
 // the unbounded fetchAllSubmissionTimestamps() result, NOT the report's own date-range-scoped
 // `rows`) — not the report's date-range filter, and explicitly not a link's expiresAt (unreliable
 // — expiresAt is optional and a tenant can have multiple links over time). Before/after = share of
-// that tenant+stream's externalOnly:true Bintracker rows with wasteOutcome==='Recycled', split on
-// collectDate vs the cutoff. Needs >=5 rows on EACH side independently, and only surfaces a
-// finding when the two sides differ by >=10 points (avoids over-interpreting noise from small
-// samples).
+// that tenant+stream's INTERNAL (externalOnly===false) Bintracker rows with contaminated===false,
+// split on collectDate vs the cutoff — same 2026-10-05 revision as Comparison #1 above (wasteOutcome
+// is a hardcoded constant in real data; per-tenant granularity only exists internally). Needs >=5
+// rows on EACH side independently, and only surfaces a finding when the two sides differ by >=10
+// points (avoids over-interpreting noise from small samples).
 function computeInductionImpactFindings(allSubs, matches, bintrackerRows){
   const findings = [];
   matches.forEach(match => {
@@ -998,13 +1007,13 @@ function computeInductionImpactFindings(allSubs, matches, bintrackerRows){
 
     BINTRACKER_STREAMS.forEach(stream => {
       const realRows = bintrackerRows.filter(r =>
-        r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.ourStream === stream && r.externalOnly === true);
+        r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.ourStream === stream && r.externalOnly === false);
       const beforeRows = realRows.filter(r => r.collectDate < cutoffDateStr);
       const afterRows = realRows.filter(r => r.collectDate >= cutoffDateStr);
       if (beforeRows.length < 5 || afterRows.length < 5) return;
 
-      const beforePct = Math.round((beforeRows.filter(r => r.wasteOutcome === 'Recycled').length / beforeRows.length) * 100);
-      const afterPct = Math.round((afterRows.filter(r => r.wasteOutcome === 'Recycled').length / afterRows.length) * 100);
+      const beforePct = Math.round((beforeRows.filter(r => r.contaminated === false).length / beforeRows.length) * 100);
+      const afterPct = Math.round((afterRows.filter(r => r.contaminated === false).length / afterRows.length) * 100);
       const gap = Math.abs(afterPct - beforePct);
       if (gap < 10) return;
 

@@ -1347,11 +1347,44 @@ document.getElementById('emailSignInForm').addEventListener('submit', async (e) 
 
 document.getElementById('signOutBtn').addEventListener('click', () => { if (auth) signOut(auth); });
 
+// ---- Immediate post-sign-in access gate (Workstream 15, Part 3, 2026-10-06) ---- see
+// admin-buildings.html's identical copy for the full reasoning (zero-risk sign-out for a
+// genuinely unauthorized account vs. a friendly redirect to Reports for a valid Standard user —
+// Enrolled Buildings is Admin/Super-Admin-only, a Standard user has no reason to be here even
+// embedded).
+const GATE_OWNER_EMAIL = 'esgtradeflex@gmail.com';
+async function getAccessLevel(email){
+  const isSuperAdminUser = email === GATE_OWNER_EMAIL ||
+    (await getDoc(doc(db, 'superAdmins', email)).then(d => d.exists()).catch(() => false));
+  const isAdminUser = isSuperAdminUser ||
+    (await getDoc(doc(db, 'admins', email)).then(d => d.exists()).catch(() => false));
+  return { isSuperAdminUser, isAdminUser };
+}
+async function hasAnyBuildingAccessGrant(email){
+  try {
+    const snap = await getDocs(query(collection(db, 'buildingAccess'), where('email', '==', email)));
+    return !snap.empty;
+  } catch (err){ return false; }
+}
+
 if (auth){
   onAuthStateChanged(auth, async (user) => {
     document.getElementById('signInBtn').style.display = user ? 'none' : 'inline-flex';
     document.getElementById('signOutBtn').style.display = user ? 'inline-flex' : 'none';
     if (user){
+      const gateEmail = (user.email || '').toLowerCase();
+      const { isAdminUser } = await getAccessLevel(gateEmail);
+      if (!isAdminUser){
+        const hasGrant = await hasAnyBuildingAccessGrant(gateEmail);
+        const emulatorSuffix = new URLSearchParams(window.location.search).get('emulator') === '1' ? '?emulator=1' : '';
+        if (hasGrant){
+          window.location.href = 'sorting-station-report.html' + emulatorSuffix;
+        } else {
+          await signOut(auth);
+          document.getElementById('authStatus').textContent = "This account doesn't have access. Contact your administrator.";
+        }
+        return;
+      }
       document.getElementById('authZone').style.display = 'none';
       document.getElementById('showEmailSignInBtn').style.display = 'none';
       document.getElementById('emailSignInForm').style.display = 'none';

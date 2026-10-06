@@ -99,6 +99,12 @@ const BINTRACKER_RATE_LIMIT_MAX_CALLS = 30;
 const DELETE_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const DELETE_RATE_LIMIT_MAX_CALLS = 50;
 
+// provisionUserAccount (Workstream 15, Part 3, 2026-10-06) - creating accounts and sending invite
+// emails is a rarer admin action than the others above (onboarding, not routine cleanup), so a
+// tighter budget than deletes is still generous enough for a real bulk-onboarding session.
+const PROVISION_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const PROVISION_RATE_LIMIT_MAX_CALLS = 30;
+
 function isValidEmail(str) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(str || '').trim());
 }
@@ -705,23 +711,42 @@ function bintrackerRowDocId(buildingId, collectDate, tenantRaw, locationRaw, was
   return crypto.createHash('sha256').update(key).digest('hex');
 }
 
-// Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24): a single cached
-// percentage the trainee-facing id-gate reads directly off the building/tenant doc it already
-// fetches - never a live call from the trainee's own page load. Computed from the building's
-// FULL current bintrackerRows set (not just one refresh call's fromDate/toDate slice) - a refresh
-// of one range shouldn't silently narrow what the id-gate shows about the building/tenant
-// overall. Factored out of refreshBintrackerData itself (which also does the real network fetch,
-// untestable without hitting Bintracker's live API) so this half - pure Firestore read/write
-// against already-seeded bintrackerRows/bintrackerTenantMatches - can be exercised directly by
-// tests/functions-refreshbintrackerdata.test.js against the Firestore emulator, exported below.
+// Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24; population split revised
+// 2026-10-05): a single cached percentage the trainee-facing id-gate reads directly off the
+// building/tenant doc it already fetches - never a live call from the trainee's own page load.
+// Computed from the building's FULL current bintrackerRows set (not just one refresh call's
+// fromDate/toDate slice) - a refresh of one range shouldn't silently narrow what the id-gate shows
+// about the building/tenant overall. Factored out of refreshBintrackerData itself (which also does
+// the real network fetch, untestable without hitting Bintracker's live API) so this half - pure
+// Firestore read/write against already-seeded bintrackerRows/bintrackerTenantMatches - can be
+// exercised directly by tests/functions-refreshbintrackerdata.test.js against the Firestore
+// emulator, exported below.
+//
+// Building-level uses EXTERNAL rows (externalOnly:true) - the official, contractor-weighed export.
+// Tenant-level uses INTERNAL rows (externalOnly:false) for that tenant - confirmed directly with
+// the user 2026-10-05 that Bintracker has no per-tenant external weighing at all (a real check
+// against Tower 2 - Collins Square's production data found literally zero of its 13 real tenants
+// had any externalOnly:true rows - only a single building-wide waste-consolidation entry did), so
+// internal/per-floor data is the only population a tenant-level figure can ever be computed from.
+//
+// Bounded to the trailing 365 days (added 2026-10-06): NABERS' own definition says the recycling
+// rate is "based on 12 months of waste data" - without this bound, the figure would slowly dilute
+// with ever-older history instead of reflecting recent performance. Computed fresh on every call
+// (never a stored/cached cutoff), so it always means "the last 365 days from right now."
 async function writeRecyclingLevelAggregates(db, buildingId) {
   const buildingRef = db.collection('buildings').doc(buildingId);
   const buildingSnap = await buildingRef.get();
   if (!buildingSnap.exists) return; // nothing to compute for a building that doesn't exist
 
-  const allRowsSnap = await db.collection('bintrackerRows').where('buildingId', '==', buildingId).get();
+  const twelveMonthsAgo = new Date();
+  twelveMonthsAgo.setDate(twelveMonthsAgo.getDate() - 365);
+  const twelveMonthsAgoStr = twelveMonthsAgo.toISOString().slice(0, 10);
+  const allRowsSnap = await db.collection('bintrackerRows')
+    .where('buildingId', '==', buildingId)
+    .where('collectDate', '>=', twelveMonthsAgoStr)
+    .get();
   const allRows = allRowsSnap.docs.map((d) => d.data());
-  const buildingPct = computeRecyclingLevelPct(allRows);
+  const buildingPct = computeRecyclingLevelPct(allRows.filter((r) => r.externalOnly === true));
   // FieldValue.delete() when the current data no longer qualifies (e.g. a stale number from an
   // earlier, richer date range) - graceful absence beats a stale/misleading number left behind.
   await buildingRef.update({
@@ -735,8 +760,9 @@ async function writeRecyclingLevelAggregates(db, buildingId) {
   for (const matchDoc of confirmedMatchesSnap.docs) {
     const match = matchDoc.data();
     // Case-sensitive exact match against the admin-confirmed raw string - this is the only link
-    // between a real Bintracker tenant string and one of this app's own tenant docs.
-    const tenantRows = allRows.filter((r) => r.bintrackerTenantRaw === match.bintrackerTenantRaw);
+    // between a real Bintracker tenant string and one of this app's own tenant docs. Internal rows
+    // only (externalOnly:false) - see the function-level comment above for why.
+    const tenantRows = allRows.filter((r) => r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.externalOnly === false);
     const tenantPct = computeRecyclingLevelPct(tenantRows);
     const tenantRef = db.collection('buildings').doc(buildingId).collection('tenants').doc(match.tenantId);
     const tenantSnap = await tenantRef.get();
@@ -1054,6 +1080,118 @@ exports.deleteTenantPermanently = onCall({ timeoutSeconds: 300, maxInstances: 3,
   return { ok: true, tenantName: realName, deletedCounts };
 });
 
+// Builds the branded "set your password" invite email, sent whenever a Super Admin/Admin adds a
+// new person via the Roles screen (Workstream 15, Part 3). Shares the exact same scaffold as
+// buildInductionEmailContent above (same logos/VML bulletproof button/footer, same reasoning for
+// the web-safe font over the app's own Gilroy). `role` is 'administrator' or 'user' - deliberately
+// NOT 'standard user' in this copy (the user felt "standard user" read a little cold/technical for
+// an email addressed to a real person, confirmed 2026-10-06 - "Standard User" stays as the label
+// inside the Roles screen itself, just not in this message).
+function buildAccountInviteContent({ role, link }) {
+  const subject = 'Your Recycling Training account is ready';
+  const html = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#F7F5EE" style="background:#F7F5EE; font-family:'Helvetica Neue',Arial,sans-serif;">
+      <tr><td align="center" style="padding:24px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#EEEBE1" style="max-width:560px; background:#EEEBE1; border-collapse:collapse;">
+          <tr>
+            <td bgcolor="#1F4A34" style="background:#1F4A34; padding:26px 32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+                <td style="padding-right:20px;"><img src="cid:${TRADEFLEX_LOGO_CID}" width="122" height="40" alt="Tradeflex" style="display:block; border:0;"></td>
+                <td><img src="cid:${FUTUREGREEN_LOGO_CID}" width="134" height="40" alt="FutureGreen - Tradeflex Sustainability Program" style="display:block; border:0;"></td>
+              </tr></table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 8px; font-size:15px; letter-spacing:0.4px; text-transform:uppercase; color:#2F6F4E; font-weight:bold;">RECYCLING TRAINING</p>
+              <p style="margin:0 0 16px; font-size:20px; font-weight:bold; color:#1E2A22;">Your account is ready - just set a password</p>
+              <p style="margin:0 0 24px; font-size:15px; color:#1E2A22; line-height:1.5;">You've been given ${esc(role)} access to Recycling Training, Tradeflex's waste-sorting induction and reporting tool. Choose a password below to finish setting up your account and sign in.</p>
+              <!--[if mso]>
+              <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="padding-bottom:20px;">
+              <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${esc(link)}" style="height:44px;v-text-anchor:middle;width:220px;" arcsize="14%" strokecolor="#2F6F4E" fillcolor="#2F6F4E">
+                <w:anchorlock/>
+                <center style="color:#FFFFFF;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;font-weight:bold;">Set your password</center>
+              </v:roundrect>
+              </td></tr></table>
+              <![endif]-->
+              <!--[if !mso]><!-->
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:20px;">
+                <tr><td bgcolor="#2F6F4E" style="background:#2F6F4E; border-radius:6px; padding:0;">
+                  <a href="${esc(link)}" style="display:inline-block; padding:12px 24px; font-size:14px; font-weight:bold; color:#FFFFFF; text-decoration:none;">Set your password</a>
+                </td></tr>
+              </table>
+              <!--<![endif]-->
+              <p style="margin:0 0 24px; font-size:12px; color:#4A5850; word-break:break-all;">Or copy this link: ${esc(link)}</p>
+              <p style="margin:0; font-size:15px; color:#1E2A22; line-height:1.5;">If you weren't expecting this, you can safely ignore this email.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 32px; border-top:1px solid #DEDACB;">
+              <p style="margin:0; font-size:11px; color:#4A5850;">Tradeflex &middot; Integrated Facilities Services</p>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+  `;
+  const text = `Your account is ready - just set a password.\n\nYou've been given ${role} access to Recycling Training, Tradeflex's waste-sorting induction and reporting tool. Set your password here: ${link}\n\nIf you weren't expecting this, you can safely ignore this email.`;
+  return { subject, html, text };
+}
+
+// Creates a Firebase Authentication account for a newly-added Admin/Standard user (if one doesn't
+// already exist) and emails them a link to set their own password - the one piece that used to
+// require a manual trip to the Firebase Console (Workstream 15, Part 3: centralize account
+// creation in the app, no more Console step for anyone). Deliberately narrow: this function ONLY
+// creates the Auth account and sends the invite - it never touches /admins, /superAdmins, or
+// /buildingAccess itself. Those writes happen client-side from the Roles screen immediately after
+// this call succeeds, gated by firestore.rules (isSuperAdmin() for /admins and /superAdmins,
+// isAllowedReviewer() for /buildingAccess) rather than re-implemented here - same "function does
+// the risky Admin-SDK-only part, client does the data part under rules" split already used
+// elsewhere in this file (e.g. deleteTenantPermanently vs. its caller).
+exports.provisionUserAccount = onCall(
+  { secrets: [SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER_MAILBOX], timeoutSeconds: 60, maxInstances: 3, concurrency: 5 },
+  async (request) => {
+    await assertIsAdmin(request.auth);
+    await checkRateLimitGeneric('provisionRateLimits', request.auth.token.email, PROVISION_RATE_LIMIT_WINDOW_MS, PROVISION_RATE_LIMIT_MAX_CALLS, 'accounts provisioned');
+
+    const { email, role } = request.data || {};
+    if (!isValidEmail(email)) {
+      throw new HttpsError('invalid-argument', 'A valid email address is required.');
+    }
+    if (role !== 'administrator' && role !== 'user') {
+      throw new HttpsError('invalid-argument', "role must be 'administrator' or 'user'.");
+    }
+
+    let alreadyExisted = true;
+    try {
+      await admin.auth().getUserByEmail(email);
+    } catch (err) {
+      if (err.code !== 'auth/user-not-found') throw err;
+      alreadyExisted = false;
+      await admin.auth().createUser({ email });
+    }
+
+    // The account itself (the part that used to require a manual Firebase Console trip) is the
+    // real, hard-to-reverse-later side effect worth protecting - a flaky SMTP send must not throw
+    // the account creation away with it. sendViaSmtp() is deliberately NOT awaited inside this
+    // function's own try/catch the way every other email function in this file does it (those all
+    // treat the send as the function's one purpose, so a failed send IS a failed call) - here the
+    // send is a courtesy on top of the real job, so its failure becomes a soft `emailSent:false`
+    // in the response instead of an HttpsError, and the caller still proceeds to grant the role.
+    const link = await admin.auth().generatePasswordResetLink(email);
+    const { subject, html, text } = buildAccountInviteContent({ role, link });
+    let emailSent = true;
+    try {
+      await sendViaSmtp({ to: email, subject, html, text, attachments: EMAIL_LOGO_ATTACHMENTS });
+    } catch (err) {
+      console.error('provisionUserAccount: account created but invite email failed to send:', err && err.message);
+      emailSent = false;
+    }
+
+    return { ok: true, alreadyExisted, emailSent };
+  }
+);
+
 // Exported purely for tests/functions-refreshbintrackerdata.test.js to call directly against the
 // Firestore emulator (seeded bintrackerRows/bintrackerTenantMatches, no real Bintracker network
 // call) - neither is a Cloud Functions trigger itself, so `firebase deploy --only functions`
@@ -1067,3 +1205,4 @@ exports.deleteTenantPermanently = onCall({ timeoutSeconds: 300, maxInstances: 3,
 // circular references) - a plain function has nothing for that analysis to recurse into.
 exports._writeRecyclingLevelAggregates = writeRecyclingLevelAggregates;
 exports._getAdminFirestoreForTests = () => admin.firestore();
+exports._getAdminAuthForTests = () => admin.auth();

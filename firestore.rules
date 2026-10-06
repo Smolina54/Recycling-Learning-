@@ -13,6 +13,18 @@ service cloud.firestore {
          exists(/databases/$(database)/documents/admins/$(request.auth.token.email)));
     }
 
+    // Workstream 15, Part 3 (2026-10-06): a third, narrower tier above Admin. The owner email is
+    // the one permanent, hardcoded fallback — a break-glass safety net so the system can never be
+    // fully locked out even if every /superAdmins doc were somehow lost — never managed from the
+    // app's own UI. Anyone else with super-admin power is granted it by having a doc in
+    // /superAdmins, written only by an EXISTING super admin (self-governing, same principle as
+    // Admin governing Standard users below) — never by a plain Admin.
+    function isSuperAdmin() {
+      return request.auth != null &&
+        (request.auth.token.email == 'esgtradeflex@gmail.com' ||
+         exists(/databases/$(database)/documents/superAdmins/$(request.auth.token.email)));
+    }
+
     // Narrow-scope counterpart to isAllowedReviewer(): does this signed-in user have an
     // explicit grant for THIS ONE building (via a buildingAccess doc), rather than access
     // to everything. Deliberately a SEPARATE collection from /admins — isAllowedReviewer()
@@ -125,11 +137,24 @@ service cloud.firestore {
           get(/databases/$(database)/documents/links/$(data.linkId)).data.expiresAt > request.time));
     }
 
-    // Reviewer accounts beyond the permanent owner fallback above. Only an existing
-    // reviewer can grant or revoke another one (the report's Admins panel is only
-    // reachable once signed in as an allowed reviewer in the first place).
+    // Reviewer (Admin) accounts beyond the permanent owner fallback above. Any admin/super admin
+    // can still SEE the full list (needed by the Roles screen so a plain Admin can see who the
+    // Admins/Super Admins are, even though they can't change those rows) — but only a Super Admin
+    // can WRITE here (tightened 2026-10-06; previously any existing admin could grant/revoke
+    // another admin, a real privilege-escalation gap — any one of several admin accounts could
+    // hand out full access to anyone, with no higher authority required).
     match /admins/{email} {
-      allow read, write: if isAllowedReviewer();
+      allow read: if isAllowedReviewer();
+      allow write: if isSuperAdmin();
+    }
+
+    // Super Admin accounts beyond the permanent owner fallback above (see isSuperAdmin()) — the
+    // top tier, self-governing: only an existing super admin can grant or revoke another one.
+    // Readable by any admin/super admin (same "can see, can't necessarily change" reasoning as
+    // /admins above).
+    match /superAdmins/{email} {
+      allow read: if isAllowedReviewer();
+      allow write: if isSuperAdmin();
     }
 
     // Per-building grants for external/scoped clients (e.g. a building's own property

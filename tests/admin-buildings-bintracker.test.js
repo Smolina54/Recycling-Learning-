@@ -120,9 +120,39 @@ async function seedTestData(){
     }
   });
 
+  // A THIRD building, purpose-built for the "Confirm all exact matches" bulk action (added
+  // 2026-10-06): 2 tenants with an unconfirmed EXACT-name candidate, 1 with only a "contains"
+  // candidate (must be left for individual review, never swept up by the bulk button), seeded
+  // directly so none of them start out already-confirmed.
+  const bulkBuildingId = 'test-tower-bulk-' + suffix;
+  const bulkBuildingName = 'Test Tower Bulk ' + suffix;
+  const bulkExactOneId = 'bulk-exact-one-' + suffix;
+  const bulkExactTwoId = 'bulk-exact-two-' + suffix;
+  const bulkContainsOnlyId = 'bulk-contains-only-' + suffix;
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'buildings', bulkBuildingId), { name: bulkBuildingName, bintrackerBuildingName: 'Bulk Test Tower' });
+    await setDoc(doc(db, 'buildings', bulkBuildingId, 'tenants', bulkExactOneId), { name: 'Exact One', levels: ['Level 1'], emails: [] });
+    await setDoc(doc(db, 'buildings', bulkBuildingId, 'tenants', bulkExactTwoId), { name: 'Exact Two', levels: ['Level 2'], emails: [] });
+    await setDoc(doc(db, 'buildings', bulkBuildingId, 'tenants', bulkContainsOnlyId), { name: 'Partial Co', levels: ['Level 3'], emails: [] });
+    const bulkRows = [
+      { bintrackerTenantRaw: 'Exact One', bintrackerLocationRaw: 'Level 1' },
+      { bintrackerTenantRaw: 'Exact Two', bintrackerLocationRaw: 'Level 2' },
+      { bintrackerTenantRaw: 'Partial Co Pty Ltd', bintrackerLocationRaw: 'Level 3' },
+    ];
+    for (const r of bulkRows){
+      await setDoc(doc(collection(db, 'bintrackerRows')), {
+        buildingId: bulkBuildingId, bintrackerTenantRaw: r.bintrackerTenantRaw, bintrackerLocationRaw: r.bintrackerLocationRaw,
+        ourStream: 'gw', wasteTypeRaw: 'General Waste', contaminated: false,
+        collectDate: '2026-09-01', weight: 12.5, fetchedAt: new Date(),
+      });
+    }
+  });
+
   return {
     testEnv, unmappedBuildingId, unmappedBuildingName,
     mappedBuildingId, mappedBuildingName, acmeLegalId, widgetcoId, noMatchCoId,
+    bulkBuildingId, bulkBuildingName, bulkExactOneId, bulkExactTwoId, bulkContainsOnlyId,
   };
 }
 
@@ -185,6 +215,7 @@ async function runFlow(page){
   const {
     unmappedBuildingId, unmappedBuildingName,
     mappedBuildingId, mappedBuildingName, acmeLegalId, widgetcoId, noMatchCoId,
+    bulkBuildingId, bulkBuildingName, bulkExactOneId, bulkExactTwoId, bulkContainsOnlyId,
   } = await seedTestData();
 
   await page.goto(BUILDINGS_URL, { waitUntil: 'domcontentloaded' });
@@ -379,6 +410,54 @@ async function runFlow(page){
   const acmeMatchDocAfterCancel = await readMatchDoc(mappedBuildingId, acmeLegalId);
   check('cancelling did not change the previously-confirmed match doc',
     acmeMatchDocAfterCancel && acmeMatchDocAfterCancel.bintrackerTenantRaw === 'Acme Legal', JSON.stringify(acmeMatchDocAfterCancel));
+
+  // --- "Confirm all exact matches" bulk action (added 2026-10-06) ---
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('.building-row h3')].some(el => el.textContent === name),
+    { timeout: 8000 }, bulkBuildingName
+  );
+  let bulkRow = await findRowByName(page, '.building-row', bulkBuildingName);
+  await bulkRow.$eval('.building-toggle-btn', el => el.click());
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.bintracker-match-row')].some(r => r.textContent.includes('Exact One')),
+    { timeout: 8000 }
+  );
+  bulkRow = await findRowByName(page, '.building-row', bulkBuildingName);
+  const bulkBtnBefore = await bulkRow.$('.confirm-all-exact-matches-btn');
+  const bulkBtnTextBefore = await bulkBtnBefore.evaluate(el => el.textContent);
+  check('the bulk button counts only the 2 exact-confidence tenants, not the contains-only one',
+    bulkBtnTextBefore.includes('(2)'), bulkBtnTextBefore);
+
+  await bulkBtnBefore.evaluate(el => el.click());
+  await page.waitForFunction(
+    () => {
+      const li1 = [...document.querySelectorAll('.tenant-list li')].find(el => el.textContent.includes('Exact One'));
+      const li2 = [...document.querySelectorAll('.tenant-list li')].find(el => el.textContent.includes('Exact Two'));
+      return Boolean(li1) && li1.textContent.includes('✓') && Boolean(li2) && li2.textContent.includes('✓');
+    },
+    { timeout: 8000 }
+  );
+  check('both exact-confidence tenants show as confirmed after one click', true);
+
+  bulkRow = await findRowByName(page, '.building-row', bulkBuildingName);
+  const partialLi = await findTenantLi(bulkRow, 'Partial Co');
+  const partialText = await partialLi.$eval('.bintracker-match-row', el => el.textContent);
+  check('the contains-only tenant is untouched by the bulk action - still needs individual review',
+    partialText.includes('contains match') && Boolean(await partialLi.$('.bintracker-confirm-candidate-btn')), partialText);
+
+  check('the bulk button disappears once nothing exact-and-unconfirmed remains',
+    !(await bulkRow.$('.confirm-all-exact-matches-btn')));
+
+  const exactOneMatchDoc = await readMatchDoc(bulkBuildingId, bulkExactOneId);
+  const exactTwoMatchDoc = await readMatchDoc(bulkBuildingId, bulkExactTwoId);
+  check('both bulk-confirmed matches were really written to Firestore with the right raw names',
+    exactOneMatchDoc && exactOneMatchDoc.status === 'confirmed' && exactOneMatchDoc.bintrackerTenantRaw === 'Exact One' &&
+    exactTwoMatchDoc && exactTwoMatchDoc.status === 'confirmed' && exactTwoMatchDoc.bintrackerTenantRaw === 'Exact Two',
+    JSON.stringify({ exactOneMatchDoc, exactTwoMatchDoc }));
+
+  const partialMatchDocAfterBulk = await readMatchDoc(bulkBuildingId, bulkContainsOnlyId);
+  check('the contains-only tenant has no match doc written for it (bulk action never touched it)',
+    !partialMatchDocAfterBulk, JSON.stringify(partialMatchDocAfterBulk));
 }
 
 main().catch((err) => { console.error('Test harness crashed:', err); process.exit(1); });

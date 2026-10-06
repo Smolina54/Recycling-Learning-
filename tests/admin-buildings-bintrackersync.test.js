@@ -118,6 +118,21 @@ async function readTenantsForBuilding(buildingId){
   return tenants;
 }
 
+async function readMatchDoc(buildingId, tenantId){
+  const testEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  let data = null;
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const { getDoc, doc: docRef } = require('firebase/firestore');
+    const snap = await getDoc(docRef(context.firestore(), 'bintrackerTenantMatches', `${buildingId}__${tenantId}`));
+    data = snap.exists() ? snap.data() : null;
+  });
+  await testEnv.cleanup();
+  return data;
+}
+
 async function main(){
   const browser = await puppeteer.launch({ executablePath: EDGE_PATH, headless: true });
   const page = await browser.newPage();
@@ -362,6 +377,15 @@ async function runFlow(page){
   const imported = tenantsAfterImport.find(t => t.name === 'New Startup Pty Ltd');
   check('a real tenant doc was written to Firestore with the Bintracker raw name/location',
     Boolean(imported) && Array.isArray(imported.levels) && imported.levels.includes('Level 12'), JSON.stringify(imported));
+
+  // A tenant imported straight from Bintracker Sync has zero fuzzy-matching risk (its name IS the
+  // real Bintracker string) - its match must be auto-confirmed in the same batch as the import,
+  // not left for the admin to re-confirm a second time via the per-tenant review row (fixed
+  // 2026-10-06, see admin-buildings.html's .import-new-tenants-btn handler).
+  const importedMatch = imported ? await readMatchDoc(mappedBuildingId, imported.id) : null;
+  check('the imported tenant\'s Bintracker match is auto-confirmed in the same batch, not left pending',
+    Boolean(importedMatch) && importedMatch.status === 'confirmed' && importedMatch.bintrackerTenantRaw === 'New Startup Pty Ltd',
+    JSON.stringify(importedMatch));
 
   // --- Missing tenants: Keep just dismisses it, no Firestore change ---
   mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);

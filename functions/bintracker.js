@@ -153,26 +153,44 @@ function mapWasteTypeToStream(wasteType) {
   return WASTE_TYPE_TO_STREAM[wasteType] || null;
 }
 
-// ---- Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24) ----
-// The single combined "real recycling level" percentage shown on the id-gate (Point 5) -
-// same scope restriction as Point 1's own comparisons: General Waste and E-Waste are excluded,
-// since "recycled/non-recycled" has no meaning for them. A plain, pure function over an array of
-// bintrackerRows-shaped objects (already filtered to one building, or one building+tenant, by
-// the caller) so it can be unit-tested with no Firestore/Functions emulator at all, same as the
-// rest of this file's exports.
+// ---- Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24; formula revised
+// 2026-10-05 after a real production bug report) ----
+// The single combined "real recycling level" percentage shown on the id-gate (Point 5), matching
+// NABERS' own definition (Recycling rate % = Total materials recovered (kg) / Total materials
+// generated (kg)): recovered = weight that landed in one of the 3 recyclable streams, generated =
+// weight across EVERY stream (General Waste/E-Waste included) - so a building with real landfill
+// volume alongside its recycling correctly shows less than 100%. The CALLER decides which
+// population of rows to pass in: building-level uses externalOnly:true rows (the official,
+// contractor-weighed export); tenant-level uses externalOnly:false rows for that tenant (internal/
+// per-floor weighing) - confirmed directly with the user 2026-10-05 that no per-tenant EXTERNAL
+// weighing exists in Bintracker's data, so a tenant-level figure can only ever come from internal
+// rows. This function itself just does the recovered/generated math on whatever's handed to it.
+//
+// Originally (2026-09-24) this filtered to externalOnly:true rows only and used
+// wasteOutcome==='Recycled' as the "good" signal. Replaced after real production data (Tower 2 -
+// Collins Square, Docklands, 15,612 real rows, checked 2026-10-05) showed `wasteOutcome` is a
+// HARDCODED CONSTANT - literally "Recycled" on every single row for this Bintracker account -
+// carrying zero real signal, which made the old formula always return 100% no matter how the
+// building actually performs. The stream classification itself (which bin something ended up in)
+// already encodes what counts as "recovered" for this aggregate figure - no extra per-row quality
+// field is needed here (contrast with Point 1's own per-stream comparison, which DOES still need a
+// quality signal within one already-identified stream, and uses `contaminated` for that instead).
 const RECYCLABLE_STREAMS = new Set(['mr', 'pc', 'og']);
 const MIN_ROWS_FOR_RECYCLING_LEVEL = 5; // same floor as Point 1's own comparison guard
 
-// Returns a rounded 0-100 percentage, or null if there aren't at least
-// MIN_ROWS_FOR_RECYCLING_LEVEL qualifying rows - never a 0% or otherwise misleading number from
+// Returns a rounded 0-100 percentage, or null if there aren't at least MIN_ROWS_FOR_RECYCLING_LEVEL
+// rows, or the rows carry no usable weight at all - never a 0% or otherwise misleading number from
 // too thin a sample ("graceful absence", the same principle used everywhere else in this
-// workstream). Qualifying = externalOnly === true AND ourStream is one of the 3 recyclable
-// streams; among those, the share with wasteOutcome === 'Recycled'.
+// workstream). `rows` must already be scoped to the right population (one building + externalOnly,
+// or one building + tenant + internal-only) by the caller.
 function computeRecyclingLevelPct(rows) {
-  const qualifying = (rows || []).filter((r) => r.externalOnly === true && RECYCLABLE_STREAMS.has(r.ourStream));
-  if (qualifying.length < MIN_ROWS_FOR_RECYCLING_LEVEL) return null;
-  const recycled = qualifying.filter((r) => r.wasteOutcome === 'Recycled').length;
-  return Math.round((recycled / qualifying.length) * 100);
+  const scoped = rows || [];
+  if (scoped.length < MIN_ROWS_FOR_RECYCLING_LEVEL) return null;
+  const weightOf = (r) => (typeof r.weight === 'number' ? r.weight : 0);
+  const generatedKg = scoped.reduce((sum, r) => sum + weightOf(r), 0);
+  if (generatedKg <= 0) return null;
+  const recoveredKg = scoped.filter((r) => RECYCLABLE_STREAMS.has(r.ourStream)).reduce((sum, r) => sum + weightOf(r), 0);
+  return Math.round((recoveredKg / generatedKg) * 100);
 }
 
 // ---- Shared fuzzy matching (Point 1's Phase B + Workstream 12's tenant sync both use this) ----

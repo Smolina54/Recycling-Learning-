@@ -120,16 +120,21 @@ async function runFlow(page){
   check('"Delete these submissions" is hidden for a building-scoped (non-global) reviewer', deleteBtnDisplayScoped === 'none', deleteBtnDisplayScoped);
 
   // ---- Negative control: signed in, but zero /buildingAccess grant at all ----
+  // Workstream 15 Part 3's immediate post-sign-in gate fires before the page ever shows the
+  // program selector — a genuinely unauthorized account (no admin role, no buildingAccess grant)
+  // gets signed straight back out with a clear denial, rather than being left signed in to stare
+  // at an "isn't authorised" message the way it used to. No selectProgram() call needed here
+  // anymore: by the time any program could be picked, the gate has already signed the user out.
   await page.evaluate((email, password) => window.__testSignIn(email, password), NO_GRANT_EMAIL, PASSWORD);
-  await page.waitForFunction(() => document.getElementById('programSelectorRow') &&
-    getComputedStyle(document.getElementById('programSelectorRow')).display !== 'none', { timeout: 10000 });
-  await selectProgram(page, 'recycling-sorting');
   await page.waitForFunction(
-    () => (document.getElementById('authStatus')?.textContent || '').includes("isn't authorised"),
+    () => (document.getElementById('authStatus')?.textContent || '').includes("doesn't have access"),
     { timeout: 10000 }
   );
   const noGrantStatusText = await page.$eval('#authStatus', el => el.textContent);
-  check('a signed-in user with NO grant at all still sees the "not authorised" message (unchanged behavior)', noGrantStatusText.includes("isn't authorised"), noGrantStatusText);
+  check('a signed-in user with NO grant at all is signed back out with a clear denial message (Workstream 15 Part 3 gate)', noGrantStatusText.includes("doesn't have access"), noGrantStatusText);
+
+  const signedOutAfterGate = await page.$eval('#signInBtn', el => getComputedStyle(el).display !== 'none');
+  check('...and is actually signed out, not just shown a message while still signed in', signedOutAfterGate);
 }
 
 main().catch((err) => { console.error('Test harness crashed:', err); process.exit(1); });

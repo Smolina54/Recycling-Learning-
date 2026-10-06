@@ -83,7 +83,9 @@ async function withRulesDisabled(fn) {
 
 const VALID_PAYLOAD_SHAPE = { fromDate: '2026-01-01', toDate: '2026-01-31' };
 
-// --- Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24) ---
+// --- Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24; formula revised
+// 2026-10-05/06 to NABERS' kg-recovered/kg-generated definition, building=external/tenant=internal
+// split, 365-day cutoff) ---
 // Exercises _writeRecyclingLevelAggregates directly (exported from functions/index.js purely for
 // this test) against bintrackerRows/bintrackerTenantMatches seeded straight into the Firestore
 // emulator via the admin SDK — the real refreshBintrackerData handler also calls the real
@@ -92,6 +94,12 @@ const VALID_PAYLOAD_SHAPE = { fromDate: '2026-01-01', toDate: '2026-01-31' };
 // have produced, skip the network" approach as admin-buildings-bintracker.test.js's own review-UI
 // coverage. Requires firebase-admin, which only functions/node_modules has installed — got via
 // functions/index.js's own `_admin` export rather than requiring firebase-admin directly here.
+//
+// `wasteOutcome` is stored (matches the real doc shape) but deliberately uncorrelated with the
+// expected result — it's no longer read by the formula, only `ourStream` (recovered = mr/pc/og
+// weight) and `weight` (generated = ALL streams' weight) matter now, which is why every row below
+// uses a DISTINCT, deliberately non-uniform weight — proves the math is really weight-based, not
+// accidentally passing because every row happened to weigh the same.
 async function testRecyclingLevelAggregation() {
   const { _writeRecyclingLevelAggregates, _getAdminFirestoreForTests } = require('../functions/index.js');
   const db = _getAdminFirestoreForTests();
@@ -105,45 +113,64 @@ async function testRecyclingLevelAggregation() {
   await db.doc(`buildings/${buildingId}/tenants/${tenantConfirmedId}`).set({ name: 'Confirmed Co', levels: ['L1'] });
   await db.doc(`buildings/${buildingId}/tenants/${tenantUnconfirmedId}`).set({ name: 'Unconfirmed Co', levels: ['L1'] });
 
-  // "Confirmed Raw Co" — 5 qualifying rows (exactly at the floor), 4 Recycled -> 80%.
-  const confirmedRows = [
-    ['mr', 'Recycled'], ['mr', 'Recycled'], ['pc', 'Recycled'], ['og', 'Recycled'], ['og', 'Non-Recycled'],
+  // Building-level population = EXTERNAL (externalOnly:true) rows only, regardless of tenant.
+  // mr 40 + pc 30 + og 20 + gw 5 + ew 5 = generated 100; recovered (mr+pc+og) = 90 -> 90%.
+  // gw/ew legitimately count toward "generated" now (real NABERS denominator = ALL waste), but
+  // never toward "recovered" — this is the actual behavior change from the pre-2026-10-05 formula.
+  const buildingExternalRows = [
+    { ourStream: 'mr', weight: 40, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'pc', weight: 30, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'og', weight: 20, bintrackerTenantRaw: 'Other Co' },
+    { ourStream: 'gw', weight: 5, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'ew', weight: 5, bintrackerTenantRaw: 'Other Co' },
   ];
-  // "Other Co" — 5 qualifying rows, 3 Recycled -> would be 60% IF its match were confirmed;
-  // its match doc below is deliberately left as status:'pending' to prove an unconfirmed match
-  // never feeds the tenant-level field, same "admin reviews, never fully automatic" principle
-  // established for the rest of this workstream.
-  const otherRows = [
-    ['mr', 'Recycled'], ['mr', 'Recycled'], ['pc', 'Recycled'], ['pc', 'Non-Recycled'], ['og', 'Non-Recycled'],
+  // An INTERNAL row, huge distinctive weight (999) — must NEVER count toward the building total
+  // (building reads external rows only); if wrongly included, generated would balloon to 1099 and
+  // the building percentage below would be very different, making this a real discriminating check.
+  // Tagged with a raw string that has NO confirmed match doc at all, so it also can't accidentally
+  // feed any tenant-level number either — isolates this to testing the building-level exclusion only.
+  const buildingExcludedInternalRow = { ourStream: 'mr', weight: 999, externalOnly: false, bintrackerTenantRaw: 'Unrelated Internal Co' };
+
+  // Confirmed Co's own tenant-level population = INTERNAL rows for 'Confirmed Raw Co' exactly.
+  // mr 40 + pc 20 + og 10 + gw 20 + ew 10 = generated 100; recovered = 70 -> 70%.
+  const confirmedTenantInternalRows = [
+    { ourStream: 'mr', weight: 40, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'pc', weight: 20, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'og', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'gw', weight: 20, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'ew', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
   ];
-  // One row tagged with a different-case variant of the confirmed raw string — bintrackerTenantRaw
-  // matching is documented as case-sensitive exact match; this row must count toward the BUILDING
-  // total (still externalOnly + a recyclable stream) but must NOT count toward Confirmed Co's own
-  // tenant-level number.
-  const caseVariantRow = { ourStream: 'mr', externalOnly: true, wasteOutcome: 'Recycled', bintrackerTenantRaw: 'confirmed raw co' };
-  // Noise that must never count toward either number: General Waste/E-Waste (wrong streams) and
-  // an internalOnly (externalOnly:false) recyclable-stream row.
-  const excludedRows = [
-    { ourStream: 'gw', externalOnly: true, wasteOutcome: 'Recycled', bintrackerTenantRaw: 'Confirmed Raw Co' },
-    { ourStream: 'ew', externalOnly: true, wasteOutcome: 'Recycled', bintrackerTenantRaw: 'Confirmed Raw Co' },
-    { ourStream: 'mr', externalOnly: false, wasteOutcome: 'Recycled', bintrackerTenantRaw: 'Confirmed Raw Co' },
+  // A different-case variant of the confirmed raw string, INTERNAL, huge distinctive weight (500) —
+  // bintrackerTenantRaw matching is documented as case-sensitive exact match; this row must NOT
+  // count toward Confirmed Co's own tenant-level number (would balloon generated to 600 if wrongly
+  // included, a real discriminating check, not just "happens to still pass").
+  const caseVariantInternalRow = { ourStream: 'mr', weight: 500, externalOnly: false, bintrackerTenantRaw: 'confirmed raw co' };
+
+  // "Other Co" — 5 internal rows, would be 30/50=60% IF its match were confirmed; its match doc
+  // below is deliberately left as status:'pending' to prove an unconfirmed match never feeds the
+  // tenant-level field, same "admin reviews, never fully automatic" principle established for the
+  // rest of this workstream.
+  const otherTenantInternalRows = [
+    { ourStream: 'mr', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Other Co' },
+    { ourStream: 'pc', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Other Co' },
+    { ourStream: 'og', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Other Co' },
+    { ourStream: 'gw', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Other Co' },
+    { ourStream: 'ew', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Other Co' },
   ];
 
   const allRows = [
-    ...confirmedRows.map(([ourStream, wasteOutcome]) => ({ ourStream, externalOnly: true, wasteOutcome, bintrackerTenantRaw: 'Confirmed Raw Co' })),
-    ...otherRows.map(([ourStream, wasteOutcome]) => ({ ourStream, externalOnly: true, wasteOutcome, bintrackerTenantRaw: 'Other Co' })),
-    caseVariantRow,
-    ...excludedRows,
+    ...buildingExternalRows.map((r) => ({ externalOnly: true, ...r })),
+    buildingExcludedInternalRow,
+    ...confirmedTenantInternalRows,
+    caseVariantInternalRow,
+    ...otherTenantInternalRows,
   ];
   for (const r of allRows) {
     await db.collection('bintrackerRows').add({
       buildingId, bintrackerLocationRaw: 'Level 1', wasteTypeRaw: 'x', contaminated: false,
-      collectDate: '2026-01-15', weight: 10, fetchedAt: new Date(), ...r,
+      wasteOutcome: 'Recycled', collectDate: '2026-01-15', fetchedAt: new Date(), ...r,
     });
   }
-  // Building total: Confirmed Raw Co (5 rows, 4 recycled) + Other Co (5 rows, 3 recycled) +
-  // the lowercase case-variant row (1 row, recycled) = 11 qualifying, 8 recycled -> 8/11 = 72.7% -> 73.
-  // Confirmed Co's own number: only the 5 exact-case "Confirmed Raw Co" rows -> 4/5 = 80%.
 
   await db.doc('bintrackerTenantMatches/' + `${buildingId}__${tenantConfirmedId}`).set({
     buildingId, tenantId: tenantConfirmedId, tenantName: 'Confirmed Co',
@@ -164,12 +191,12 @@ async function testRecyclingLevelAggregation() {
   await _writeRecyclingLevelAggregates(db, buildingId);
 
   const buildingSnap = await db.doc(`buildings/${buildingId}`).get();
-  check('building-wide recyclingLevelPct computed correctly across all qualifying rows (8/11 -> 73%)',
-    buildingSnap.data().recyclingLevelPct === 73, JSON.stringify(buildingSnap.data()));
+  check('building-wide recyclingLevelPct computed from EXTERNAL rows only, kg recovered/generated (90/100 -> 90%)',
+    buildingSnap.data().recyclingLevelPct === 90, JSON.stringify(buildingSnap.data()));
 
   const confirmedTenantSnap = await db.doc(`buildings/${buildingId}/tenants/${tenantConfirmedId}`).get();
-  check('confirmed tenant recyclingLevelPct computed from only its own exact-case raw rows (4/5 -> 80%)',
-    confirmedTenantSnap.data().recyclingLevelPct === 80, JSON.stringify(confirmedTenantSnap.data()));
+  check('confirmed tenant recyclingLevelPct computed from only its own exact-case INTERNAL rows (70/100 -> 70%)',
+    confirmedTenantSnap.data().recyclingLevelPct === 70, JSON.stringify(confirmedTenantSnap.data()));
 
   const unconfirmedTenantSnap = await db.doc(`buildings/${buildingId}/tenants/${tenantUnconfirmedId}`).get();
   check('a tenant whose match is only "pending" (not confirmed) gets no recyclingLevelPct field at all',
@@ -197,6 +224,40 @@ async function testRecyclingLevelAggregation() {
   const confirmedTenantSnapAfter = await db.doc(`buildings/${buildingId}/tenants/${tenantConfirmedId}`).get();
   check('...and the confirmed tenant\'s stale recyclingLevelPct is removed the same way',
     confirmedTenantSnapAfter.exists && !('recyclingLevelPct' in confirmedTenantSnapAfter.data()), JSON.stringify(confirmedTenantSnapAfter.data()));
+}
+
+// --- 365-day cutoff (added 2026-10-06, per NABERS' own "based on 12 months of waste data"
+// definition) --- Seeds exactly MIN_ROWS_FOR_RECYCLING_LEVEL (5) qualifying rows, all dated well
+// over a year ago (computed relative to the real clock, not hardcoded, so this test never goes
+// stale) — without the cutoff these 5 rows would sit exactly at the floor and produce a real
+// percentage; with it, the Firestore query itself should never even fetch them, leaving
+// recyclingLevelPct unset (graceful absence), not a stale/wrong number.
+async function testTwelveMonthCutoff() {
+  const { _writeRecyclingLevelAggregates, _getAdminFirestoreForTests } = require('../functions/index.js');
+  const db = _getAdminFirestoreForTests();
+  const suffix = Date.now() + '-cutoff';
+  const buildingId = 'cutoff-tower-' + suffix;
+  await db.doc(`buildings/${buildingId}`).set({ name: 'Cutoff Tower', bintrackerBuildingName: 'Cutoff Demo Building' });
+
+  const over400DaysAgo = new Date();
+  over400DaysAgo.setDate(over400DaysAgo.getDate() - 400);
+  const oldDateStr = over400DaysAgo.toISOString().slice(0, 10);
+
+  const oldRows = [
+    ['mr', 'Recycled'], ['mr', 'Recycled'], ['pc', 'Recycled'], ['og', 'Recycled'], ['og', 'Non-Recycled'],
+  ];
+  for (const [ourStream, wasteOutcome] of oldRows) {
+    await db.collection('bintrackerRows').add({
+      buildingId, bintrackerTenantRaw: 'Old Data Co', bintrackerLocationRaw: 'Level 1', wasteTypeRaw: 'x',
+      ourStream, externalOnly: true, contaminated: wasteOutcome !== 'Recycled', wasteOutcome,
+      collectDate: oldDateStr, weight: 10, fetchedAt: new Date(),
+    });
+  }
+
+  await _writeRecyclingLevelAggregates(db, buildingId);
+  const buildingSnap = await db.doc(`buildings/${buildingId}`).get();
+  check('rows older than 365 days are excluded by the cutoff - recyclingLevelPct stays unset even though 5 rows exist (would otherwise sit exactly at the floor)',
+    buildingSnap.exists && !('recyclingLevelPct' in buildingSnap.data()), JSON.stringify(buildingSnap.data()));
 }
 
 async function main() {
@@ -233,6 +294,7 @@ async function main() {
   check('a building with no bintrackerBuildingName set is rejected', !unmappedResult.ok && unmappedResult.code === 'functions/failed-precondition', JSON.stringify(unmappedResult));
 
   await testRecyclingLevelAggregation();
+  await testTwelveMonthCutoff();
 
   for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.ok ? '' : ' ' + r.extra}`);
   const failed = results.filter(r => !r.ok);

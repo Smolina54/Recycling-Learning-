@@ -8,7 +8,10 @@
 // real Bintracker cleanliness, right now) and "Induction impact" (real behavior before vs. after
 // each tenant's own most recent induction) — reached via the same two-button toggle, plus the
 // sample-size floors, the large-vs-moderate gap-magnitude copy split for both comparisons, the
-// General Waste/E-Waste exclusion, and the on-site-composting (internalOnly) no-finding case.
+// General Waste/E-Waste exclusion, and (revised again 2026-10-05, see that date's notes in
+// sorting-station-report.html itself) the external-only-data no-finding case — per-tenant real data
+// only ever exists internally in production, so external-only rows are what gets excluded now,
+// the mirror image of the original internalOnly-excluded design.
 //
 // Why a new dedicated file rather than extending report-ui.test.js or admin-buildings.test.js:
 // report-ui.test.js drives the report entirely via "Load sample data" (no Firestore at all), so
@@ -50,16 +53,24 @@ async function seedInductionSubs(db, { buildingId, buildingName, tenantId, tenan
 }
 
 // Real Bintracker rows, by contrast, ARE individually-counted documents — `recycledCount` of the
-// first `count` rows are wasteOutcome:'Recycled', the rest 'Non-Recycled', so the exact recycled
-// share is precision-limited by `count` (unlike the induction side above).
+// first `count` rows are contaminated:false (the "good"/recovered signal the comparison logic
+// actually reads, since the 2026-10-05 fix moved off the unreliable `wasteOutcome` field), the rest
+// contaminated:true, so the exact "real" share is precision-limited by `count` (unlike the
+// induction side above). `wasteOutcome` is still stored (matches the real bintrackerRows doc shape)
+// but is deliberately uncorrelated with `recycledCount` here — it's no longer read by the
+// comparison logic at all, so it must not accidentally make a wrong test pass.
+// Defaults to `externalOnly: false` (internal rows) — per that same fix, per-tenant comparisons can
+// only ever be computed from internal data (confirmed against real production data: external rows
+// carry no per-tenant granularity at all). Pass `externalOnly: true` explicitly only for the one
+// case that proves external-only data is now correctly EXCLUDED.
 async function seedBintrackerRows(db, { buildingId, tenantRaw, level, stream, count, recycledCount, externalOnly, collectDate }){
   for (let i = 0; i < count; i++){
     await setDoc(doc(collection(db, 'bintrackerRows')), {
       buildingId, bintrackerTenantRaw: tenantRaw, bintrackerLocationRaw: level,
       ourStream: stream, wasteTypeRaw: 'test',
       contaminated: i >= recycledCount,
-      externalOnly: externalOnly !== false,
-      wasteOutcome: i < recycledCount ? 'Recycled' : 'Non-Recycled',
+      externalOnly: externalOnly === true,
+      wasteOutcome: 'Recycled',
       collectDate, weight: 10, fetchedAt: Timestamp.now(),
     });
   }
@@ -89,7 +100,7 @@ async function seed(){
   // Tenant ids, all namespaced under this run's suffix so parallel/repeated runs never collide.
   const T = {};
   ['LowLow', 'GoodGood', 'Case3Large', 'Case3Moderate', 'Case4Large', 'Case4Moderate',
-    'AtFloor', 'BelowFloorSubs', 'BelowFloorReal', 'GwEwOnly', 'InternalOnlyOrganics',
+    'AtFloor', 'BelowFloorSubs', 'BelowFloorReal', 'GwEwOnly', 'ExternalOnlyOrganics',
     'ImpactImprovedLarge', 'ImpactImprovedModerate', 'ImpactDeclined', 'ImpactFloorOneSide', 'ImpactUnderThreshold',
   ].forEach(k => { T[k] = `tenant-${k}-${suffix}`; });
 
@@ -145,11 +156,13 @@ async function seed(){
     await seedBintrackerRows(db, { buildingId: b2, tenantRaw: 'BT GwEwOnly', level: 'Level 11', stream: 'ew', count: 10, recycledCount: 3, collectDate: todayStr });
     await seedMatch(db, { buildingId: b2, tenantId: T.GwEwOnly, tenantName: 'Tenant GwEw Only', tenantRaw: 'BT GwEwOnly', level: 'Level 11' });
 
-    // On-site composting: plenty of Organics rows, but all internalOnly (externalOnly:false) — no
-    // special-case code should be needed, this simply falls under the externalOnly>=5 floor.
-    await seedInductionSubs(db, { buildingId: b2, buildingName, tenantId: T.InternalOnlyOrganics, tenantName: 'Tenant Internal Only Organics', level: 'Level 12', stream: 'og', pct: 20, subCount: 3 });
-    await seedBintrackerRows(db, { buildingId: b2, tenantRaw: 'BT InternalOnlyOrganics', level: 'Level 12', stream: 'og', count: 10, recycledCount: 8, externalOnly: false, collectDate: todayStr });
-    await seedMatch(db, { buildingId: b2, tenantId: T.InternalOnlyOrganics, tenantName: 'Tenant Internal Only Organics', tenantRaw: 'BT InternalOnlyOrganics', level: 'Level 12' });
+    // A tenant whose Organics data is recorded ONLY via external/contractor hauling (externalOnly:
+    // true), with zero internal rows — proves the 2026-10-05 fix's real population requirement
+    // (internal rows only) correctly excludes external-only data now, the mirror image of the old
+    // (pre-fix) "internalOnly gets excluded" behavior this case used to test.
+    await seedInductionSubs(db, { buildingId: b2, buildingName, tenantId: T.ExternalOnlyOrganics, tenantName: 'Tenant External Only Organics', level: 'Level 12', stream: 'og', pct: 20, subCount: 3 });
+    await seedBintrackerRows(db, { buildingId: b2, tenantRaw: 'BT ExternalOnlyOrganics', level: 'Level 12', stream: 'og', count: 10, recycledCount: 8, externalOnly: true, collectDate: todayStr });
+    await seedMatch(db, { buildingId: b2, tenantId: T.ExternalOnlyOrganics, tenantName: 'Tenant External Only Organics', tenantRaw: 'BT ExternalOnlyOrganics', level: 'Level 12' });
 
     // ---- Comparison #2 ("Induction impact") cases ----
     // Cutoff = latest submission timestamp for the tenant (Timestamp.now(), i.e. "today" in UTC) —
@@ -288,8 +301,8 @@ async function runFlow(page, { b1, b2 }){
   check('General Waste / E-Waste never produce a finding, even with abundant seeded data for those streams',
     !currentText.includes('Tenant GwEw Only') && !currentText.includes('General Waste') && !currentText.includes('E-Waste'),
     currentText.slice(0, 300));
-  check('on-site composting (all internalOnly Organics rows) produces no Organics finding, no special-case code',
-    !currentText.includes('Tenant Internal Only Organics'), currentText.slice(0, 300));
+  check('external-only Organics rows (no internal data for that tenant) produce no finding',
+    !currentText.includes('Tenant External Only Organics'), currentText.slice(0, 300));
 
   const case1Li = await page.$$eval('#bintrackerComparisonList li', els => els.find(el => el.textContent.includes('Tenant Low Low'))?.className || '');
   check('Case 1 (both low) is flagged as a concern', case1Li.includes('concern'), case1Li);

@@ -8,8 +8,9 @@
 //
 // Also covers Point 1, Phase C's "Real-world data (Bintracker)" sub-block, revised 2026-09-24 into
 // two independent comparisons ("current state" / "induction impact", see the plan's "Implementation
-// plan (2026-09-24)" section) — the two checkboxes in the config step, the externalOnly/
-// wasteOutcome-based metric, the 4/2-case narratives, and the General Waste/E-Waste exclusion. The
+// plan (2026-09-24)" section, and the 2026-10-05 revision note right below it) — the two checkboxes
+// in the config step, the internal-rows/contaminated-based metric, the 4/2-case narratives, and the
+// General Waste/E-Waste exclusion. The
 // deep gap-magnitude-boundary and sample-floor matrix lives in report-bintracker-comparison.test.js
 // (same underlying logic, the live Reports view's own toggle-driven counterpart) — this file's own
 // Bintracker coverage stays proportionate to what's actually unique to the PDF: the two checkboxes'
@@ -61,7 +62,7 @@ async function seedTestData(){
   const tenantFloorId = 'tenant-floor-' + Date.now();
   const tenantAtFloorId = 'tenant-atfloor-' + Date.now();
   const tenantGwEwId = 'tenant-gwew-' + Date.now();
-  const tenantInternalOrganicsId = 'tenant-internal-organics-' + Date.now();
+  const tenantExternalOnlyOrganicsId = 'tenant-external-only-organics-' + Date.now();
   const tenantImpactImprovedId = 'tenant-impact-improved-' + Date.now();
   const tenantImpactDeclinedId = 'tenant-impact-declined-' + Date.now();
   const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -114,16 +115,22 @@ async function seedTestData(){
         });
       }
     }
-    // Real Bintracker rows ARE individually-counted documents, so the exact recycled share is
-    // limited by `count` — `recycledCount` of the first `count` rows are wasteOutcome:'Recycled'.
+    // Real Bintracker rows ARE individually-counted documents, so the exact "real" share is limited
+    // by `count` — `recycledCount` of the first `count` rows are contaminated:false (the actual
+    // "good"/recovered signal the comparison logic reads, since the 2026-10-05 fix moved off the
+    // unreliable `wasteOutcome` field). `wasteOutcome` is still stored (matches the real doc shape)
+    // but deliberately uncorrelated with `recycledCount` — it's no longer read, so it must not
+    // accidentally make a wrong test pass. Defaults to `externalOnly: false` (internal rows) — per
+    // that same fix, per-tenant comparisons can only ever be computed from internal data; pass
+    // `externalOnly: true` explicitly only for the one case proving external-only data is excluded.
     async function seedBintrackerRows({ tenantRaw, level, stream, count, recycledCount, externalOnly, collectDate }){
       for (let i = 0; i < count; i++){
         await setDoc(doc(collection(db, 'bintrackerRows')), {
           buildingId: b3, bintrackerTenantRaw: tenantRaw, bintrackerLocationRaw: level,
           ourStream: stream, wasteTypeRaw: 'test',
           contaminated: i >= recycledCount,
-          externalOnly: externalOnly !== false,
-          wasteOutcome: i < recycledCount ? 'Recycled' : 'Non-Recycled',
+          externalOnly: externalOnly === true,
+          wasteOutcome: 'Recycled',
           collectDate: collectDate || todayStr, weight: 10, fetchedAt: now,
         });
       }
@@ -136,7 +143,7 @@ async function seedTestData(){
     }
 
     // Tenant Agree: induction 30% on Mixed Recycling (low, <75%), real Bintracker data shows 40%
-    // successfully recycled (also low, EXTERNAL rows only) -> AGREE (low+low).
+    // successfully recycled (also low, internal rows) -> AGREE (low+low).
     await seedInductionSubs({ tenantId: tenantAgreeId, tenantName: 'Tenant Agree', level: 'Level 5', stream: 'mr', pct: 30, subCount: 3 });
     await seedBintrackerRows({ tenantRaw: 'BT Acme Agree', level: 'Level 5', stream: 'mr', count: 5, recycledCount: 2 });
     await seedMatch({ tenantId: tenantAgreeId, tenantName: 'Tenant Agree', tenantRaw: 'BT Acme Agree', level: 'Level 5' });
@@ -148,7 +155,7 @@ async function seedTestData(){
     await seedMatch({ tenantId: tenantDisagreeId, tenantName: 'Tenant Disagree', tenantRaw: 'BT Acme Disagree', level: 'Level 6' });
 
     // Tenant BelowFloor: 3 induction submissions (clears that floor) on Organics, but only 4
-    // matching EXTERNAL Bintracker rows (below the >=5 floor) -> must produce NO finding at all.
+    // matching internal Bintracker rows (below the >=5 floor) -> must produce NO finding at all.
     await seedInductionSubs({ tenantId: tenantFloorId, tenantName: 'Tenant BelowFloor', level: 'Level 7', stream: 'og', pct: 30, subCount: 3 });
     await seedBintrackerRows({ tenantRaw: 'BT Acme Floor', level: 'Level 7', stream: 'og', count: 4, recycledCount: 1 });
     await seedMatch({ tenantId: tenantFloorId, tenantName: 'Tenant BelowFloor', tenantRaw: 'BT Acme Floor', level: 'Level 7' });
@@ -168,12 +175,13 @@ async function seedTestData(){
     await seedBintrackerRows({ tenantRaw: 'BT Acme GwEw', level: 'Level 9', stream: 'ew', count: 10, recycledCount: 3 });
     await seedMatch({ tenantId: tenantGwEwId, tenantName: 'Tenant GwEw', tenantRaw: 'BT Acme GwEw', level: 'Level 9' });
 
-    // Tenant InternalOrganics: on-site composting — plenty of Organics rows, but all internalOnly
-    // (externalOnly:false) -> no Organics finding, with no special-case code (falls out of the
-    // externalOnly-filtered >=5 floor).
-    await seedInductionSubs({ tenantId: tenantInternalOrganicsId, tenantName: 'Tenant InternalOrganics', level: 'Level 10', stream: 'og', pct: 20, subCount: 3 });
-    await seedBintrackerRows({ tenantRaw: 'BT Acme InternalOrganics', level: 'Level 10', stream: 'og', count: 10, recycledCount: 8, externalOnly: false });
-    await seedMatch({ tenantId: tenantInternalOrganicsId, tenantName: 'Tenant InternalOrganics', tenantRaw: 'BT Acme InternalOrganics', level: 'Level 10' });
+    // Tenant ExternalOnlyOrganics: Organics data recorded ONLY via external/contractor hauling
+    // (externalOnly:true), zero internal rows -> no Organics finding, with no special-case code
+    // (falls out of the internal-only >=5 floor) — proves the 2026-10-05 fix's real population
+    // requirement (internal rows only) correctly excludes external-only data.
+    await seedInductionSubs({ tenantId: tenantExternalOnlyOrganicsId, tenantName: 'Tenant ExternalOnlyOrganics', level: 'Level 10', stream: 'og', pct: 20, subCount: 3 });
+    await seedBintrackerRows({ tenantRaw: 'BT Acme ExternalOnlyOrganics', level: 'Level 10', stream: 'og', count: 10, recycledCount: 8, externalOnly: true });
+    await seedMatch({ tenantId: tenantExternalOnlyOrganicsId, tenantName: 'Tenant ExternalOnlyOrganics', tenantRaw: 'BT Acme ExternalOnlyOrganics', level: 'Level 10' });
 
     // --- Comparison #2 ("Induction impact") ---
     // Cutoff = the tenant's own submission timestamp (`now`, i.e. today in UTC) — before rows use
@@ -408,7 +416,7 @@ async function runFlow(page, consoleErrors){
   check('current-state sub-block includes the representativeness + snapshot honesty notes',
     pass1.btBlock.includes('reflect only the people who completed the induction') && pass1.btBlock.includes('snapshot of current data'),
     pass1.btBlock.slice(0, 600));
-  check('the below-real-rows-floor tenant (only 4 external Bintracker rows, needs >=5) produces no finding at all',
+  check('the below-real-rows-floor tenant (only 4 internal Bintracker rows, needs >=5) produces no finding at all',
     !pass1.btBlock.includes('Tenant BelowFloor'), pass1.btBlock.slice(0, 800));
   check('the exactly-at-floor tenant (3 submissions, 5 real rows) still produces a finding',
     pass1.btBlock.includes('Tenant AtFloor'), pass1.btBlock.slice(0, 300));
@@ -418,8 +426,8 @@ async function runFlow(page, consoleErrors){
   check('General Waste / E-Waste never produce a finding, even with abundant seeded data for those streams',
     !pass1.btBlock.includes('Tenant GwEw'),
     pass1.btBlock.slice(0, 300));
-  check('on-site composting (all internalOnly Organics rows) produces no Organics finding',
-    !pass1.btBlock.includes('Tenant InternalOrganics'), pass1.btBlock.slice(0, 300));
+  check('external-only Organics rows (no internal data for that tenant) produce no Organics finding',
+    !pass1.btBlock.includes('Tenant ExternalOnlyOrganics'), pass1.btBlock.slice(0, 300));
   check('induction-impact sub-block reports the improved tenant (large gap, at exactly the 5/5 floor)',
     pass1.btBlock.includes('Tenant ImpactImproved') && pass1.btBlock.includes('real recycling improved significantly after the induction') && pass1.btBlock.includes('40%') && pass1.btBlock.includes('80%'),
     pass1.btBlock.slice(0, 900));

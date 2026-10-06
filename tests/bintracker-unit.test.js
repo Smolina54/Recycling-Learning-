@@ -74,53 +74,66 @@ check('no candidate above the floor returns null', noMatch === null, JSON.string
 const emptyOurs = findBestMatch('', ['Widgetco']);
 check('an empty our-name returns null (nothing to match)', emptyOurs === null, JSON.stringify(emptyOurs));
 
-// --- computeRecyclingLevelPct (Workstream 7 Point 5 sub-idea, 2026-09-24) ---
-function row(ourStream, externalOnly, wasteOutcome) {
-  return { ourStream, externalOnly, wasteOutcome };
+// --- computeRecyclingLevelPct (Workstream 7 Point 5 sub-idea, 2026-09-24; formula revised
+// 2026-10-05 to NABERS' kg-recovered/kg-generated definition) ---
+// `weight` is the only input that matters now; `externalOnly` is deliberately left OUT of these
+// row objects - the function no longer filters by it internally (that became the CALLER's job,
+// since building-level needs external rows and tenant-level needs internal rows - that split is
+// covered by functions-refreshbintrackerdata.test.js instead, which exercises the real caller,
+// writeRecyclingLevelAggregates). Non-uniform weights throughout prove this is real weight-based
+// math, not row counting that happens to look right when every row weighs the same.
+function row(ourStream, weight) {
+  return { ourStream, weight };
 }
 
 check('MIN_ROWS_FOR_RECYCLING_LEVEL is the documented floor of 5', MIN_ROWS_FOR_RECYCLING_LEVEL === 5, MIN_ROWS_FOR_RECYCLING_LEVEL);
 
-// Below the sample floor: 4 qualifying rows, all Recycled - still null, not 100%.
+// Below the sample floor: 4 rows - still null, regardless of weight/stream.
 const tooFewRows = [
-  row('mr', true, 'Recycled'), row('mr', true, 'Recycled'),
-  row('pc', true, 'Recycled'), row('og', true, 'Recycled'),
+  row('mr', 10), row('mr', 20),
+  row('pc', 15), row('og', 15),
 ];
 check('below the 5-row floor returns null, not a misleading percentage',
   computeRecyclingLevelPct(tooFewRows) === null, computeRecyclingLevelPct(tooFewRows));
 
-// Exactly at the floor, mixed outcome across all 3 recyclable streams -> 3/5 = 60%.
+// Exactly at the floor (5 rows), non-uniform weights, all 3 recyclable streams ->
+// recovered (mr+pc+og) = 10+20+30 = 60kg, generated = 60kg (no non-recyclable rows yet) -> 100%
+// reserved for the next case; THIS case mixes in weight that must count toward generated only.
 const atFloorMixed = [
-  row('mr', true, 'Recycled'), row('mr', true, 'Non-Recycled'),
-  row('pc', true, 'Recycled'), row('og', true, 'Recycled'),
-  row('og', true, 'Non-Recycled'),
+  row('mr', 10), row('mr', 20),
+  row('pc', 15), row('og', 15),
+  row('gw', 40),
 ];
-check('at exactly 5 qualifying rows, computes the real percentage (3/5 = 60%)',
+check('at exactly 5 rows, computes real weight-based recovered/generated (60/100 = 60%)',
   computeRecyclingLevelPct(atFloorMixed) === 60, computeRecyclingLevelPct(atFloorMixed));
 
-// gw/ew rows must never count toward the sample or the numerator, even if plentiful and all
-// "Recycled" - only mr/pc/og participate in this metric.
-const gwEwExcluded = [
+// gw/ew rows must count toward GENERATED (the denominator) but never toward RECOVERED (the
+// numerator) - this is the actual 2026-10-05 behavior change from the pre-fix formula, which used
+// to exclude them from both. Adding more gw/ew weight on top of atFloorMixed must LOWER the
+// percentage (more generated, same recovered), not leave it unchanged.
+const moreGwEw = [
   ...atFloorMixed,
-  row('gw', true, 'Recycled'), row('gw', true, 'Recycled'), row('gw', true, 'Recycled'),
-  row('ew', true, 'Recycled'), row('ew', true, 'Recycled'), row('ew', true, 'Recycled'),
+  row('gw', 40), row('ew', 20),
 ];
-check('gw/ew rows are excluded from both the sample size and the result (still 60%, not diluted)',
-  computeRecyclingLevelPct(gwEwExcluded) === 60, computeRecyclingLevelPct(gwEwExcluded));
+check('additional gw/ew weight dilutes the percentage (still counts as generated, never recovered)',
+  computeRecyclingLevelPct(moreGwEw) === 38, computeRecyclingLevelPct(moreGwEw)); // 60/(100+60) = 37.5 -> rounds to 38
 
-// internalOnly (externalOnly:false) rows must never count either, regardless of stream/outcome.
-const internalOnlyExcluded = [
-  ...atFloorMixed,
-  row('mr', false, 'Recycled'), row('pc', false, 'Recycled'), row('og', false, 'Recycled'),
-];
-check('externalOnly:false rows are excluded from the sample (still 60%, internal rows ignored)',
-  computeRecyclingLevelPct(internalOnlyExcluded) === 60, computeRecyclingLevelPct(internalOnlyExcluded));
+// All-recyclable-streams and all-non-recyclable-streams boundary cases (weight-based, not
+// wasteOutcome-based - that field is no longer read by this function at all).
+const allRecyclable = [row('mr', 10), row('mr', 20), row('pc', 30), row('pc', 10), row('og', 30)];
+check('all rows in recyclable streams computes 100%', computeRecyclingLevelPct(allRecyclable) === 100, computeRecyclingLevelPct(allRecyclable));
+const allNonRecyclable = [row('gw', 10), row('gw', 20), row('ew', 30), row('gw', 10), row('ew', 30)];
+check('all rows in non-recyclable streams computes 0%', computeRecyclingLevelPct(allNonRecyclable) === 0, computeRecyclingLevelPct(allNonRecyclable));
 
-// All-recycled and all-non-recycled boundary cases.
-const allRecycled = [row('mr', true, 'Recycled'), row('mr', true, 'Recycled'), row('pc', true, 'Recycled'), row('pc', true, 'Recycled'), row('og', true, 'Recycled')];
-check('all-qualifying-rows-recycled computes 100%', computeRecyclingLevelPct(allRecycled) === 100, computeRecyclingLevelPct(allRecycled));
-const noneRecycled = [row('mr', true, 'Non-Recycled'), row('mr', true, 'Non-Recycled'), row('pc', true, 'Non-Recycled'), row('pc', true, 'Non-Recycled'), row('og', true, 'Non-Recycled')];
-check('all-qualifying-rows-non-recycled computes 0%', computeRecyclingLevelPct(noneRecycled) === 0, computeRecyclingLevelPct(noneRecycled));
+// A row with no usable weight (missing/non-numeric) contributes 0kg to both sides, not NaN/crash.
+const missingWeight = [row('mr', 10), row('mr', 20), { ourStream: 'pc' }, row('og', 20), row('og', 10)];
+check('a row with no weight field contributes 0kg, not NaN or a crash',
+  computeRecyclingLevelPct(missingWeight) === 100, computeRecyclingLevelPct(missingWeight));
+
+// All rows weighing 0kg -> generatedKg is 0 -> null (graceful absence), not a divide-by-zero NaN.
+const allZeroWeight = [row('mr', 0), row('mr', 0), row('pc', 0), row('og', 0), row('gw', 0)];
+check('all-zero-weight rows return null (would otherwise divide by zero)',
+  computeRecyclingLevelPct(allZeroWeight) === null, computeRecyclingLevelPct(allZeroWeight));
 
 check('an empty row array returns null', computeRecyclingLevelPct([]) === null, computeRecyclingLevelPct([]));
 

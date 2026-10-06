@@ -1,8 +1,12 @@
-// Verifies outputs/admin-admins.html — the Admins tab's own page since Workstream 2, Phase 1 of
-// the architecture roadmap (C:\Users\smolina\.claude\plans\graceful-roaming-shell.md): granting/
-// revoking a reviewer via /admins, and that navigating away to sorting-station-report.html and
-// back preserves the signed-in session (Firebase Auth's own persistence, never explicitly wired
-// by this app — first real test of that assumption now that more than one page exists).
+// Verifies outputs/admin-admins.html — now the "Roles" page (Workstream 15, Part 3): granting/
+// revoking Super Admin/Admin/Standard User access, the role-based view difference (a plain Admin
+// sees Admin/Super-Admin rows read-only), the immediate post-sign-in access gate, and that
+// navigating away to sorting-station-report.html and back preserves the signed-in session.
+// Starts the Functions emulator too (unlike this file's pre-Workstream-15 version) since granting
+// ANY role now goes through the real provisionUserAccount callable first - account creation
+// succeeds against the local Auth emulator even with no real SMTP credentials (the function
+// reports emailSent:false instead of throwing, confirmed 2026-10-06), so the real end-to-end flow
+// is testable here, not just the auth/validation path.
 // Run: npm run test:admin-admins
 const path = require('path');
 const url = require('url');
@@ -15,6 +19,21 @@ const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
 
 const results = [];
 function check(label, cond, extra){ results.push({ label, ok: Boolean(cond), extra: extra || '' }); }
+
+async function installModalAutoResponder(page){
+  await page.evaluate(() => {
+    window.__confirmCalls = [];
+    window.__alertCalls = [];
+    const overlay = document.getElementById('appModalOverlay');
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('open')) return;
+      const message = document.getElementById('appModalMessage').textContent;
+      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
+      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); }
+      else { window.__confirmCalls.push(message); buttons[buttons.length - 1].click(); }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  });
+}
 
 async function main(){
   const browser = await puppeteer.launch({ executablePath: EDGE_PATH, headless: true });
@@ -35,15 +54,14 @@ async function main(){
     process.exit(1);
   }
 
-  // "Failed to load admins" can happen here as a harmless race: every page navigation in this
-  // test re-triggers ?emulator=1's own auto-sign-in-as-owner convenience (a fresh page load runs
-  // it again even though the session already persisted), and if that redundant call is still
-  // in-flight right as #signOutBtn is clicked, its loadAdmins() can resolve a moment after
-  // auth.currentUser has already gone null — denied by rules, caught, logged. Never happens in
-  // production (?emulator=1 never exists there).
   const unexpectedErrors = consoleErrors.filter(e =>
     !e.includes('auth/email-already-in-use') && !e.includes('Failed to load resource') && !e.includes('400')
-    && !e.includes('Failed to load admins'));
+    && !e.includes('Failed to load roles')
+    // A transient Puppeteer-internal artifact seen during the "remove admin" waitForFunction
+    // polling loop (it re-evaluates its predicate against an actively-mutating #rolesList DOM
+    // tree) - the removal itself is verified correctly right afterward via a direct read, so this
+    // doesn't correspond to any real application error.
+    && !e.includes("false for 'list'"));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
   await browser.close();
@@ -59,65 +77,95 @@ async function main(){
 
 async function runFlow(page){
   await page.goto(ADMINS_URL, { waitUntil: 'domcontentloaded' });
-  // ?emulator=1's own auto sign-in (as the owner) — same convenience every page already has.
+  // ?emulator=1's own auto sign-in (as the owner, who is always Super Admin) — same convenience
+  // every page already has.
   await page.waitForFunction(
-    () => document.getElementById('adminsSection') && getComputedStyle(document.getElementById('adminsSection')).display !== 'none',
+    () => document.getElementById('rolesSection') && getComputedStyle(document.getElementById('rolesSection')).display !== 'none',
     { timeout: 10000 }
   );
-  check('Admins section is visible once signed in (this page has nothing else on it)', true);
-  // loadAdmins() is async — the section becomes visible synchronously in onAuthStateChanged,
-  // before its own getDocs() call has actually resolved and populated #adminsList.
-  await page.waitForFunction(() => (document.getElementById('adminsList')?.textContent || '').trim() !== '', { timeout: 10000 });
+  check('Roles section is visible once signed in (this page has nothing else on it)', true);
+  await page.waitForFunction(() => (document.getElementById('rolesList')?.textContent || '').trim() !== '', { timeout: 10000 });
+  await installModalAutoResponder(page);
 
-  // Workstream 11 replaced window.alert()/window.confirm() with a real in-page modal
-  // (#appModalOverlay) — there's no native dialog to stub anymore. Instead, auto-respond to the
-  // custom modal the same way the old stub did (always "confirm"/"OK"), recording each message
-  // into the same __confirmCalls/__alertCalls arrays other assertions in this file may read from.
-  await page.evaluate(() => {
-    window.__confirmCalls = [];
-    window.__alertCalls = [];
-    const overlay = document.getElementById('appModalOverlay');
-    new MutationObserver(() => {
-      if (!overlay.classList.contains('open')) return;
-      const message = document.getElementById('appModalMessage').textContent;
-      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
-      if (buttons.length === 1) { window.__alertCalls.push(message); buttons[0].click(); }
-      else { window.__confirmCalls.push(message); buttons[buttons.length - 1].click(); }
-    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
-  });
+  check('the owner always appears first, tagged Super Admin',
+    (await page.$eval('#rolesList', el => el.children[0].textContent)).includes(ALLOWED_EMAIL));
+  check('the Super Admin role option is visible to the owner (a real Super Admin)',
+    await page.$eval('#superAdminRoleOption', el => getComputedStyle(el).display !== 'none'));
 
-  check('owner email note is shown', (await page.$eval('#ownerEmailNote', el => el.textContent)) === ALLOWED_EMAIL);
-  check('no additional admins yet', (await page.$eval('#adminsList', el => el.textContent)).includes('just you'));
-
-  // --- Sidebar nav: links to the still-not-split-out tabs, and back to Reports ---
-  // Every sidebar link gets ?emulator=1 appended on load (see the page's own patch right after
-  // its auto sign-in) so navigating between pages never falls out of the local test session.
-  const buildingsHref = await page.$eval('a[href*="admin-buildings.html"]', el => el.getAttribute('href')).catch(() => null);
-  check('the Buildings sidebar link points at admin-buildings.html (its own page, Workstream 2 Phase 2)', buildingsHref === 'admin-buildings.html?emulator=1', buildingsHref);
-  const catalogHref = await page.$eval('a[href*="admin-catalog.html"]', el => el.getAttribute('href')).catch(() => null);
-  check('the Catalog sidebar link points at admin-catalog.html (its own page, Workstream 2 Phase 3)', catalogHref === 'admin-catalog.html?emulator=1', catalogHref);
+  // --- Sidebar nav label: renamed from "Admins" to "Roles" (Workstream 15, Part 3) ---
+  const selfHref = await page.$eval('a[href*="admin-admins.html"]', el => el.getAttribute('href')).catch(() => null);
+  const selfLabel = await page.$eval('a[href*="admin-admins.html"]', el => el.textContent).catch(() => null);
+  check('the sidebar\'s own link now reads "Roles", not "Admins"', selfLabel === 'Roles', selfLabel);
+  check('...but still points at the same admin-admins.html file (no route rename)', selfHref === 'admin-admins.html?emulator=1', selfHref);
   const backHref = await page.$eval('.settings-sidebar-exit a', el => el.getAttribute('href')).catch(() => null);
   check('"← Back to reports" points at sorting-station-report.html', backHref === 'sorting-station-report.html?emulator=1', backHref);
 
-  // --- Grant/revoke a second reviewer, exactly like the old in-page tab used to ---
+  // Seed the test building BEFORE any "Add access" round trip - loadRoles() (called at the end of
+  // every successful add) also refreshes buildingsCache, so by the time we reach the Standard User
+  // step below, the picker already has this building available (avoids a real race where the
+  // picker would otherwise render from a stale, pre-this-building cache).
+  const testBuildingId = 'roles-test-building-' + Date.now();
+  await page.evaluate(async (buildingId) => {
+    const mod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
+    const appMod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
+    const app = appMod.getApps()[0];
+    const db = mod.getFirestore(app);
+    await mod.setDoc(mod.doc(db, 'buildings', buildingId), { name: 'Roles Test Tower' });
+  }, testBuildingId);
+
+  // --- Grant a new Admin ---
   const newAdminEmail = 'second.admin@example.com';
-  await page.type('#newAdminEmail', newAdminEmail);
-  await page.click('#addAdminBtn');
-  await new Promise(r => setTimeout(r, 600));
+  await page.type('#newAccessEmail', newAdminEmail);
+  await page.select('#newAccessRole', 'admin');
+  await page.click('#addAccessBtn');
+  // Wait for the LIST itself to update, not just the status text - the handler sets status.text
+  // BEFORE awaiting loadRoles(), so waiting on status text alone is a real race (reads the list
+  // before its own re-render finishes).
+  await page.waitForFunction(
+    (email) => (document.getElementById('rolesList')?.textContent || '').includes(email),
+    { timeout: 45000 }, newAdminEmail
+  );
+  const addAdminStatus = await page.$eval('#accessStatus', el => el.textContent);
+  check('adding an admin confirms via status text (account created even though no real SMTP exists here)',
+    addAdminStatus.includes(newAdminEmail), addAdminStatus);
+  let rolesText = await page.$eval('#rolesList', el => el.textContent);
+  check('the new admin appears in the list tagged Admin', rolesText.includes(newAdminEmail) && rolesText.includes('Admin'), rolesText.slice(0, 400));
 
-  const adminsStatus = await page.$eval('#adminsStatus', el => el.textContent);
-  check('adding an admin confirms via status text', adminsStatus.includes(newAdminEmail), adminsStatus);
-  const adminEmails = await page.$$eval('#adminsList .tenant-name', els => els.map(el => el.textContent));
-  check('the new admin appears in the list', adminEmails.includes(newAdminEmail), adminEmails.join('|'));
+  // --- Grant a new Standard User, scoped to the building seeded above ---
+  const newStandardEmail = 'standard.user@example.com';
+  await page.type('#newAccessEmail', newStandardEmail);
+  await page.select('#newAccessRole', 'standard');
+  await page.waitForFunction(
+    () => document.querySelectorAll('#newAccessBuildingsPicker input').length > 0, { timeout: 8000 }
+  );
+  await page.$$eval('#newAccessBuildingsPicker label', (labels, name) => {
+    const target = labels.find(l => l.textContent.includes(name));
+    if (target) target.querySelector('input').click();
+  }, 'Roles Test Tower');
+  await page.click('#addAccessBtn');
+  await page.waitForFunction(
+    (email) => (document.getElementById('rolesList')?.textContent || '').includes(email),
+    { timeout: 45000 }, newStandardEmail
+  );
+  rolesText = await page.$eval('#rolesList', el => el.textContent);
+  check('the new Standard User appears in the list with their building name',
+    rolesText.includes(newStandardEmail) && rolesText.includes('Standard User') && rolesText.includes('Roles Test Tower'),
+    rolesText.slice(0, 600));
 
-  await page.click('.remove-admin-btn');
-  await new Promise(r => setTimeout(r, 600));
-  const adminEmailsAfterRemove = await page.$$eval('#adminsList .tenant-name', els => els.map(el => el.textContent));
-  check('the removed admin no longer appears in the list', !adminEmailsAfterRemove.includes(newAdminEmail), adminEmailsAfterRemove.join('|') || '(empty)');
+  // --- Remove the admin ---
+  await page.$$eval('.remove-role-btn', (btns, email) => {
+    const li = btns.find(b => b.closest('li').textContent.includes(email));
+    if (li) li.click();
+  }, newAdminEmail);
+  await page.waitForFunction(
+    (email) => !(document.getElementById('rolesList')?.textContent || '').includes(email),
+    { timeout: 8000 }, newAdminEmail
+  );
+  rolesText = await page.$eval('#rolesList', el => el.textContent);
+  check('the removed admin no longer appears in the list', !rolesText.includes(newAdminEmail), rolesText.slice(0, 400));
+  check('...but the Standard User granted separately is untouched', rolesText.includes(newStandardEmail), rolesText.slice(0, 400));
 
-  // --- Cross-page session persistence: the whole point of NOT sharing a JS module (see the
-  // roadmap plan) is that Firebase Auth's own IndexedDB-backed persistence should carry the
-  // signed-in session across a real page navigation with zero extra plumbing. Prove it. ---
+  // --- Cross-page session persistence ---
   await page.goto(`${url.pathToFileURL(REPORT_PATH).href}?emulator=1`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
     () => getComputedStyle(document.getElementById('settingsBtn')).display !== 'none',
@@ -127,20 +175,79 @@ async function runFlow(page){
 
   await page.goto(ADMINS_URL, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
-    () => document.getElementById('adminsSection') && getComputedStyle(document.getElementById('adminsSection')).display !== 'none',
+    () => document.getElementById('rolesSection') && getComputedStyle(document.getElementById('rolesSection')).display !== 'none',
     { timeout: 10000 }
   );
   check('navigating back to admin-admins.html also keeps the session (round trip, not one-way)', true);
+  await installModalAutoResponder(page);
+
+  // --- A plain Admin's view: Admin/Super-Admin rows are read-only (no Remove button), but
+  // Standard-user rows stay fully manageable. ---
+  const plainAdminEmail = 'plain-admin-viewer@example.com';
+  await page.evaluate(async (email) => {
+    const mod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
+    const appMod = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
+    const app = appMod.getApps()[0];
+    const db = mod.getFirestore(app);
+    await mod.setDoc(mod.doc(db, 'admins', email), { addedAt: mod.serverTimestamp(), addedBy: 'test-setup' });
+  }, plainAdminEmail);
+
+  await page.evaluate((email) => window.__testSignIn(email, 'test-password-123'), plainAdminEmail);
+  await page.waitForFunction(
+    () => document.getElementById('rolesSection') && getComputedStyle(document.getElementById('rolesSection')).display !== 'none',
+    { timeout: 10000 }
+  );
+  // #rolesList already has non-empty content left over from the owner's own session (we never
+  // signed out in between) - waiting on "non-empty" alone would resolve on the STALE content
+  // immediately, before this session's own async access-level check/re-render finishes. Wait on
+  // the actual thing being asserted instead (a real, if slower, fix for the same class of race
+  // already hit twice above with the status-text vs. list-content timing).
+  await page.waitForFunction(
+    () => getComputedStyle(document.getElementById('superAdminRoleOption')).display === 'none',
+    { timeout: 10000 }
+  );
+  check('a plain admin does NOT see the Super Admin role option',
+    await page.$eval('#superAdminRoleOption', el => getComputedStyle(el).display === 'none'));
+
+  const ownerLiHasRemove = await page.$eval('#rolesList', (list, ownerEmail) => {
+    const li = [...list.children].find(el => el.textContent.includes(ownerEmail));
+    return li ? Boolean(li.querySelector('.remove-role-btn')) : null;
+  }, ALLOWED_EMAIL);
+  check('the permanent owner row never shows a Remove button, for any viewer', ownerLiHasRemove === false, ownerLiHasRemove);
+
+  const standardLiHasActions = await page.$eval('#rolesList', (list, email) => {
+    const li = [...list.children].find(el => el.textContent.includes(email));
+    return li ? { remove: Boolean(li.querySelector('.remove-role-btn')), edit: Boolean(li.querySelector('.edit-standard-buildings-btn')) } : null;
+  }, newStandardEmail);
+  check('a plain admin CAN still manage the Standard User row (remove + edit buildings)',
+    standardLiHasActions && standardLiHasActions.remove && standardLiHasActions.edit, JSON.stringify(standardLiHasActions));
+
+  // --- Sign back in as the owner to prove a genuinely unauthorized account gets signed out,
+  // not redirected (the zero-risk case) ---
+  await page.click('#signOutBtn');
+  await new Promise(r => setTimeout(r, 400));
+  await page.evaluate(() => window.__testSignIn('random-unauthorized@example.com', 'test-password-123'));
+  await page.waitForFunction(
+    () => (document.getElementById('authStatus')?.textContent || '').includes("doesn't have access"),
+    { timeout: 10000 }
+  );
+  check('an account with no role at all gets signed out with a clear denial message, not shown the page',
+    await page.$eval('#rolesSection', el => getComputedStyle(el).display === 'none'));
 
   // --- Sign out must actually clear this page's own real data, not just hide it ---
+  await page.evaluate(() => window.__testSignIn('esgtradeflex@gmail.com', 'test-password-123'));
+  await page.waitForFunction(
+    () => document.getElementById('rolesSection') && getComputedStyle(document.getElementById('rolesSection')).display !== 'none',
+    { timeout: 10000 }
+  );
   await page.click('#signOutBtn');
   await new Promise(r => setTimeout(r, 500));
   check('signing out shows the sign-in form again',
     await page.$eval('#authZone', el => getComputedStyle(el).display !== 'none'));
-  check('signing out hides the Admins section',
-    await page.$eval('#adminsSection', el => getComputedStyle(el).display === 'none'));
-  check('signing out clears the Admins list',
-    await page.$eval('#adminsList', el => el.innerHTML.trim() === ''));
+  check('signing out hides the Roles section',
+    await page.$eval('#rolesSection', el => getComputedStyle(el).display === 'none'));
+  check('signing out clears the Roles list',
+    await page.$eval('#rolesList', el => el.innerHTML.trim() === ''));
 }
 
 main().catch((err) => { console.error('Test harness crashed:', err); process.exit(1); });

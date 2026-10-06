@@ -258,7 +258,7 @@
     <div class="settings-sidebar-label">⚙ Settings</div>
     <nav class="settings-sidebar-nav">
       <a class="tab-btn active" href="admin-buildings.html" aria-current="page">Buildings</a>
-      <a class="tab-btn" href="admin-admins.html">Admins</a>
+      <a class="tab-btn" href="admin-admins.html">Roles</a>
       <a class="tab-btn" href="admin-catalog.html">Catalog</a>
     </nav>
     <div class="settings-sidebar-exit">
@@ -985,6 +985,17 @@ function renderBuildingsList(buildings){
     const distinctBintrackerTenantRaws = [...new Set(bintrackerRowsForBuilding.map(r => r.bintrackerTenantRaw).filter(Boolean))].sort();
     const showBintrackerMatches = Boolean(b.bintrackerBuildingName) && bintrackerLoadedForBuildingId.has(b.id) &&
       (bintrackerRowsForBuilding.length > 0 || bintrackerMatchesForBuilding.size > 0);
+    // Tenants with an unconfirmed EXACT-confidence candidate only - "contains"/"partial"/no-match
+    // still need individual review via their own row below, since real risk of a wrong link exists
+    // there. An exact (identical, normalized) name match carries no such risk, so bulk-confirming
+    // it is a pure friction reduction, not a safety trade-off (added 2026-10-06).
+    const unconfirmedExactTenants = showBintrackerMatches
+      ? b.tenants.filter(t => {
+          if (bintrackerMatchesForBuilding.has(t.id)) return false;
+          const candidate = distinctBintrackerTenantRaws.length ? findBestMatch(t.name, distinctBintrackerTenantRaws) : null;
+          return candidate && candidate.confidence === 'exact';
+        }).map(t => ({ tenant: t, bintrackerTenantRaw: findBestMatch(t.name, distinctBintrackerTenantRaws).candidate }))
+      : [];
     const tenantsHtml = b.tenants.length
       ? b.tenants.map(t => {
           const isEditing = editingTenant && editingTenant.buildingId === b.id && editingTenant.tenantId === t.id;
@@ -1017,6 +1028,9 @@ function renderBuildingsList(buildings){
       <div class="building-sub-card">
         <p class="generate-link-title"><strong>Tenants</strong></p>
         <p class="block-sub">Everyone currently at this building, with their level(s) and saved contact email, if any.</p>
+        ${unconfirmedExactTenants.length ? `<div class="print-row" style="justify-content:flex-start; margin-bottom:10px;">
+          <button type="button" class="btn confirm-all-exact-matches-btn" data-building-id="${b.id}">Confirm all exact matches (${unconfirmedExactTenants.length})</button>
+        </div>` : ''}
         <ul class="tenant-list">${tenantsHtml}</ul>
         <p class="block-sub contacts-coverage-note">${withEmail} of ${b.tenants.length} tenants have a contact email saved.</p>
       </div>
@@ -1578,14 +1592,39 @@ document.getElementById('bintrackerSyncBuildingsList').addEventListener('click',
     if (!toImport.length){ await showAlert('Tick at least one new tenant to import first.'); return; }
     try {
       const batch = writeBatch(db);
+      const confirmedByEmail = (auth && auth.currentUser) ? auth.currentUser.email : '';
+      const newMatches = [];
       toImport.forEach(t => {
-        batch.set(doc(db, 'buildings', buildingId, 'tenants', crypto.randomUUID()), {
+        // A tenant imported straight from Bintracker Sync has its name SET FROM the real
+        // Bintracker string - unlike a hand-typed tenant, there's zero fuzzy-matching risk here, so
+        // the match is written as already-confirmed in the same batch (same doc shape
+        // confirmBintrackerMatch() uses) instead of making the admin re-confirm it a second time
+        // via the per-tenant review row (a real, unintentional friction point, not a safety
+        // measure - fixed 2026-10-06).
+        const tenantId = crypto.randomUUID();
+        const bintrackerLocationRaw = (t.primaryLocations && t.primaryLocations[0]) || '';
+        batch.set(doc(db, 'buildings', buildingId, 'tenants', tenantId), {
           name: t.bintrackerTenantRaw,
           levels: t.primaryLocations || [],
         });
+        batch.set(doc(db, 'bintrackerTenantMatches', `${buildingId}__${tenantId}`), {
+          buildingId, tenantId, tenantName: t.bintrackerTenantRaw,
+          bintrackerTenantRaw: t.bintrackerTenantRaw, bintrackerLocationRaw,
+          confirmedBy: confirmedByEmail, confirmedAt: serverTimestamp(), status: 'confirmed',
+        });
+        newMatches.push({ tenantId, data: {
+          buildingId, tenantId, tenantName: t.bintrackerTenantRaw,
+          bintrackerTenantRaw: t.bintrackerTenantRaw, bintrackerLocationRaw, status: 'confirmed',
+        } });
       });
       await batch.commit();
       toImport.forEach(t => { t.imported = true; });
+      // Keep the in-memory match cache current too (mirrors confirmBintrackerMatch()'s own
+      // post-write update) so a freshly-imported tenant renders as already-matched immediately in
+      // the Buildings tab, without needing a reload.
+      const matches = bintrackerMatchesByBuildingId.get(buildingId) || new Map();
+      newMatches.forEach(({ tenantId, data }) => matches.set(tenantId, data));
+      bintrackerMatchesByBuildingId.set(buildingId, matches);
       await refreshOneBuildingInCache(buildingId);
       renderBintrackerSyncBuildingsList();
     } catch (err){
@@ -1989,6 +2028,49 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     return;
   }
 
+  const confirmAllExactBtn = e.target.closest('.confirm-all-exact-matches-btn');
+  if (confirmAllExactBtn){
+    const buildingId = confirmAllExactBtn.dataset.buildingId;
+    const building = buildingsCache.find(x => x.id === buildingId);
+    if (!building) return;
+    const bintrackerRowsForBuilding = bintrackerRowsByBuildingId.get(buildingId) || [];
+    const bintrackerMatchesForBuilding = bintrackerMatchesByBuildingId.get(buildingId) || new Map();
+    const distinctBintrackerTenantRaws = [...new Set(bintrackerRowsForBuilding.map(r => r.bintrackerTenantRaw).filter(Boolean))].sort();
+    const toConfirm = building.tenants
+      .filter(t => !bintrackerMatchesForBuilding.has(t.id))
+      .map(t => ({ tenant: t, candidate: distinctBintrackerTenantRaws.length ? findBestMatch(t.name, distinctBintrackerTenantRaws) : null }))
+      .filter(x => x.candidate && x.candidate.confidence === 'exact');
+    if (!toConfirm.length) return; // button shouldn't be visible with nothing to confirm, but guard anyway
+    confirmAllExactBtn.disabled = true;
+    confirmAllExactBtn.textContent = 'Confirming…';
+    try {
+      const batch = writeBatch(db);
+      const confirmedByEmail = (auth && auth.currentUser) ? auth.currentUser.email : '';
+      const newMatches = [];
+      toConfirm.forEach(({ tenant, candidate }) => {
+        const bintrackerLocationRaw = mostCommonLocationForTenant(buildingId, candidate.candidate);
+        const data = {
+          buildingId, tenantId: tenant.id, tenantName: tenant.name,
+          bintrackerTenantRaw: candidate.candidate, bintrackerLocationRaw,
+          confirmedBy: confirmedByEmail, confirmedAt: serverTimestamp(), status: 'confirmed',
+        };
+        batch.set(doc(db, 'bintrackerTenantMatches', `${buildingId}__${tenant.id}`), data);
+        newMatches.push({ tenantId: tenant.id, data: { ...data, confirmedAt: undefined } });
+      });
+      await batch.commit();
+      const matches = bintrackerMatchesByBuildingId.get(buildingId) || new Map();
+      newMatches.forEach(({ tenantId, data }) => matches.set(tenantId, data));
+      bintrackerMatchesByBuildingId.set(buildingId, matches);
+      refreshBuildingsView();
+    } catch (err){
+      console.error('Failed to bulk-confirm Bintracker matches:', err);
+      await showAlert('Failed to confirm the exact matches - check the console for details.');
+      confirmAllExactBtn.disabled = false;
+      confirmAllExactBtn.textContent = `Confirm all exact matches (${toConfirm.length})`;
+    }
+    return;
+  }
+
   const editTenantBtn = e.target.closest('.edit-tenant-btn');
   if (editTenantBtn){
     const buildingId = editTenantBtn.closest('.building-row').dataset.buildingId;
@@ -2281,11 +2363,48 @@ document.getElementById('emailSignInForm').addEventListener('submit', async (e) 
 
 document.getElementById('signOutBtn').addEventListener('click', () => { if (auth) signOut(auth); });
 
+// ---- Immediate post-sign-in access gate (Workstream 15, Part 3, 2026-10-06) ----
+// This page (and Catalog/Distribution/Enrolled Buildings) is Admin/Super-Admin-only - a Standard
+// user has no reason to be here. Two distinct outcomes, not one: a genuinely unauthorized account
+// (no role at all) is signed out with a clear message (the zero-risk case); a VALID Standard user
+// (has a real buildingAccess grant, just not Admin-tier) is redirected to Reports instead - they
+// have real access elsewhere, so signing them out would be confusing/hostile for no security
+// benefit. Reads fail closed (.catch -> false) so a permission-denied read is never mistaken for
+// "yes, you're an admin". Duplicated per-page, same reasoning as every other per-page duplication
+// in this app (file:// blocks cross-file ES module imports).
+const GATE_OWNER_EMAIL = 'esgtradeflex@gmail.com';
+async function getAccessLevel(email){
+  const isSuperAdminUser = email === GATE_OWNER_EMAIL ||
+    (await getDoc(doc(db, 'superAdmins', email)).then(d => d.exists()).catch(() => false));
+  const isAdminUser = isSuperAdminUser ||
+    (await getDoc(doc(db, 'admins', email)).then(d => d.exists()).catch(() => false));
+  return { isSuperAdminUser, isAdminUser };
+}
+async function hasAnyBuildingAccessGrant(email){
+  try {
+    const snap = await getDocs(query(collection(db, 'buildingAccess'), where('email', '==', email)));
+    return !snap.empty;
+  } catch (err){ return false; }
+}
+
 if (auth){
-  onAuthStateChanged(auth, (user) => {
+  onAuthStateChanged(auth, async (user) => {
     document.getElementById('signInBtn').style.display = user ? 'none' : 'inline-flex';
     document.getElementById('signOutBtn').style.display = user ? 'inline-flex' : 'none';
     if (user){
+      const email = (user.email || '').toLowerCase();
+      const { isAdminUser } = await getAccessLevel(email);
+      if (!isAdminUser){
+        const hasGrant = await hasAnyBuildingAccessGrant(email);
+        const emulatorSuffix = new URLSearchParams(window.location.search).get('emulator') === '1' ? '?emulator=1' : '';
+        if (hasGrant){
+          window.location.href = 'sorting-station-report.html' + emulatorSuffix;
+        } else {
+          await signOut(auth);
+          document.getElementById('authStatus').textContent = "This account doesn't have access. Contact your administrator.";
+        }
+        return;
+      }
       document.getElementById('authZone').style.display = 'none';
       document.getElementById('showEmailSignInBtn').style.display = 'none';
       document.getElementById('emailSignInForm').style.display = 'none';
