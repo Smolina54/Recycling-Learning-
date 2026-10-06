@@ -171,13 +171,14 @@
         <label class="filter-field"><span>Email</span><input type="email" id="newAccessEmail" placeholder="name@company.com"></label>
         <label class="filter-field"><span>Role</span>
           <select id="newAccessRole">
+            <option value="" disabled selected>Select a role…</option>
             <option value="superAdmin" id="superAdminRoleOption" style="display:none;">Super Admin</option>
             <option value="admin">Admin</option>
-            <option value="standard" selected>Standard User</option>
+            <option value="standard">Standard User</option>
           </select>
         </label>
       </div>
-      <div class="filter-row" id="newAccessBuildingsRow">
+      <div class="filter-row" id="newAccessBuildingsRow" style="display:none;">
         <label class="filter-field" style="flex:1 1 100%;"><span>Buildings this Standard User can see</span>
           <div class="buildings-checklist" id="newAccessBuildingsPicker"></div>
         </label>
@@ -359,7 +360,7 @@ function renderRolesList({ superAdminEmails, adminEmails, standardByEmail }){
   const myEmail = (auth.currentUser?.email || '').toLowerCase();
   const rows = [];
 
-  rows.push(`<li class="role-row"><span class="role-email" title="${esc(OWNER_EMAIL)}">${esc(OWNER_EMAIL)}</span><span class="role-tag super-admin">Super Admin</span><span class="role-subline">Permanent owner account</span></li>`);
+  rows.push(`<li class="role-row"><span class="role-email" title="${esc(OWNER_EMAIL)}">${esc(OWNER_EMAIL)}</span><span class="role-tag super-admin">Super Admin</span><span class="block-sub" style="margin:0; justify-self:end;">Permanent owner account</span></li>`);
 
   superAdminEmails.forEach(email => {
     const isSelf = email === myEmail;
@@ -463,6 +464,7 @@ document.getElementById('addAccessBtn').addEventListener('click', async () => {
   const role = document.getElementById('newAccessRole').value;
   if (!email || !isValidEmail(email)){ status.textContent = 'Enter a valid email first.'; return; }
   if (email === OWNER_EMAIL){ status.textContent = `${OWNER_EMAIL} already always has access.`; return; }
+  if (!role){ status.textContent = 'Pick a role first.'; return; }
   if (role === 'superAdmin' && !isSuperAdminViewer){ status.textContent = 'Only a Super Admin can grant Super Admin access.'; return; }
 
   let selectedBuildingIds = [];
