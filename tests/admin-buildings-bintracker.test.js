@@ -5,19 +5,19 @@
 // largest Puppeteer suite in this project; bolting an unrelated multi-step matching/review flow
 // onto it would make both harder to read and to debug on failure).
 //
-// This suite only starts firestore+auth (no Functions emulator — same deliberate choice as
-// admin-buildings-page.test.js's own "Delete permanently" check and admin-distribution-page.test.js's
-// "Send via email" check), so:
-//   - the real refreshBintrackerData call is expected to fail gracefully (tested explicitly below);
-//   - the matching/review UI itself is tested against bintrackerRows/bintrackerTenantMatches seeded
-//     DIRECTLY via Firestore (bypassing the real network call entirely), which is exactly what the
-//     page's own client-side read (loadBintrackerDataForBuilding) consumes regardless of whether a
-//     real Cloud Function refresh ever produced those rows.
-// The real fetch/mapping/storage side of refreshBintrackerData itself is covered by
-// tests/functions-refreshbintrackerdata.test.js; the pure findBestMatch()/normalizeForMatching()
-// matching logic is covered by tests/bintracker-unit.test.js against functions/bintracker.js's own
-// copy — this file only proves the page wires that same logic (duplicated per this codebase's
-// established per-page-helper convention) into a real, clickable review UI correctly.
+// This suite only starts firestore+auth (no Functions emulator needed at all) - the matching/
+// review UI is tested against bintrackerRows/bintrackerTenantMatches seeded DIRECTLY via
+// Firestore, which is exactly what the page's own client-side read (loadBintrackerDataForBuilding)
+// consumes regardless of whether a real scheduled sync run produced those rows.
+// (Workstream 15 Part 4, 2026-10-07: the manual "Refresh Bintracker data" button this file used to
+// also test was removed entirely - data now arrives automatically via a nightly scheduled Cloud
+// Function, scheduledBintrackerRefreshNightly, covered by
+// tests/functions-scheduledbintrackerrefresh.test.js. This file now only covers the per-tenant
+// match review UI, unaffected by that change.)
+// The pure findBestMatch()/normalizeForMatching() matching logic is covered by
+// tests/bintracker-unit.test.js against functions/bintracker.js's own copy - this file only proves
+// the page wires that same logic (duplicated per this codebase's established per-page-helper
+// convention) into a real, clickable review UI correctly.
 // Run: npm run test:admin-buildings-bintracker
 const path = require('path');
 const url = require('url');
@@ -94,8 +94,8 @@ async function seedTestData(){
       name: 'No Match Co', levels: ['Level 9'], emails: [],
     });
 
-    // bintrackerRows — as refreshBintrackerData itself would have written them, minus the fields
-    // the review UI doesn't read (ourStream/wasteTypeRaw/contaminated/collectDate/weight/fetchedAt).
+    // bintrackerRows — as the nightly scheduled sync itself would have written them, minus the
+    // fields the review UI doesn't read (ourStream/wasteTypeRaw/contaminated/collectDate/weight/fetchedAt).
     // "Acme Legal" gets 3 rows (2x Level 5, 1x Level 6) to exercise the most-common-location logic;
     // "WIDGETCO PTY LTD" gets 1 row — its own raw name deliberately differs from the tenant's own
     // name ("Widgetco") so it only matches via substring-contains, not exact.
@@ -192,12 +192,8 @@ async function main(){
     process.exit(1);
   }
 
-  // refreshBintrackerData/CORS policy: expected — this suite doesn't start the Functions emulator
-  // (only firestore,auth), so the real call is expected to fail with a CORS/network error, same
-  // reasoning as admin-buildings-page.test.js's own "deleteBuildingPermanently" graceful-failure check.
   const unexpectedErrors = consoleErrors.filter(e =>
-    !e.includes('Failed to load resource') && !e.includes('400')
-    && !e.includes('refreshBintrackerData') && !e.includes('CORS policy') && !e.includes('Failed to refresh Bintracker data'));
+    !e.includes('Failed to load resource') && !e.includes('400'));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
   await browser.close();
@@ -238,7 +234,10 @@ async function runFlow(page){
     }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
   });
 
-  // --- Graceful absence: no bintrackerBuildingName set → no Refresh button, no match review ---
+  // --- Graceful absence: no bintrackerBuildingName set → no "last automatic refresh" note, no
+  // match review. (Workstream 15 Part 4, 2026-10-07: the manual "Refresh Bintracker data" button
+  // was removed entirely - data now arrives automatically via the nightly scheduled sync; this
+  // card shows only a read-only "last automatic refresh" status line now.) ---
   await page.waitForFunction(
     (name) => [...document.querySelectorAll('.building-row h3')].some(el => el.textContent === name),
     { timeout: 8000 }, unmappedBuildingName
@@ -247,32 +246,19 @@ async function runFlow(page){
   await unmappedRow.$eval('.building-toggle-btn', el => el.click());
   await new Promise(r => setTimeout(r, 300));
   unmappedRow = await findRowByName(page, '.building-row', unmappedBuildingName);
-  check('a building with no Bintracker mapping shows no "Refresh Bintracker data" button',
-    !(await unmappedRow.$('.refresh-bintracker-btn')));
+  check('a building with no Bintracker mapping shows no "last automatic refresh" status line',
+    !(await unmappedRow.evaluate(el => el.textContent.includes('automatic refresh'))));
   check('...and no Bintracker match review row for its tenant either',
     !(await unmappedRow.$('.bintracker-match-row')));
 
-  // --- The mapped building: expand it, confirm the Refresh button is present ---
+  // --- The mapped building: expand it, confirm the "waiting for the next automatic refresh" note
+  // shows (no lastAutoRefreshAt has been set yet in this seeded test data). ---
   let mappedRow = await findRowByName(page, '.building-row', mappedBuildingName);
   await mappedRow.$eval('.building-toggle-btn', el => el.click());
   await new Promise(r => setTimeout(r, 300));
   mappedRow = await findRowByName(page, '.building-row', mappedBuildingName);
-  check('a building WITH a Bintracker mapping shows the "Refresh Bintracker data" button',
-    Boolean(await mappedRow.$('.refresh-bintracker-btn')));
-
-  // --- Clicking Refresh with no Functions emulator running fails gracefully (no crash, no stuck
-  // "Refreshing…" state) — mirrors the "Delete permanently" precedent. This must NOT clobber the
-  // bintrackerRows already seeded directly above (the real fetch fails before ever reaching
-  // Firestore), which the next section relies on. ---
-  await mappedRow.$eval('.refresh-bintracker-btn', el => el.click());
-  await page.waitForFunction(() => window.__alertCalls && window.__alertCalls.length > 0, { timeout: 8000 });
-  check('a failed refresh (no reachable Cloud Function) shows an error alert instead of crashing',
-    true);
-  mappedRow = await findRowByName(page, '.building-row', mappedBuildingName);
-  const refreshBtnAfterFailure = await mappedRow.$('.refresh-bintracker-btn');
-  const refreshBtnText = await refreshBtnAfterFailure.evaluate(el => el.textContent);
-  check('the Refresh button resets to its normal label (not stuck on "Refreshing…") after the failure',
-    refreshBtnText === 'Refresh Bintracker data', refreshBtnText);
+  check('a building WITH a Bintracker mapping shows a "waiting for the next automatic refresh" note (no refresh has run yet)',
+    await mappedRow.evaluate(el => el.textContent.includes('Waiting for the next automatic refresh')));
 
   // --- Matching/review UI, driven by the bintrackerRows seeded directly via Firestore ---
   await page.waitForFunction(

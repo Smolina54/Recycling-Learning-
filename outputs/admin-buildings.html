@@ -430,15 +430,6 @@ try {
       });
       renderBintrackerSyncBuildingsList();
     };
-    // Same reasoning as __testSetBintrackerSyncResult above, for discoverBintrackerBuildings
-    // (also real-network-only, no Firestore doc to seed instead) - lets
-    // tests/admin-buildings-bintrackersync.test.js drive the "Check for new buildings" review UI
-    // (expand/collapse, tenant checkboxes, editable name, one-click "Add this building") with a
-    // realistic response shape, without a live Bintracker network call.
-    window.__testSetDiscoveredBuildings = (data) => {
-      discoveredBuildings = data || [];
-      renderDiscoveredBuildingsList();
-    };
     // Cross-page links (the settings sidebar) are plain hrefs with no query string — without
     // this, clicking one drops out of ?emulator=1 entirely on the next page (real Firebase, no
     // auto sign-in) instead of staying in the local test session.
@@ -693,25 +684,24 @@ const expandedBuildingIds = new Set();
 let permanentDeletePanelBuildingId = null; // which archived row currently has its confirm panel open
 
 // ---- Bintracker tenant matching (Point 1, Phase B) ----
-let refreshingBintrackerBuildingId = null; // building whose "Refresh Bintracker data" call is in flight
-const lastBintrackerRefreshCountsByBuildingId = new Map(); // buildingId -> {rowsFetched, rowsMapped, rowsSkipped} — kept (not cleared on a timeout) so the admin can see the last refresh's result while reviewing matches
 const bintrackerRowsByBuildingId = new Map(); // buildingId -> array of {bintrackerTenantRaw, bintrackerLocationRaw, ...}
 const bintrackerMatchesByBuildingId = new Map(); // buildingId -> Map(tenantId -> confirmed bintrackerTenantMatches doc data)
 const bintrackerLoadedForBuildingId = new Set(); // buildings we've already fetched rows+matches for in this session
 let bintrackerChangeOpenKey = null; // `${buildingId}__${tenantId}` of the tenant whose manual picker is open, or null
 
 // ---- Bintracker Sync tab (Workstream 12: building/tenant catalog sync) ----
-// No new Firestore collection backs any of this - discoverBintrackerBuildings/syncBintrackerTenants
-// are both pure read/diff Cloud Functions, so everything here is in-memory only, gone on reload.
-// Follow-up fix (2026-09-30): each entry is now {name, tenants: [{bintrackerTenantRaw,
-// primaryLocations}]} instead of a bare name string - the server already has each discovered
-// building's own tenant rows in memory (from the same fetch used to discover the building names
-// themselves), so it returns them too, letting the admin pick which tenants to bring in AT THE
-// SAME MOMENT they add the building, in one single action, instead of a separate later
+// Revised 2026-10-07 (Workstream 15 Part 4): "Check for new buildings" is a plain Firestore read
+// of discovery/bintrackerBuildings now (written nightly by the scheduled sync, not a live
+// Bintracker call) - this in-memory copy is still gone on reload, just sourced differently.
+// Follow-up fix (2026-09-30): each entry is {name, tenants: [{bintrackerTenantRaw,
+// primaryLocations}]} instead of a bare name string - the nightly sync already groups each
+// discovered building's own raw rows while it's processing everything else, so it computes and
+// stores each one's candidate tenants too, letting the admin pick which tenants to bring in AT
+// THE SAME MOMENT they add the building, in one single action, instead of a separate later
 // "Synchronize" trip to a different tab.
 let discoveredBuildings = []; // last "Check for new buildings" result
 let discoverBuildingsInFlight = false;
-let expandedDiscoveredBuildingNames = new Set(); // keyed by the real Bintracker name (unique per discoverBintrackerBuildings' own dedup)
+let expandedDiscoveredBuildingNames = new Set(); // keyed by the real Bintracker name (unique per the stored doc's own dedup)
 let addDiscoveredBuildingInFlight = null; // the Bintracker name currently mid "Add this building"
 let bintrackerSyncInFlightBuildingId = null; // building whose "Synchronize" call is in flight
 // buildingId -> { newTenants, missingTenants, levelMismatches, dateRange } - each item also carries
@@ -807,8 +797,11 @@ function renderBuildingManagersHtml(b){
 // real-data comparison and the Bintracker Sync tab must render nothing for it, not an error.
 function renderBintrackerMappingHtml(b){
   const hasMapping = Boolean(b.bintrackerBuildingName);
-  const isRefreshing = refreshingBintrackerBuildingId === b.id;
-  const counts = lastBintrackerRefreshCountsByBuildingId.get(b.id);
+  // Workstream 15 Part 4 (2026-10-07): no manual "Refresh Bintracker data" button anymore - data
+  // for every mapped building now arrives automatically via the nightly scheduled sync (3am
+  // Melbourne time). This just shows when that last happened for this building, for visibility.
+  const lastAutoRefresh = hasMapping && b.lastAutoRefreshAt && typeof b.lastAutoRefreshAt.toDate === 'function'
+    ? b.lastAutoRefreshAt.toDate().toLocaleString() : null;
   return `
     <div class="building-sub-card">
       <p class="generate-link-title"><strong>Bintracker mapping</strong></p>
@@ -820,11 +813,7 @@ function renderBintrackerMappingHtml(b){
         <button class="btn save-bintracker-mapping-btn">Save</button>
         ${justSavedBintrackerMappingForBuildingId === b.id ? '<span class="managers-saved-note">Saved ✓</span>' : ''}
       </div>
-      ${hasMapping ? `
-      <div class="print-row" style="justify-content:flex-start; align-items:center; margin-top:10px;">
-        <button class="btn secondary refresh-bintracker-btn"${isRefreshing ? ' disabled' : ''}>${isRefreshing ? 'Refreshing…' : 'Refresh Bintracker data'}</button>
-        ${counts ? `<span class="managers-saved-note">Refreshed ✓ (${counts.rowsFetched} rows fetched, ${counts.rowsMapped} mapped, ${counts.rowsSkipped} skipped)</span>` : ''}
-      </div>` : ''}
+      ${hasMapping ? `<p class="block-sub" style="margin-top:10px;">${lastAutoRefresh ? `Last automatic refresh: ${esc(lastAutoRefresh)}` : 'Waiting for the next automatic refresh (runs nightly).'}</p>` : ''}
     </div>`;
 }
 
@@ -1480,12 +1469,15 @@ document.getElementById('discoverBuildingsBtn').addEventListener('click', async 
   btn.textContent = 'Checking…';
   status.textContent = '';
   try {
-    const discoverBintrackerBuildings = httpsCallable(functions, 'discoverBintrackerBuildings', { timeout: 300000 });
-    const result = await discoverBintrackerBuildings({});
-    discoveredBuildings = (result.data && result.data.discoveredBuildings) || [];
+    // Workstream 15 Part 4 (2026-10-07): no live Bintracker call anymore - the nightly scheduled
+    // sync already writes this doc every night; this button just reads it.
+    const snap = await getDoc(doc(db, 'discovery', 'bintrackerBuildings'));
+    const data = snap.exists() ? snap.data() : null;
+    discoveredBuildings = (data && data.discoveredBuildings) || [];
+    const asOf = data && data.updatedAt ? ` (as of ${data.updatedAt.toDate().toLocaleString()})` : '';
     status.textContent = discoveredBuildings.length
-      ? `Found ${discoveredBuildings.length} building name${discoveredBuildings.length === 1 ? '' : 's'} not yet mapped.`
-      : 'No new buildings found - every Bintracker building name is already mapped.';
+      ? `Found ${discoveredBuildings.length} building name${discoveredBuildings.length === 1 ? '' : 's'} not yet mapped${asOf}.`
+      : `No new buildings found - every Bintracker building name is already mapped${asOf}.`;
   } catch (err){
     console.error('Failed to check for new Bintracker buildings:', err);
     status.textContent = err.message || 'Failed to check - check the console for details.';
@@ -1961,36 +1953,6 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     return;
   }
 
-  const refreshBintrackerBtn = e.target.closest('.refresh-bintracker-btn');
-  if (refreshBintrackerBtn){
-    const buildingId = refreshBintrackerBtn.closest('.building-row').dataset.buildingId;
-    refreshingBintrackerBuildingId = buildingId;
-    refreshBuildingsView();
-    try {
-      const refreshBintrackerData = httpsCallable(functions, 'refreshBintrackerData', { timeout: 300000 });
-      const toDate = new Date();
-      const fromDate = new Date(toDate);
-      fromDate.setMonth(fromDate.getMonth() - 12);
-      const fmt = (d) => d.toISOString().slice(0, 10);
-      const result = await refreshBintrackerData({ buildingId, fromDate: fmt(fromDate), toDate: fmt(toDate) });
-      lastBintrackerRefreshCountsByBuildingId.set(buildingId, {
-        rowsFetched: result.data.rowsFetched, rowsMapped: result.data.rowsMapped, rowsSkipped: result.data.rowsSkipped,
-      });
-      // Force a fresh reload of rows/matches for this building — a re-refresh may have changed
-      // which raw tenant/location strings exist, and the old cached set would otherwise keep
-      // showing stale candidates until a full page reload.
-      bintrackerLoadedForBuildingId.delete(buildingId);
-      await loadBintrackerDataForBuilding(buildingId);
-    } catch (err){
-      console.error('Failed to refresh Bintracker data:', err);
-      await showAlert(err.message || 'Failed to refresh - check the console for details.');
-    } finally {
-      refreshingBintrackerBuildingId = null;
-      refreshBuildingsView();
-    }
-    return;
-  }
-
   const bintrackerOpenChangeBtn = e.target.closest('.bintracker-open-change-btn');
   if (bintrackerOpenChangeBtn){
     const row = bintrackerOpenChangeBtn.closest('.bintracker-match-row');
@@ -2433,12 +2395,10 @@ if (auth){
       document.getElementById('buildingSearchInput').value = '';
       justSavedManagersForBuildingId = null;
       justSavedBintrackerMappingForBuildingId = null;
-      lastBintrackerRefreshCountsByBuildingId.clear();
       bintrackerRowsByBuildingId.clear();
       bintrackerMatchesByBuildingId.clear();
       bintrackerLoadedForBuildingId.clear();
       bintrackerChangeOpenKey = null;
-      refreshingBintrackerBuildingId = null;
       discoveredBuildings = [];
       discoverBuildingsInFlight = false;
       expandedDiscoveredBuildingNames.clear();

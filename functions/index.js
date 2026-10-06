@@ -10,6 +10,7 @@
 // a shared mailbox, authenticating with their own credentials but sending as the shared address —
 // not needed today (both are the same mailbox) but costs nothing to keep separate.
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
@@ -20,7 +21,7 @@ const crypto = require('crypto');
 const { catalog } = require('./catalog');
 const {
   fetchBintrackerCollections, mapWasteTypeToStream, computeRecyclingLevelPct,
-  diffDiscoveredBuildingNames, diffBintrackerTenants, normalizeForMatching,
+  diffBintrackerTenants, normalizeForMatching,
 } = require('./bintracker');
 const { buildFlyerPdf } = require('./flyer');
 
@@ -80,16 +81,6 @@ const MAX_LINK_LENGTH = 500;
 // bulk send, while still tripping well before a genuine abuse/loop scenario got anywhere close.
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const RATE_LIMIT_MAX_SENDS = 200;
-
-// Same 15-minute window as email, but a much lower cap — these 3 functions each hit Bintracker's
-// real third-party API per call (refreshBintrackerData/syncBintrackerTenants scoped to one
-// building; discoverBintrackerBuildings unscoped, pulling up to 25,000 rows per call per
-// functions/bintracker.js's own paging cap), so nothing before this audit stopped a compromised
-// or careless admin session (or a buggy client-side retry loop) from hammering that shared
-// account in a tight loop. 30/15min comfortably covers a real admin working through a session of
-// several buildings while still tripping fast on genuine abuse.
-const BINTRACKER_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
-const BINTRACKER_RATE_LIMIT_MAX_CALLS = 30;
 
 // Permanent-delete functions are individually gated by a type-the-exact-name confirmation, but
 // that only stops accidental misuse — a scripted/compromised admin credential already knows the
@@ -729,21 +720,30 @@ function bintrackerRowDocId(buildingId, collectDate, tenantRaw, locationRaw, was
 // had any externalOnly:true rows - only a single building-wide waste-consolidation entry did), so
 // internal/per-floor data is the only population a tenant-level figure can ever be computed from.
 //
-// Bounded to the trailing 365 days (added 2026-10-06): NABERS' own definition says the recycling
-// rate is "based on 12 months of waste data" - without this bound, the figure would slowly dilute
-// with ever-older history instead of reflecting recent performance. Computed fresh on every call
-// (never a stored/cached cutoff), so it always means "the last 365 days from right now."
+// Bounded to the trailing 90 days. NABERS' own definition says the recycling rate is "based on
+// 12 months of waste data" (365 days), which this used from 2026-10-06 until 2026-10-07 - but
+// this project's own Bintracker sync doesn't yet have the long-term, continuously-retained
+// storage a true 12-month figure deserves (that's what the planned, separate "Bintracker Data
+// Hub" project - C:\Users\smolina\.claude\plans\bintracker-data-hub.md - is for). Narrowed to 90
+// days 2026-10-07 as a deliberate, temporary interim measure, pending that project maturing
+// enough for Recycling Training to migrate onto it as its real data source - REVERT THIS BACK TO
+// 365 once that migration happens (see graceful-roaming-shell.md's "Part 1 addendum" for the
+// full reasoning). Computed fresh on every call (never a stored/cached cutoff), so it always
+// means "the last 90 days from right now." Scoped ONLY to this aggregate (the id-gate's
+// recyclingLevelPct banner) - Point 1 Phase C's own report comparisons already have their own,
+// separate, admin-configurable date-range picker and are unaffected by this constant.
+const RECYCLING_LEVEL_WINDOW_DAYS = 90;
 async function writeRecyclingLevelAggregates(db, buildingId) {
   const buildingRef = db.collection('buildings').doc(buildingId);
   const buildingSnap = await buildingRef.get();
   if (!buildingSnap.exists) return; // nothing to compute for a building that doesn't exist
 
-  const twelveMonthsAgo = new Date();
-  twelveMonthsAgo.setDate(twelveMonthsAgo.getDate() - 365);
-  const twelveMonthsAgoStr = twelveMonthsAgo.toISOString().slice(0, 10);
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - RECYCLING_LEVEL_WINDOW_DAYS);
+  const cutoffDateStr = cutoffDate.toISOString().slice(0, 10);
   const allRowsSnap = await db.collection('bintrackerRows')
     .where('buildingId', '==', buildingId)
-    .where('collectDate', '>=', twelveMonthsAgoStr)
+    .where('collectDate', '>=', cutoffDateStr)
     .get();
   const allRows = allRowsSnap.docs.map((d) => d.data());
   const buildingPct = computeRecyclingLevelPct(allRows.filter((r) => r.externalOnly === true));
@@ -773,72 +773,100 @@ async function writeRecyclingLevelAggregates(db, buildingId) {
   }
 }
 
-// Same "delete existing docs matching a query, then write fresh ones" idiom as
-// deleteAllMatchingBuildingId above, scoped by buildingId + a collectDate range instead of just
-// buildingId - keeps a re-run of "Refresh" for the same building/range provably current instead
-// of trying to merge/dedupe against whatever a previous pull happened to store.
-async function deleteBintrackerRowsInRange(buildingId, fromDate, toDate) {
-  const db = admin.firestore();
-  for (;;) {
-    const snap = await db.collection('bintrackerRows')
-      .where('buildingId', '==', buildingId)
-      .where('collectDate', '>=', fromDate)
-      .where('collectDate', '<=', toDate)
-      .limit(400)
-      .get();
-    if (snap.empty) break;
-    const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
-  }
+// Workstream 15 Part 4 (2026-10-07, trial scope): replaces the old admin-triggered
+// refreshBintrackerData onCall. Fetches Bintracker UNSCOPED (every building the credentials can
+// see, in one continuous paginated pull) rather than looping one call per mapped building -
+// simpler than N separate fetch+paginate cycles, and the per-row building-name match below is
+// cheap. Needs a MUCH bigger page/time budget than any other caller of
+// fetchBintrackerCollections (see that function's own comment in functions/bintracker.js) since
+// it has to read every row in the window, not stop early the way the old discoverBintrackerBuildings
+// did - these two constants are a per-call override, not a change to that function's own
+// defaults, so no other caller's behavior changes.
+const NIGHTLY_SYNC_MAX_PAGES = 600; // ~600,000-row ceiling - generous headroom over the ~196,000
+// rows a 90-day/22-building pull is estimated to need, scaled from a real single-building timed
+// test (Tower 2 - Collins Square: 36,197 rows for a full year, 2026-10-06). A pure safety
+// backstop, not expected to be hit in normal operation - re-tune once real nightly runs exist.
+const NIGHTLY_SYNC_TIME_BUDGET_MS = 780000; // 780s, leaving 120s of this function's own 900s
+// timeout for the per-building Firestore writes/aggregate recompute that happen after the fetch.
+
+// Thin wrapper that does the real network fetch, then hands off to processBintrackerRowsAndStore
+// (below) for everything else. Split specifically so tests can exercise the matching/grouping/
+// writing/error-isolation logic directly with controlled row data, without ever needing a real
+// Bintracker network call - the exact same "separate the fetch from the processing so the
+// processing is unit-testable" split already used elsewhere in this file/functions/bintracker.js.
+async function runBintrackerUnscopedNightlySync(fromDate, toDate) {
+  const rawRows = await fetchBintrackerCollections({
+    collectDateFrom: fromDate,
+    collectDateTo: toDate,
+    appId: BINTRACKER_APP_ID.value(),
+    appKey: BINTRACKER_APP_KEY.value(),
+    maxPages: NIGHTLY_SYNC_MAX_PAGES,
+    timeBudgetMs: NIGHTLY_SYNC_TIME_BUDGET_MS,
+  });
+  return processBintrackerRowsAndStore(rawRows, fromDate, toDate);
 }
 
-exports.refreshBintrackerData = onCall(
-  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300, maxInstances: 3, concurrency: 5 },
-  async (request) => {
-    await assertIsAdmin(request.auth);
-    await checkRateLimitGeneric('bintrackerRateLimits', request.auth.token.email, BINTRACKER_RATE_LIMIT_WINDOW_MS, BINTRACKER_RATE_LIMIT_MAX_CALLS, 'Bintracker calls made');
+async function processBintrackerRowsAndStore(rawRows, fromDate, toDate) {
+  const db = admin.firestore();
 
-    const { buildingId, fromDate, toDate } = request.data || {};
-    if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
-      throw new HttpsError('invalid-argument', 'A valid building id is required.');
+  const buildingsSnap = await db.collection('buildings').get();
+  const buildingIdByNormName = new Map();
+  buildingsSnap.docs.forEach((d) => {
+    const name = d.data().bintrackerBuildingName;
+    if (name) buildingIdByNormName.set(normalizeForMatching(name), d.id);
+  });
+
+  const rowsByBuildingId = new Map(); // buildingId -> [{row, ourStream}, ...]
+  // Unmapped rows are grouped by their real (un-normalized) Bintracker name, keeping the actual
+  // raw row for each - "Check for new buildings" used to compute each discovered building's
+  // candidate tenants from these same rows via a live call, and the user wants that exact
+  // behavior preserved (just sourced from stored data), not simplified away.
+  const unmappedRowsByName = new Map(); // bintracker building name -> raw rows
+  let rowsSkippedNoStream = 0;
+  for (const row of rawRows) {
+    const ourStream = mapWasteTypeToStream(row.wasteType);
+    if (!ourStream) { rowsSkippedNoStream++; continue; }
+    const norm = row && row.building && normalizeForMatching(row.building);
+    const buildingId = norm && buildingIdByNormName.get(norm);
+    if (!buildingId) {
+      if (row && row.building) {
+        if (!unmappedRowsByName.has(row.building)) unmappedRowsByName.set(row.building, []);
+        unmappedRowsByName.get(row.building).push(row);
+      }
+      continue;
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fromDate)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(toDate))) {
-      throw new HttpsError('invalid-argument', 'fromDate and toDate must be YYYY-MM-DD.');
-    }
+    if (!rowsByBuildingId.has(buildingId)) rowsByBuildingId.set(buildingId, []);
+    rowsByBuildingId.get(buildingId).push({ row, ourStream });
+  }
 
-    const buildingSnap = await admin.firestore().doc(`buildings/${buildingId}`).get();
-    if (!buildingSnap.exists) throw new HttpsError('not-found', 'No building found for that id.');
-    const bintrackerBuildingName = buildingSnap.data().bintrackerBuildingName;
-    if (!bintrackerBuildingName) {
-      throw new HttpsError('failed-precondition', 'No Bintracker mapping set for this building yet.');
-    }
-
-    const rawRows = await fetchBintrackerCollections({
-      building: bintrackerBuildingName,
-      collectDateFrom: fromDate,
-      collectDateTo: toDate,
-      appId: BINTRACKER_APP_ID.value(),
-      appKey: BINTRACKER_APP_KEY.value(),
-    });
-
-    await deleteBintrackerRowsInRange(buildingId, fromDate, toDate);
-
-    const db = admin.firestore();
-    let rowsMapped = 0;
-    let rowsSkipped = 0;
-    const fetchedAt = FieldValue.serverTimestamp();
-    for (let i = 0; i < rawRows.length; i += 400) {
-      const chunk = rawRows.slice(i, i + 400);
-      const batch = db.batch();
-      for (const row of chunk) {
-        const ourStream = mapWasteTypeToStream(row.wasteType);
-        if (!ourStream) { rowsSkipped++; continue; }
+  // Per-building error isolation: this is one continuous unscoped stream rather than N
+  // independent per-building calls, so a failure writing one building's data must not lose the
+  // others' already-fetched rows.
+  //
+  // Cost-conscious by design (flagged directly by the user, 2026-10-07): the whole 90-day window
+  // is re-fetched every night specifically to catch Bintracker correcting older data (not just
+  // the newest day) - but blindly deleting and rewriting all ~90 days' worth of docs every single
+  // night, even for rows that haven't changed at all, would mean paying full Firestore write
+  // costs for the same unchanged data over and over. Instead: read what's already stored for this
+  // building+range FIRST, diff it against the freshly-fetched rows by content (not just doc id,
+  // since the id is derived from date/tenant/location/wasteType only - a correction to weight or
+  // contaminated for the SAME row keeps the same id and must still be detected as "changed"), and
+  // only write docs that are new or actually different, only delete docs that genuinely vanished
+  // from the fresh pull (Bintracker removed them). An unchanged night (the common case) costs
+  // only the one read, no writes at all for that building.
+  let buildingsTouched = 0;
+  let buildingsFailed = 0;
+  let totalRowsWritten = 0;
+  let totalRowsDeleted = 0;
+  for (const [buildingId, entries] of rowsByBuildingId) {
+    try {
+      const freshById = new Map(); // docId -> row data (without fetchedAt, for comparing against stored content)
+      for (const { row, ourStream } of entries) {
         const collectDate = String(row.collectDate || '').slice(0, 10);
         const tenantRaw = row.tenant || '';
         const locationRaw = row.primaryLocation || '';
         const docId = bintrackerRowDocId(buildingId, collectDate, tenantRaw, locationRaw, row.wasteType);
-        batch.set(db.collection('bintrackerRows').doc(docId), {
+        freshById.set(docId, {
           buildingId,
           bintrackerTenantRaw: tenantRaw,
           bintrackerLocationRaw: locationRaw,
@@ -849,41 +877,93 @@ exports.refreshBintrackerData = onCall(
           wasteOutcome: typeof row.wasteOutcome === 'string' ? row.wasteOutcome : null,
           collectDate,
           weight: typeof row.weight === 'number' ? row.weight : (typeof row.actualWeight === 'number' ? row.actualWeight : null),
-          fetchedAt,
         });
-        rowsMapped++;
       }
-      await batch.commit();
+
+      const existingSnap = await db.collection('bintrackerRows')
+        .where('buildingId', '==', buildingId)
+        .where('collectDate', '>=', fromDate)
+        .where('collectDate', '<=', toDate)
+        .get();
+      const existingById = new Map();
+      existingSnap.docs.forEach((d) => {
+        const { fetchedAt, ...rest } = d.data(); // exclude fetchedAt - it always differs, isn't real content
+        existingById.set(d.id, rest);
+      });
+
+      const toWrite = [];
+      for (const [docId, data] of freshById) {
+        const existing = existingById.get(docId);
+        if (!existing || JSON.stringify(existing) !== JSON.stringify(data)) toWrite.push([docId, data]);
+      }
+      const toDelete = [...existingById.keys()].filter((docId) => !freshById.has(docId));
+
+      const fetchedAt = FieldValue.serverTimestamp();
+      for (let i = 0; i < toWrite.length; i += 400) {
+        const chunk = toWrite.slice(i, i + 400);
+        const batch = db.batch();
+        for (const [docId, data] of chunk) batch.set(db.collection('bintrackerRows').doc(docId), { ...data, fetchedAt });
+        await batch.commit();
+      }
+      for (let i = 0; i < toDelete.length; i += 400) {
+        const chunk = toDelete.slice(i, i + 400);
+        const batch = db.batch();
+        chunk.forEach((docId) => batch.delete(db.collection('bintrackerRows').doc(docId)));
+        await batch.commit();
+      }
+
+      totalRowsWritten += toWrite.length;
+      totalRowsDeleted += toDelete.length;
+      await writeRecyclingLevelAggregates(db, buildingId);
+      await db.doc(`buildings/${buildingId}`).update({ lastAutoRefreshAt: FieldValue.serverTimestamp() });
+      buildingsTouched++;
+    } catch (err) {
+      buildingsFailed++;
+      console.error(`[scheduledBintrackerRefreshNightly] building ${buildingId} failed:`, err && err.message);
     }
+  }
 
-    await writeRecyclingLevelAggregates(db, buildingId);
+  // "Check for new buildings" (admin-buildings.html) reads this doc directly instead of calling
+  // Bintracker live - a plain overwrite each run (not a merge), so a building that gets mapped
+  // naturally drops off the list on the very next nightly run with no separate cleanup step.
+  // Same shape the old live discoverBintrackerBuildings call used to return (name + candidate
+  // tenants, via the same diffBintrackerTenants(rows, []) helper - an empty existingTenants list
+  // means every (tenant, location) pair found is classified as "new", correct for a building that
+  // doesn't exist in our system yet).
+  const discoveredBuildings = [...unmappedRowsByName.entries()].map(([name, rowsForBuilding]) => {
+    const { newTenants } = diffBintrackerTenants(rowsForBuilding, []);
+    return { name, tenants: newTenants };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  await db.doc('discovery/bintrackerBuildings').set({
+    discoveredBuildings,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 
-    return {
-      ok: true,
-      buildingName: bintrackerBuildingName,
-      rowsFetched: rawRows.length,
-      rowsMapped,
-      rowsSkipped,
-      dateRange: { fromDate, toDate },
-    };
+  const stats = {
+    rowsFetched: rawRows.length, rowsSkippedNoStream, buildingsTouched, buildingsFailed,
+    rowsWritten: totalRowsWritten, rowsDeleted: totalRowsDeleted, discoveredBuildingsCount: discoveredBuildings.length,
+  };
+  console.log('[scheduledBintrackerRefreshNightly]', JSON.stringify(stats));
+  return stats;
+}
+
+exports.scheduledBintrackerRefreshNightly = onSchedule(
+  { schedule: '0 3 * * *', timeZone: 'Australia/Melbourne', secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 900, memory: '512MiB' },
+  async () => {
+    const { fromDate, toDate } = recentDayRange(90);
+    await runBintrackerUnscopedNightlySync(fromDate, toDate);
   }
 );
 
 // ---- Workstream 12: building/tenant catalog sync ----
 // Keeps the app's OWN buildings/tenants catalog current using real Bintracker data as a
-// suggestion source an admin reviews - never a silent overwrite. No new Firestore collection: all
-// 3 functions below either do a pure read/diff (nothing persisted) or a single, explicit,
-// admin-confirmed delete - there's nothing here that needs history the way the induction-vs-real-
-// data comparison feature's bintrackerRows/bintrackerTenantMatches do.
-// `syncBintrackerTenants`/`refreshBintrackerData` are scoped to ONE building (via
-// request.building), so their per-call data volume stays small regardless of window length - they
-// keep the full 30 days for better sample size. `discoverBintrackerBuildings` is different: it
-// omits `building` entirely to pull EVERY building's rows in one unscoped call, and real
-// production data (confirmed 2026-10-01) made that genuinely huge - 30 days x ~22 buildings
-// weighed Monday-Friday was enough data that pagination couldn't finish inside the function's own
-// timeout. It only needs to see each active building's name at least once, not build any
-// statistic, so a much shorter window is correct here, not just a workaround - 10 calendar days
-// always covers at least one full Mon-Fri business week even around a long weekend/public holiday.
+// suggestion source an admin reviews - never a silent overwrite.
+//
+// Revised 2026-10-07 (Workstream 15 Part 4): NEITHER function below calls Bintracker live
+// anymore - both now read from the already-stored bintrackerRows/discovery data the nightly
+// scheduled sync writes, confirmed explicitly with the user ("ningun boton va a hacer el llamado
+// a la api"). The two admin buttons behave identically from the admin's point of view (same
+// diff/discovery results, same UI) - only where the underlying data comes from has changed.
 function recentDayRange(days) {
   const toDate = new Date();
   const fromDate = new Date(toDate);
@@ -892,112 +972,50 @@ function recentDayRange(days) {
   return { fromDate: fmt(fromDate), toDate: fmt(toDate) };
 }
 
-// discoverBintrackerBuildings — calls the Collections API with `request.building` omitted (see
-// fetchBintrackerCollections's own comment), so it queries across every building the credentials
-// can see, then surfaces any distinct `building` value not yet mapped to one of this app's own
-// buildings via bintrackerBuildingName. Pure read - no Firestore writes.
-//
-// Found against real production data (2026-10-01): Bintracker's prod environment ignores
-// request.pageSize entirely and always returns 1000 real, DISTINCT rows per page (confirmed via
-// logging - no two pages were ever identical), so this can't rely on "stop when a page comes back
-// short" or on detecting a repeated page - the data genuinely never runs out within any reasonable
-// time. But this function only needs to see each real building's name once, not read every row -
-// with ~22 total buildings, every name has almost certainly already shown up within the first
-// couple of pages. The onPage callback below tracks the running count of distinct building names
-// seen and stops once 5 consecutive pages add zero new ones, instead of fetching for minutes.
-// Also filters to wasteType "General waste" (confirmed from a real row's exact casing) - virtually
-// every commercial building generates some general waste, so this is very unlikely to miss a real
-// building, while cutting out the Mixed Recycling/Organics/E-Waste rows that don't help this
-// function at all and were making each page far bigger than it needed to be.
-exports.discoverBintrackerBuildings = onCall(
-  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300, maxInstances: 3, concurrency: 5 },
-  async (request) => {
-    await assertIsAdmin(request.auth);
-    await checkRateLimitGeneric('bintrackerRateLimits', request.auth.token.email, BINTRACKER_RATE_LIMIT_WINDOW_MS, BINTRACKER_RATE_LIMIT_MAX_CALLS, 'Bintracker calls made');
-
-    const { fromDate, toDate } = recentDayRange(10);
-    const seenBuildingNames = new Set();
-    let staleStreak = 0;
-    const rawRows = await fetchBintrackerCollections({
-      // `building` deliberately omitted - queries every building the credentials can see.
-      wasteType: 'General waste',
-      collectDateFrom: fromDate,
-      collectDateTo: toDate,
-      appId: BINTRACKER_APP_ID.value(),
-      appKey: BINTRACKER_APP_KEY.value(),
-      onPage: (pageRows) => {
-        const before = seenBuildingNames.size;
-        for (const row of pageRows) {
-          const norm = row && row.building && normalizeForMatching(row.building);
-          if (norm) seenBuildingNames.add(norm);
-        }
-        staleStreak = seenBuildingNames.size === before ? staleStreak + 1 : 0;
-        // Started at 2 consecutive stale pages - too impatient in practice (2026-10-02): 4 real
-        // buildings with lower-frequency collections didn't show up until later pages, so this
-        // was stopping before they'd ever had a chance to appear. Bumped to 5 for more headroom.
-        return staleStreak >= 5;
-      },
-    });
-
-    const buildingsSnap = await admin.firestore().collection('buildings').get();
-    const existingBintrackerBuildingNames = buildingsSnap.docs
-      .map((d) => d.data().bintrackerBuildingName)
-      .filter(Boolean);
-
-    const discoveredBuildingNames = diffDiscoveredBuildingNames(rawRows, existingBintrackerBuildingNames);
-
-    // Follow-up fix (2026-09-30): also return each discovered building's own tenants, reusing the
-    // exact same rawRows already fetched above (nothing new to call Bintracker for) and the same
-    // diffBintrackerTenants() helper syncBintrackerTenants already uses - passing an EMPTY
-    // existingTenants list means every (tenant, location) pair found is classified as "new",
-    // which is exactly right here (this building doesn't exist in our system yet, so nothing can
-    // already be missing or mismatched). This lets the admin pick which tenants to bring in
-    // at the same moment they add the building, instead of a separate later "Synchronize" trip.
-    const discoveredBuildings = discoveredBuildingNames.map((name) => {
-      const normName = normalizeForMatching(name);
-      const rowsForBuilding = rawRows.filter((row) => normalizeForMatching(row && row.building) === normName);
-      const { newTenants } = diffBintrackerTenants(rowsForBuilding, []);
-      return { name, tenants: newTenants };
-    });
-    return { discoveredBuildings };
-  }
-);
-
-// syncBintrackerTenants — fetches the last 30 days of Collections for one building's mapped
-// name, and diffs the distinct (tenant, primaryLocation) pairs seen against that building's REAL,
-// active tenants subcollection using the shared fuzzy-matching helper (diffBintrackerTenants,
-// functions/bintracker.js). Pure read/diff - no Firestore writes at all. Every admin action on the
-// result (import a new tenant, delete a missing one, update a level) is a separate, explicit
-// follow-up: import/update are plain client-side Firestore writes the admin's own browser already
-// has permission to make (see firestore.rules' buildings/{id}/tenants write rule); only the
-// delete needs its own Cloud Function (deleteTenantPermanently, below), since submissions/attempts
-// both have `allow delete: if false` for every client, admins included.
+// syncBintrackerTenants — reads the last 30 days of this building's OWN already-stored
+// bintrackerRows (written by the nightly scheduled sync, not a live Bintracker call), and diffs
+// the distinct (tenant, primaryLocation) pairs seen against that building's REAL, active tenants
+// subcollection using the shared fuzzy-matching helper (diffBintrackerTenants,
+// functions/bintracker.js). Pure read/diff - no writes at all. Every admin action on the result
+// (import a new tenant, delete a missing one, update a level) is a separate, explicit follow-up:
+// import/update are plain client-side Firestore writes the admin's own browser already has
+// permission to make (see firestore.rules' buildings/{id}/tenants write rule); only the delete
+// needs its own Cloud Function (deleteTenantPermanently, below), since submissions/attempts both
+// have `allow delete: if false` for every client, admins included.
+// diffBintrackerTenants() expects raw-Bintracker-shaped rows (`row.tenant`/`row.primaryLocation`)
+// - stored bintrackerRows docs use different field names, so each doc is mapped back into that
+// shape before diffing, rather than changing the shared diff helper for this one caller.
 exports.syncBintrackerTenants = onCall(
-  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 300, maxInstances: 3, concurrency: 5 },
+  { timeoutSeconds: 60, maxInstances: 3, concurrency: 5 },
   async (request) => {
     await assertIsAdmin(request.auth);
-    await checkRateLimitGeneric('bintrackerRateLimits', request.auth.token.email, BINTRACKER_RATE_LIMIT_WINDOW_MS, BINTRACKER_RATE_LIMIT_MAX_CALLS, 'Bintracker calls made');
 
     const { buildingId } = request.data || {};
     if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
       throw new HttpsError('invalid-argument', 'A valid building id is required.');
     }
 
-    const buildingRef = admin.firestore().doc(`buildings/${buildingId}`);
+    const db = admin.firestore();
+    const buildingRef = db.doc(`buildings/${buildingId}`);
     const buildingSnap = await buildingRef.get();
     if (!buildingSnap.exists) throw new HttpsError('not-found', 'No building found for that id.');
-    const bintrackerBuildingName = buildingSnap.data().bintrackerBuildingName;
-    if (!bintrackerBuildingName) {
+    if (!buildingSnap.data().bintrackerBuildingName) {
+      // An unmapped building never has any bintrackerRows at all (the nightly sync only writes
+      // rows for buildings with a matched name) - without this check, querying would just return
+      // an empty set, misleadingly reporting every real tenant as "missing from Bintracker"
+      // instead of the true story (this building was never configured for Bintracker at all).
       throw new HttpsError('failed-precondition', 'No Bintracker mapping set for this building yet.');
     }
 
     const { fromDate, toDate } = recentDayRange(30);
-    const rawRows = await fetchBintrackerCollections({
-      building: bintrackerBuildingName,
-      collectDateFrom: fromDate,
-      collectDateTo: toDate,
-      appId: BINTRACKER_APP_ID.value(),
-      appKey: BINTRACKER_APP_KEY.value(),
+    const rowsSnap = await db.collection('bintrackerRows')
+      .where('buildingId', '==', buildingId)
+      .where('collectDate', '>=', fromDate)
+      .where('collectDate', '<=', toDate)
+      .get();
+    const rawRows = rowsSnap.docs.map((d) => {
+      const data = d.data();
+      return { tenant: data.bintrackerTenantRaw, primaryLocation: data.bintrackerLocationRaw };
     });
 
     const tenantsSnap = await buildingRef.collection('tenants').get();
@@ -1204,5 +1222,7 @@ exports.provisionUserAccount = onCall(
 // exceeded` in firebase-functions' export-analysis step, tripping over admin SDK's internal
 // circular references) - a plain function has nothing for that analysis to recurse into.
 exports._writeRecyclingLevelAggregates = writeRecyclingLevelAggregates;
+exports._runBintrackerUnscopedNightlySync = runBintrackerUnscopedNightlySync;
+exports._processBintrackerRowsAndStore = processBintrackerRowsAndStore;
 exports._getAdminFirestoreForTests = () => admin.firestore();
 exports._getAdminAuthForTests = () => admin.auth();

@@ -28,6 +28,7 @@
     "test:bintracker-unit": "node tests/bintracker-unit.test.js",
     "test:functions-bintracker": "firebase emulators:exec --only firestore,auth,functions \"node tests/functions-refreshbintrackerdata.test.js\"",
     "test:functions-bintrackersync": "firebase emulators:exec --only firestore,auth,functions \"node tests/functions-bintrackersync.test.js\"",
+    "test:functions-scheduledbintrackerrefresh": "firebase emulators:exec --only firestore \"node tests/functions-scheduledbintrackerrefresh.test.js\"",
     "test:scoped-report": "firebase emulators:exec --only firestore,auth \"node tests/scoped-report-access.test.js\"",
     "test:client-report": "firebase emulators:exec --only firestore,auth \"node tests/client-report.test.js\"",
     "test:client-report-scoped": "firebase emulators:exec --only firestore,auth \"node tests/client-report-scoped-access.test.js\"",

@@ -7,17 +7,19 @@
 // This suite only starts firestore+auth (no Functions emulator — same deliberate choice as
 // admin-buildings-bintracker.test.js and admin-buildings-page.test.js's own "Delete permanently"
 // check), so:
-//   - the real discoverBintrackerBuildings/syncBintrackerTenants/deleteTenantPermanently calls are
-//     all expected to fail gracefully (tested explicitly below) - none of this suite's assertions
-//     depend on a real Bintracker network call or a live Functions emulator round trip;
+//   - the real syncBintrackerTenants/deleteTenantPermanently Cloud Function calls are both
+//     expected to fail gracefully (tested explicitly below) - none of this suite's assertions
+//     depend on a real Functions emulator round trip for those two. "Check for new buildings"
+//     is NOT in this category anymore (Workstream 15 Part 4, 2026-10-07): it's a plain Firestore
+//     read (discovery/bintrackerBuildings, written by the nightly scheduled sync) with no Cloud
+//     Function involved at all, so it's tested for real against the Firestore emulator below.
 //   - the New tenants/Missing tenants/Level mismatches review UI itself is driven by
 //     window.__testSetBintrackerSyncResult (an emulator-mode-only test seam admin-buildings.html
 //     exposes specifically for this - see its own comment there), which injects a realistic
 //     syncBintrackerTenants result shape directly, the same "seed what a real call would have
-//     produced, skip the network" approach as the sibling suite. Unlike that suite's
-//     bintrackerRows/bintrackerTenantMatches (real Firestore collections it can seed directly),
-//     syncBintrackerTenants's result is NEVER persisted anywhere (Workstream 12 deliberately adds
-//     no new Firestore collection), so there is no Firestore doc this test could seed instead.
+//     produced, skip the network" approach also used for diffBintrackerTenants-shaped results
+//     elsewhere. Unlike bintrackerRows/bintrackerTenantMatches (real Firestore collections this
+//     suite can seed directly), syncBintrackerTenants's result itself is never persisted anywhere.
 // The actual pure diff logic (diffDiscoveredBuildingNames/diffBintrackerTenants) is covered with
 // realistic seeded row shapes, no network/emulator at all, by tests/functions-bintrackersync.test.js,
 // which also covers deleteTenantPermanently's real cascade-delete end to end (including proving no
@@ -104,6 +106,15 @@ async function seedTestData(){
   };
 }
 
+async function withRulesDisabled(fn) {
+  const testEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  await testEnv.withSecurityRulesDisabled(fn);
+  await testEnv.cleanup();
+}
+
 async function readTenantsForBuilding(buildingId){
   const testEnv = await initializeTestEnvironment({
     projectId: 'esg-1-98f35',
@@ -154,10 +165,12 @@ async function main(){
 
   // Expected graceful-failure noise from the real (unreachable, in this suite) Cloud Functions -
   // same reasoning as admin-buildings-bintracker.test.js's own "Refresh Bintracker data" check.
+  // "Check for new buildings" is NOT in this list (Workstream 15 Part 4) - it's a plain Firestore
+  // read now, expected to succeed for real, so an error from it here would be a genuine bug.
   const unexpectedErrors = consoleErrors.filter(e =>
     !e.includes('Failed to load resource') && !e.includes('400')
-    && !e.includes('discoverBintrackerBuildings') && !e.includes('syncBintrackerTenants') && !e.includes('deleteTenantPermanently')
-    && !e.includes('CORS policy') && !e.includes('Failed to check for new Bintracker buildings')
+    && !e.includes('syncBintrackerTenants') && !e.includes('deleteTenantPermanently')
+    && !e.includes('CORS policy')
     && !e.includes('Failed to synchronize Bintracker tenants') && !e.includes('Failed to permanently delete tenant'));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
@@ -225,35 +238,49 @@ async function runFlow(page){
   check('the Bintracker Sync tab lists the mapped building', namesInSyncList.includes(mappedBuildingName), JSON.stringify(namesInSyncList));
   check('...and does NOT list the unmapped building at all (graceful absence)', !namesInSyncList.includes(unmappedBuildingName), JSON.stringify(namesInSyncList));
 
-  // --- "Check for new buildings" fails gracefully with no reachable Cloud Function ---
+  // --- "Check for new buildings" (Workstream 15 Part 4, 2026-10-07): no longer a live Bintracker
+  // call - it reads a plain Firestore doc (discovery/bintrackerBuildings) the nightly scheduled
+  // sync writes. With no doc seeded yet, it should read as "nothing found" gracefully, not error. ---
   await page.click('#discoverBuildingsBtn');
   await page.waitForFunction(
     () => document.getElementById('discoverBuildingsStatus').textContent.length > 0,
     { timeout: 8000 }
   );
-  const discoverStatusText = await page.$eval('#discoverBuildingsStatus', el => el.textContent);
-  check('a failed "Check for new buildings" call shows a status message instead of crashing', discoverStatusText.length > 0, discoverStatusText);
-  const discoverBtnAfter = await page.$eval('#discoverBuildingsBtn', el => ({ text: el.textContent, disabled: el.disabled }));
-  check('the "Check for new buildings" button resets (not stuck on "Checking…") after the failure',
-    discoverBtnAfter.text === 'Check for new buildings' && !discoverBtnAfter.disabled, JSON.stringify(discoverBtnAfter));
+  const discoverStatusTextEmpty = await page.$eval('#discoverBuildingsStatus', el => el.textContent);
+  check('with no discovery doc yet, "Check for new buildings" reads as "no new buildings" gracefully, not an error',
+    discoverStatusTextEmpty.includes('No new buildings found'), discoverStatusTextEmpty);
+  const discoverBtnAfterEmpty = await page.$eval('#discoverBuildingsBtn', el => ({ text: el.textContent, disabled: el.disabled }));
+  check('the "Check for new buildings" button resets (not stuck on "Checking…") afterward',
+    discoverBtnAfterEmpty.text === 'Check for new buildings' && !discoverBtnAfterEmpty.disabled, JSON.stringify(discoverBtnAfterEmpty));
 
-  // --- Follow-up fix (2026-09-30): each discovered building is its own expandable row, with its
-  // own tenants+checkboxes+editable name, and "Add this building" creates everything in one action
-  // - drive this for real via the test-only seam (discoverBintrackerBuildings is real-network-only,
-  // same reasoning as syncBintrackerTenants above). ---
-  await page.evaluate(() => {
-    window.__testSetDiscoveredBuildings([
-      { name: 'New Tower Pty Ltd', tenants: [
-        { bintrackerTenantRaw: 'Acme Startup', primaryLocations: ['Level 3'] },
-        { bintrackerTenantRaw: 'Beta Co', primaryLocations: ['Level 4'] },
-      ] },
-      { name: 'Empty Tower', tenants: [] },
-    ]);
+  // --- Follow-up fix (2026-09-30), now driven via a REAL Firestore read instead of the old
+  // live Bintracker call: each discovered building is its own expandable row, with its own
+  // tenants+checkboxes+editable name, and "Add this building" creates everything in one action.
+  // Seeds the exact doc shape runBintrackerUnscopedNightlySync() itself writes. Must go through
+  // withSecurityRulesDisabled (Admin-SDK-equivalent), not a plain client-side setDoc() - this
+  // collection is deliberately write-locked to every real client (firestore.rules:
+  // "discovery/{docId} { allow write: if false }"), same as bintrackerRows, since only the Admin
+  // SDK (the nightly scheduled sync) is ever meant to write it. ---
+  await withRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'discovery', 'bintrackerBuildings'), {
+      discoveredBuildings: [
+        { name: 'New Tower Pty Ltd', tenants: [
+          { bintrackerTenantRaw: 'Acme Startup', primaryLocations: ['Level 3'] },
+          { bintrackerTenantRaw: 'Beta Co', primaryLocations: ['Level 4'] },
+        ] },
+        { name: 'Empty Tower', tenants: [] },
+      ],
+      updatedAt: new Date(),
+    });
   });
+  await page.click('#discoverBuildingsBtn');
   await page.waitForFunction(
     () => document.querySelectorAll('#discoveredBuildingsList .discovered-building-row').length === 2,
     { timeout: 8000 }
   );
+  const discoverStatusTextFound = await page.$eval('#discoverBuildingsStatus', el => el.textContent);
+  check('after seeding the discovery doc for real, "Check for new buildings" reads it back correctly (not just the test seam)',
+    discoverStatusTextFound.includes('Found 2 building names not yet mapped'), discoverStatusTextFound);
   check('both discovered buildings appear, collapsed by default, with their tenant counts',
     (await page.$eval('#discoveredBuildingsList', el => el.textContent)).includes('2 tenants found')
     && (await page.$eval('#discoveredBuildingsList', el => el.textContent)).includes('0 tenants found'));

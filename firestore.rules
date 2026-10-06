@@ -285,6 +285,16 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Workstream 15 Part 4 (2026-10-07): a single global doc the nightly scheduled sync (Admin
+    // SDK) overwrites each run with the list of Bintracker building names that don't match any
+    // mapped building yet - "Check for new buildings" (admin-buildings.html) reads this instead
+    // of calling Bintracker live. Not building-scoped (mapping a brand new building is an
+    // Admin-level action, same tier as every other buildings-management action in this app).
+    match /discovery/{docId} {
+      allow read: if isAllowedReviewer();
+      allow write: if false;
+    }
+
     // Admin-confirmed tenant matches (a candidate suggestion from findBestMatch() must be
     // reviewed/confirmed by an admin before it's trusted anywhere — never a silent automatic
     // link) — admin-write, same read scoping as everything else building-scoped.

@@ -1,91 +1,27 @@
-// Verifies refreshBintrackerData's auth + validation + precondition logic against the local
-// Functions emulator - mirrors tests/functions-sendinductionemail.test.js's approach: every case
-// here is rejected inside assertIsAdmin()/payload validation/the bintrackerBuildingName check,
-// all of which throw before the function ever calls fetchBintrackerCollections() to reach the
-// real network. No real Bintracker credentials or network access needed - the two secrets are
-// given throwaway values in functions/.secret.local purely so the emulator can load the function
-// at all. The real fetch/mapping/storage behavior against the live dsdev sandbox was verified
-// manually and directly (2026-09-24), not by this automated suite, same reasoning as
-// sendInductionEmail's own real-send path being left untested here by design.
+// Verifies writeRecyclingLevelAggregates - the recyclingLevelPct aggregate write step shared by
+// the nightly scheduled sync (runBintrackerUnscopedNightlySync) and the id-gate banner feature.
+// (The function this file used to test, refreshBintrackerData, was removed 2026-10-07 - Workstream
+// 15 Part 4 moved all Bintracker API calls onto a schedule; admin buttons no longer trigger a live
+// call at all, so there's no more onCall surface here to exercise auth/validation against.)
 //
-// testRecyclingLevelAggregation() (Workstream 7 Point 5 sub-idea, 2026-09-24) covers the OTHER
-// half of refreshBintrackerData - the recyclingLevelPct aggregate write step - by calling
-// functions/index.js's exported _writeRecyclingLevelAggregates directly against
-// bintrackerRows/bintrackerTenantMatches seeded straight into the emulator (via the admin SDK,
-// obtained through the also-exported _getAdminFirestoreForTests() - bypasses rules entirely),
-// same "seed what a real refresh would have produced, skip the real network" approach as the
-// rest of this file and as admin-buildings-bintracker.test.js's own review-UI suite.
+// Calls functions/index.js's exported _writeRecyclingLevelAggregates directly against
+// bintrackerRows/bintrackerTenantMatches seeded straight into the Firestore emulator via the
+// Admin SDK (obtained through the also-exported _getAdminFirestoreForTests() - bypasses rules
+// entirely) - no Auth or Functions emulator needed at all, this is a pure Firestore round trip.
 //
 // Run: npm run test:functions-bintracker
-// On this machine, port 5001 may already be taken by an unrelated project's dev server - run
-// instead with:
-//   firebase --config firebase.local-test.json emulators:exec --only firestore,auth,functions "node tests/functions-refreshbintrackerdata.test.js"
-const fs = require('fs');
-const path = require('path');
-const { initializeApp } = require('firebase/app');
-const { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signInWithEmailAndPassword } = require('firebase/auth');
-const { getFirestore, connectFirestoreEmulator, doc, setDoc } = require('firebase/firestore');
-const { getFunctions, connectFunctionsEmulator, httpsCallable } = require('firebase/functions');
-const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
-
-const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
-const OWNER_EMAIL = 'esgtradeflex@gmail.com';
-const OTHER_ADMIN_EMAIL = 'other-admin@example.com';
-const RANDOM_EMAIL = 'random-user@example.com';
-const PASSWORD = 'test-password-123';
-const FUNCTIONS_PORT = Number(process.env.FUNCTIONS_EMULATOR_PORT || 5001);
-
-const firebaseConfig = {
-  apiKey: 'AIzaSyAoWSx9FYa6UJa-6EZezgBYiDMuVVs9BBo',
-  projectId: 'esg-1-98f35',
-};
-
 const results = [];
 function check(label, cond, extra) { results.push({ label, ok: Boolean(cond), extra: extra || '' }); }
 
-async function makeClient(name, email, password) {
-  const app = initializeApp(firebaseConfig, name);
-  const auth = getAuth(app);
-  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-  const db = getFirestore(app);
-  connectFirestoreEmulator(db, '127.0.0.1', 8080);
-  const functions = getFunctions(app, 'australia-southeast2');
-  connectFunctionsEmulator(functions, '127.0.0.1', FUNCTIONS_PORT);
-  if (email) {
-    try {
-      await createUserWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      if (err.code !== 'auth/email-already-in-use') throw err;
-      await signInWithEmailAndPassword(auth, email, password);
-    }
-  }
-  return { auth, db, functions };
+function fmt(daysAgo) {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return d.toISOString().slice(0, 10);
 }
-
-async function callRefresh(functions, payload) {
-  const fn = httpsCallable(functions, 'refreshBintrackerData');
-  try {
-    const result = await fn(payload);
-    return { ok: true, data: result.data };
-  } catch (err) {
-    return { ok: false, code: err.code, message: err.message };
-  }
-}
-
-async function withRulesDisabled(fn) {
-  const testEnv = await initializeTestEnvironment({
-    projectId: 'esg-1-98f35',
-    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
-  });
-  await testEnv.withSecurityRulesDisabled(fn);
-  await testEnv.cleanup();
-}
-
-const VALID_PAYLOAD_SHAPE = { fromDate: '2026-01-01', toDate: '2026-01-31' };
 
 // --- Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24; formula revised
 // 2026-10-05/06 to NABERS' kg-recovered/kg-generated definition, building=external/tenant=internal
-// split, 365-day cutoff) ---
+// split; window narrowed from 365 to 90 days 2026-10-07) ---
 // Exercises _writeRecyclingLevelAggregates directly (exported from functions/index.js purely for
 // this test) against bintrackerRows/bintrackerTenantMatches seeded straight into the Firestore
 // emulator via the admin SDK — the real refreshBintrackerData handler also calls the real
@@ -168,7 +104,7 @@ async function testRecyclingLevelAggregation() {
   for (const r of allRows) {
     await db.collection('bintrackerRows').add({
       buildingId, bintrackerLocationRaw: 'Level 1', wasteTypeRaw: 'x', contaminated: false,
-      wasteOutcome: 'Recycled', collectDate: '2026-01-15', fetchedAt: new Date(), ...r,
+      wasteOutcome: 'Recycled', collectDate: fmt(2), fetchedAt: new Date(), ...r,
     });
   }
 
@@ -226,75 +162,53 @@ async function testRecyclingLevelAggregation() {
     confirmedTenantSnapAfter.exists && !('recyclingLevelPct' in confirmedTenantSnapAfter.data()), JSON.stringify(confirmedTenantSnapAfter.data()));
 }
 
-// --- 365-day cutoff (added 2026-10-06, per NABERS' own "based on 12 months of waste data"
-// definition) --- Seeds exactly MIN_ROWS_FOR_RECYCLING_LEVEL (5) qualifying rows, all dated well
-// over a year ago (computed relative to the real clock, not hardcoded, so this test never goes
-// stale) — without the cutoff these 5 rows would sit exactly at the floor and produce a real
-// percentage; with it, the Firestore query itself should never even fetch them, leaving
-// recyclingLevelPct unset (graceful absence), not a stale/wrong number.
-async function testTwelveMonthCutoff() {
+// --- 90-day cutoff (narrowed from 365 to 90 on 2026-10-07 - see writeRecyclingLevelAggregates'
+// own comment for the full reasoning: a deliberate, temporary interim measure pending the planned
+// Bintracker Data Hub project, not a new permanent definition). Two cases: rows from 400 days ago
+// stay excluded either way (doesn't discriminate between a 90-day and a 365-day cutoff on its
+// own); rows from 150 days ago are the real, newly-added discriminating case - they WOULD have
+// qualified under the old 365-day window but must NOT under the new 90-day one, which is the one
+// genuinely new behavior this change introduces. Both computed relative to the real clock, not
+// hardcoded, so this test never goes stale.
+async function testNinetyDayCutoff() {
   const { _writeRecyclingLevelAggregates, _getAdminFirestoreForTests } = require('../functions/index.js');
   const db = _getAdminFirestoreForTests();
-  const suffix = Date.now() + '-cutoff';
-  const buildingId = 'cutoff-tower-' + suffix;
-  await db.doc(`buildings/${buildingId}`).set({ name: 'Cutoff Tower', bintrackerBuildingName: 'Cutoff Demo Building' });
 
-  const over400DaysAgo = new Date();
-  over400DaysAgo.setDate(over400DaysAgo.getDate() - 400);
-  const oldDateStr = over400DaysAgo.toISOString().slice(0, 10);
-
-  const oldRows = [
-    ['mr', 'Recycled'], ['mr', 'Recycled'], ['pc', 'Recycled'], ['og', 'Recycled'], ['og', 'Non-Recycled'],
-  ];
-  for (const [ourStream, wasteOutcome] of oldRows) {
-    await db.collection('bintrackerRows').add({
-      buildingId, bintrackerTenantRaw: 'Old Data Co', bintrackerLocationRaw: 'Level 1', wasteTypeRaw: 'x',
-      ourStream, externalOnly: true, contaminated: wasteOutcome !== 'Recycled', wasteOutcome,
-      collectDate: oldDateStr, weight: 10, fetchedAt: new Date(),
-    });
+  async function seedFiveRows(buildingId, dateStr, tenantRaw) {
+    const oldRows = [
+      ['mr', 'Recycled'], ['mr', 'Recycled'], ['pc', 'Recycled'], ['og', 'Recycled'], ['og', 'Non-Recycled'],
+    ];
+    for (const [ourStream, wasteOutcome] of oldRows) {
+      await db.collection('bintrackerRows').add({
+        buildingId, bintrackerTenantRaw: tenantRaw, bintrackerLocationRaw: 'Level 1', wasteTypeRaw: 'x',
+        ourStream, externalOnly: true, contaminated: wasteOutcome !== 'Recycled', wasteOutcome,
+        collectDate: dateStr, weight: 10, fetchedAt: new Date(),
+      });
+    }
   }
 
-  await _writeRecyclingLevelAggregates(db, buildingId);
-  const buildingSnap = await db.doc(`buildings/${buildingId}`).get();
-  check('rows older than 365 days are excluded by the cutoff - recyclingLevelPct stays unset even though 5 rows exist (would otherwise sit exactly at the floor)',
-    buildingSnap.exists && !('recyclingLevelPct' in buildingSnap.data()), JSON.stringify(buildingSnap.data()));
+  const suffix400 = Date.now() + '-cutoff400';
+  const buildingId400 = 'cutoff-tower-' + suffix400;
+  await db.doc(`buildings/${buildingId400}`).set({ name: 'Cutoff Tower 400', bintrackerBuildingName: 'Cutoff Demo Building 400' });
+  await seedFiveRows(buildingId400, fmt(400), 'Old Data Co');
+  await _writeRecyclingLevelAggregates(db, buildingId400);
+  const buildingSnap400 = await db.doc(`buildings/${buildingId400}`).get();
+  check('rows from 400 days ago are excluded by the 90-day cutoff - recyclingLevelPct stays unset even though 5 rows exist (would otherwise sit exactly at the floor)',
+    buildingSnap400.exists && !('recyclingLevelPct' in buildingSnap400.data()), JSON.stringify(buildingSnap400.data()));
+
+  const suffix150 = Date.now() + '-cutoff150';
+  const buildingId150 = 'cutoff-tower-' + suffix150;
+  await db.doc(`buildings/${buildingId150}`).set({ name: 'Cutoff Tower 150', bintrackerBuildingName: 'Cutoff Demo Building 150' });
+  await seedFiveRows(buildingId150, fmt(150), '150-Day Co');
+  await _writeRecyclingLevelAggregates(db, buildingId150);
+  const buildingSnap150 = await db.doc(`buildings/${buildingId150}`).get();
+  check('rows from 150 days ago are ALSO excluded under the new 90-day cutoff - would have qualified under the old 365-day window, proving the narrower window actually took effect',
+    buildingSnap150.exists && !('recyclingLevelPct' in buildingSnap150.data()), JSON.stringify(buildingSnap150.data()));
 }
 
 async function main() {
-  const MAPPED_BUILDING_ID = 'mapped-tower-' + Date.now();
-  const UNMAPPED_BUILDING_ID = 'unmapped-tower-' + Date.now();
-  await withRulesDisabled(async (context) => {
-    const db = context.firestore();
-    await setDoc(doc(db, 'buildings', MAPPED_BUILDING_ID), { name: 'Mapped Tower', bintrackerBuildingName: 'Demo Building' });
-    await setDoc(doc(db, 'buildings', UNMAPPED_BUILDING_ID), { name: 'Unmapped Tower' });
-  });
-
-  const anon = await makeClient('anon', null, null);
-  const anonResult = await callRefresh(anon.functions, { buildingId: MAPPED_BUILDING_ID, ...VALID_PAYLOAD_SHAPE });
-  check('unauthenticated call is rejected', !anonResult.ok && anonResult.code === 'functions/unauthenticated', JSON.stringify(anonResult));
-
-  const random = await makeClient('random', RANDOM_EMAIL, PASSWORD);
-  const randomResult = await callRefresh(random.functions, { buildingId: MAPPED_BUILDING_ID, ...VALID_PAYLOAD_SHAPE });
-  check('non-admin signed-in call is rejected', !randomResult.ok && randomResult.code === 'functions/permission-denied', JSON.stringify(randomResult));
-
-  const owner = await makeClient('owner', OWNER_EMAIL, PASSWORD);
-  await setDoc(doc(owner.db, 'admins', OTHER_ADMIN_EMAIL), { addedBy: OWNER_EMAIL });
-  const otherAdmin = await makeClient('otherAdmin', OTHER_ADMIN_EMAIL, PASSWORD);
-
-  const missingIdResult = await callRefresh(otherAdmin.functions, { ...VALID_PAYLOAD_SHAPE });
-  check('missing buildingId is rejected', !missingIdResult.ok && missingIdResult.code === 'functions/invalid-argument', JSON.stringify(missingIdResult));
-
-  const badDateResult = await callRefresh(otherAdmin.functions, { buildingId: MAPPED_BUILDING_ID, fromDate: 'not-a-date', toDate: '2026-01-31' });
-  check('malformed fromDate is rejected', !badDateResult.ok && badDateResult.code === 'functions/invalid-argument', JSON.stringify(badDateResult));
-
-  const notFoundResult = await callRefresh(otherAdmin.functions, { buildingId: 'does-not-exist', ...VALID_PAYLOAD_SHAPE });
-  check('a non-existent building is rejected', !notFoundResult.ok && notFoundResult.code === 'functions/not-found', JSON.stringify(notFoundResult));
-
-  const unmappedResult = await callRefresh(otherAdmin.functions, { buildingId: UNMAPPED_BUILDING_ID, ...VALID_PAYLOAD_SHAPE });
-  check('a building with no bintrackerBuildingName set is rejected', !unmappedResult.ok && unmappedResult.code === 'functions/failed-precondition', JSON.stringify(unmappedResult));
-
   await testRecyclingLevelAggregation();
-  await testTwelveMonthCutoff();
+  await testNinetyDayCutoff();
 
   for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.ok ? '' : ' ' + r.extra}`);
   const failed = results.filter(r => !r.ok);

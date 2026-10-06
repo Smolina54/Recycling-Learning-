@@ -1,19 +1,18 @@
-// Verifies the 3 Workstream 12 (Bintracker building/tenant catalog sync) Cloud Functions against
-// the local Functions emulator: discoverBintrackerBuildings, syncBintrackerTenants, and
-// deleteTenantPermanently. Mirrors tests/functions-deletebuildingpermanently.test.js's exact
-// harness/style (same emulator bootstrap, check()/results array, real seeded Firestore data via
-// the rules-unit-testing SDK).
+// Verifies the 2 remaining Workstream 12 (Bintracker building/tenant catalog sync) Cloud
+// Functions against the local Functions emulator: syncBintrackerTenants and
+// deleteTenantPermanently. (discoverBintrackerBuildings was removed 2026-10-07, Workstream 15
+// Part 4 - "Check for new buildings" is now a plain client-side Firestore read of
+// discovery/bintrackerBuildings, no longer a Cloud Function at all.) Mirrors
+// tests/functions-deletebuildingpermanently.test.js's exact harness/style (same emulator
+// bootstrap, check()/results array, real seeded Firestore data via the rules-unit-testing SDK).
 //
-// Same "no real Bintracker network call" convention as tests/functions-refreshbintrackerdata.test.js:
-// discoverBintrackerBuildings/syncBintrackerTenants both call the real Bintracker network AFTER
-// their own auth/validation/precondition checks, so every case below is rejected before either
-// function ever reaches fetchBintrackerCollections() - no real credentials or network access
-// needed, same throwaway functions/.secret.local values as the sibling suite. The actual fetch-
-// then-diff data logic (which DOES need real-shaped API response rows) is covered separately and
-// WITHOUT any network/emulator dependency at all, by calling the pure diffDiscoveredBuildingNames/
-// diffBintrackerTenants exports from functions/bintracker.js directly with realistic seeded row
-// shapes - the same "separate the fetch from the diff so the diff is unit-testable" split
-// documented on those functions themselves.
+// syncBintrackerTenants no longer calls Bintracker's live API either (same date, same
+// workstream) - it queries this app's own already-stored bintrackerRows (written by the nightly
+// scheduled sync), so every case below exercises its real auth/validation/precondition logic
+// against the real Firestore emulator, no network/credentials involved at all. The pure diff
+// logic (diffDiscoveredBuildingNames/diffBintrackerTenants, still used by the nightly sync and by
+// "Check for new buildings"'s stored-doc shape respectively) is covered separately below with
+// realistic seeded row shapes, no network/emulator dependency.
 //
 // deleteTenantPermanently is exercised fully end-to-end here (real cascade delete against seeded
 // submissions/attempts + the tenant doc, re-read afterward to confirm), including the deliberate
@@ -219,9 +218,6 @@ async function main() {
   });
 
   const anon = await makeClient('anon', null, null);
-  const anonDiscover = await callFn(anon.functions, 'discoverBintrackerBuildings', {})();
-  check('discoverBintrackerBuildings: unauthenticated call is rejected',
-    !anonDiscover.ok && anonDiscover.code === 'functions/unauthenticated', JSON.stringify(anonDiscover));
   const anonSync = await callFn(anon.functions, 'syncBintrackerTenants', { buildingId: SEED_BUILDING_ID })();
   check('syncBintrackerTenants: unauthenticated call is rejected',
     !anonSync.ok && anonSync.code === 'functions/unauthenticated', JSON.stringify(anonSync));
@@ -230,9 +226,6 @@ async function main() {
     !anonDelete.ok && anonDelete.code === 'functions/unauthenticated', JSON.stringify(anonDelete));
 
   const random = await makeClient('random', RANDOM_EMAIL, PASSWORD);
-  const randomDiscover = await callFn(random.functions, 'discoverBintrackerBuildings', {})();
-  check('discoverBintrackerBuildings: non-admin signed-in call is rejected',
-    !randomDiscover.ok && randomDiscover.code === 'functions/permission-denied', JSON.stringify(randomDiscover));
   const randomSync = await callFn(random.functions, 'syncBintrackerTenants', { buildingId: SEED_BUILDING_ID })();
   check('syncBintrackerTenants: non-admin signed-in call is rejected',
     !randomSync.ok && randomSync.code === 'functions/permission-denied', JSON.stringify(randomSync));
@@ -346,16 +339,11 @@ async function main() {
   const buildingStillThere = await getDoc(doc(otherAdmin.db, 'buildings', STILL_ACTIVE_BUILDING_ID));
   check('...and the still-active BUILDING itself is untouched (only the tenant was deleted)', buildingStillThere.exists());
 
-  // --- Rate limits (a pre-production audit found these 3 functions had NO rate limit at all) ---
-  const BINTRACKER_RATE_LIMIT_MAX_CALLS = 30;
+  // --- Rate limit: deleteTenantPermanently only (syncBintrackerTenants dropped its own rate
+  // limit 2026-10-07 - it no longer calls Bintracker's live API at all, just queries this app's
+  // own already-stored bintrackerRows, so the original "protect the shared 3rd-party account from
+  // a hammering client" reasoning no longer applies to it). ---
   const DELETE_RATE_LIMIT_MAX_CALLS = 50;
-  await withRulesDisabled(async (context) => {
-    await setDoc(doc(context.firestore(), 'bintrackerRateLimits', OTHER_ADMIN_EMAIL), { count: BINTRACKER_RATE_LIMIT_MAX_CALLS, windowStart: Date.now() });
-  });
-  const rateLimitedSync = await callFn(otherAdmin.functions, 'syncBintrackerTenants', { buildingId: 'does-not-matter' })();
-  check(`syncBintrackerTenants: a call at the ${BINTRACKER_RATE_LIMIT_MAX_CALLS}/window Bintracker cap is rejected as resource-exhausted`,
-    !rateLimitedSync.ok && rateLimitedSync.code === 'functions/resource-exhausted', JSON.stringify(rateLimitedSync));
-
   await withRulesDisabled(async (context) => {
     await setDoc(doc(context.firestore(), 'deleteRateLimits', OTHER_ADMIN_EMAIL), { count: DELETE_RATE_LIMIT_MAX_CALLS, windowStart: Date.now() });
   });

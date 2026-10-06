@@ -76,6 +76,15 @@ function httpGet(url, headers) {
 //     hard-killed with nothing to show for it.
 const LOOP_TIME_BUDGET_MS = 200000; // leaves headroom under every caller's 300s function timeout
 
+// Workstream 15 Part 4 (2026-10-07): the scheduled nightly sync fetches UNSCOPED (every building
+// at once) over a 90-day window, a far larger pull than any existing scoped-to-one-building
+// caller ever needs - the defaults above were sized for THOSE callers' 300s timeout and would
+// silently truncate a much bigger, legitimate pull well before it's actually done. Rather than
+// raise the shared defaults (and the unnecessary blast-radius risk that comes with every existing
+// caller suddenly being allowed to run much longer), fetchBintrackerCollections takes optional
+// per-call overrides below, defaulting to the original constants so every existing caller's
+// behavior is completely unchanged.
+
 function pageSignature(rows) {
   if (!rows.length) return 'empty';
   const first = JSON.stringify(rows[0]);
@@ -91,13 +100,16 @@ function pageSignature(rows) {
 // added to the running total - return true to stop fetching further pages early. Used by
 // discoverBintrackerBuildings (see its own comment) to stop once distinct building names have
 // stopped appearing, instead of blindly fetching every row Bintracker has for the window.
-async function fetchBintrackerCollections({ building, wasteType, collectDateFrom, collectDateTo, appId, appKey, onPage }) {
+async function fetchBintrackerCollections({
+  building, wasteType, collectDateFrom, collectDateTo, appId, appKey, onPage,
+  maxPages = MAX_PAGES, timeBudgetMs = LOOP_TIME_BUDGET_MS,
+}) {
   const allRows = [];
   const startedAt = Date.now();
   let prevSignature = null;
   let page = 1;
-  for (; page <= MAX_PAGES; page++) {
-    if (Date.now() - startedAt > LOOP_TIME_BUDGET_MS) {
+  for (; page <= maxPages; page++) {
+    if (Date.now() - startedAt > timeBudgetMs) {
       console.log(`[bintracker] stopped: time budget exceeded after page ${page - 1}, ${allRows.length} rows so far`);
       break;
     }
@@ -132,7 +144,7 @@ async function fetchBintrackerCollections({ building, wasteType, collectDateFrom
       break;
     }
   }
-  if (page > MAX_PAGES) console.log(`[bintracker] stopped: reached MAX_PAGES (${MAX_PAGES}), ${allRows.length} rows total`);
+  if (page > maxPages) console.log(`[bintracker] stopped: reached maxPages (${maxPages}), ${allRows.length} rows total`);
   return allRows;
 }
 
