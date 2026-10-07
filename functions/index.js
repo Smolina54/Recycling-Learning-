@@ -993,7 +993,18 @@ async function processOneBuildingRows(db, buildingId, rawRows, fromDate, toDate)
 async function runBintrackerNightlySyncHybrid() {
   const db = admin.firestore();
   const creds = { appId: BINTRACKER_APP_ID.value(), appKey: BINTRACKER_APP_KEY.value() };
-  const discoveredBuildingsCount = await runDiscoveryPass(db, creds);
+  // The discovery pass is new, untested-in-production code (a 10-day/single-wasteType unscoped
+  // fetch) - it must NEVER be able to block the per-building pass, which is what actually keeps
+  // recyclingLevelPct current for every already-mapped building. Isolated in its own try/catch so
+  // a discovery-pass failure only costs that run's "new buildings" list, never a mapped building's
+  // real data update - the exact failure mode found in production 2026-10-07 right after this
+  // hybrid first shipped (discovery threw, uncaught, and the per-building pass never ran at all).
+  let discoveredBuildingsCount = 0;
+  try {
+    discoveredBuildingsCount = await runDiscoveryPass(db, creds);
+  } catch (err) {
+    console.error('[scheduledBintrackerRefreshNightly] discovery pass failed:', err && err.message);
+  }
   const perBuildingStats = await runPerBuildingPass(db, creds);
   const stats = { discoveredBuildingsCount, ...perBuildingStats };
   console.log('[scheduledBintrackerRefreshNightly]', JSON.stringify(stats));
