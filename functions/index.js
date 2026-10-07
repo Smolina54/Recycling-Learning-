@@ -888,6 +888,12 @@ async function runPerBuildingPass(db, creds) {
     const buildingId = buildingDoc.id;
     const name = buildingDoc.data().bintrackerBuildingName;
     if (!name) continue;
+    // Found genuinely needed 2026-10-07: without this, the per-building fetch's own page-progress
+    // logs (inside fetchBintrackerCollections) have no building context at all, making it
+    // impossible to tell from logs alone WHICH buildings were among the N touched/failed each run -
+    // exactly the ambiguity that blocked diagnosing why one specific mapped building wasn't
+    // updating (the real cause turned out to need this log to even investigate).
+    console.log(`[scheduledBintrackerRefreshNightly] processing buildingId=${buildingId} name="${name}"`);
     try {
       const rawRows = await fetchBintrackerCollections({
         building: name,
@@ -901,9 +907,10 @@ async function runPerBuildingPass(db, creds) {
       totalRowsDeleted += result.rowsDeleted;
       totalRowsSkippedNoStream += result.rowsSkippedNoStream;
       buildingsTouched++;
+      console.log(`[scheduledBintrackerRefreshNightly] buildingId=${buildingId} name="${name}" OK - rowsFetched=${rawRows.length} rowsWritten=${result.rowsWritten} rowsDeleted=${result.rowsDeleted} rowsSkippedNoStream=${result.rowsSkippedNoStream}`);
     } catch (err) {
       buildingsFailed++;
-      console.error(`[scheduledBintrackerRefreshNightly] building ${buildingId} failed:`, err && err.message);
+      console.error(`[scheduledBintrackerRefreshNightly] buildingId=${buildingId} name="${name}" failed:`, err && err.message);
     }
   }
   return {
