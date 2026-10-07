@@ -50,6 +50,12 @@ for (const [wasteType, expectedStream] of Object.entries(expectedMappings)) {
 for (const junk of ['Coffee cups', 'Pallets', 'Clothing Donation', '123aw', 'name1', '']) {
   check(`"${junk}" is NOT mapped to any stream (silently excluded)`, mapWasteTypeToStream(junk) === null, mapWasteTypeToStream(junk));
 }
+// Regression check for a real production finding (2026-10-07): a real Bintracker row came back as
+// "General waste" (lowercase "w"), not the "General Waste" used everywhere else - an exact-match
+// lookup would have silently dropped it from the recycling-rate calculation entirely.
+check('"General waste" (lowercase w, real production value) still maps to "gw"', mapWasteTypeToStream('General waste') === 'gw', mapWasteTypeToStream('General waste'));
+check('"  mixed recycling  " (stray whitespace + lowercase) still maps to "mr"', mapWasteTypeToStream('  mixed recycling  ') === 'mr', mapWasteTypeToStream('  mixed recycling  '));
+check('a non-string wasteType (e.g. null) is NOT mapped, not a crash', mapWasteTypeToStream(null) === null, mapWasteTypeToStream(null));
 
 // --- Fuzzy matching ---
 check('normalizeForMatching lowercases, strips punctuation, collapses whitespace',

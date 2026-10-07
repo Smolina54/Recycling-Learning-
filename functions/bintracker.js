@@ -161,8 +161,18 @@ const WASTE_TYPE_TO_STREAM = {
   'e-waste': 'ew', 'Batteries': 'ew', 'Mobile phones': 'ew', 'Fluorescent tubes': 'ew',
 };
 
+// Case-insensitive lookup, built once - found in production 2026-10-07 that Bintracker doesn't
+// consistently capitalize wasteType the same way every time (a real row came back as "General
+// waste", lowercase "w", not the "General Waste" used everywhere else) - an exact-match lookup
+// would have silently excluded that row's weight from the recycling-rate calculation entirely
+// (counted as "no stream", not even part of the generated total), understating the real result.
+const WASTE_TYPE_TO_STREAM_LOWER = Object.fromEntries(
+  Object.entries(WASTE_TYPE_TO_STREAM).map(([k, v]) => [k.toLowerCase(), v])
+);
+
 function mapWasteTypeToStream(wasteType) {
-  return WASTE_TYPE_TO_STREAM[wasteType] || null;
+  if (typeof wasteType !== 'string') return null;
+  return WASTE_TYPE_TO_STREAM_LOWER[wasteType.trim().toLowerCase()] || null;
 }
 
 // ---- Recycling-level aggregate (Workstream 7 Point 5 sub-idea, 2026-09-24; formula revised
