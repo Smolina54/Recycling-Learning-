@@ -104,8 +104,18 @@ async function assertIsAdmin(auth) {
   if (!auth) throw new HttpsError('unauthenticated', 'Sign in first.');
   const callerEmail = auth.token.email;
   if (callerEmail === OWNER_EMAIL) return;
-  const adminDoc = await admin.firestore().doc(`admins/${callerEmail}`).get();
-  if (!adminDoc.exists) throw new HttpsError('permission-denied', 'Not an admin.');
+  // A Super Admin with no separate /admins doc of their own (the normal case - see firestore.rules'
+  // isAllowedReviewer() for the client-side half of this same fix, 2026-10-07) must also pass this
+  // check - Super Admin is a strictly higher tier, and every onCall function gated by assertIsAdmin
+  // (syncBintrackerTenants, deleteTenantPermanently, deleteBuildingPermanently, sendInductionEmail,
+  // sendDistributionFlyer, provisionUserAccount) was rejecting a pure Super Admin with "Not an
+  // admin." in production until this fix.
+  const db = admin.firestore();
+  const [adminDoc, superAdminDoc] = await Promise.all([
+    db.doc(`admins/${callerEmail}`).get(),
+    db.doc(`superAdmins/${callerEmail}`).get(),
+  ]);
+  if (!adminDoc.exists && !superAdminDoc.exists) throw new HttpsError('permission-denied', 'Not an admin.');
 }
 
 // The client used to pre-render its own subject/text and just hand them over — now it sends the

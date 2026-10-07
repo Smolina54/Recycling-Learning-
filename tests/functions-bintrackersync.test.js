@@ -35,6 +35,7 @@ const { diffDiscoveredBuildingNames, diffBintrackerTenants } = require('../funct
 const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
 const OWNER_EMAIL = 'esgtradeflex@gmail.com'; // must match functions/index.js's OWNER_EMAIL
 const OTHER_ADMIN_EMAIL = 'other-admin@example.com';
+const SUPER_ADMIN_ONLY_EMAIL = 'super-admin-only@example.com'; // granted via /superAdmins, NEVER /admins
 const RANDOM_EMAIL = 'random-user@example.com';
 const PASSWORD = 'test-password-123';
 const FUNCTIONS_PORT = Number(process.env.FUNCTIONS_EMULATOR_PORT || 5001);
@@ -236,6 +237,20 @@ async function main() {
   const owner = await makeClient('owner', OWNER_EMAIL, PASSWORD);
   await setDoc(doc(owner.db, 'admins', OTHER_ADMIN_EMAIL), { addedBy: OWNER_EMAIL });
   const otherAdmin = await makeClient('otherAdmin', OTHER_ADMIN_EMAIL, PASSWORD);
+
+  // Regression check for a real production bug found 2026-10-07: a Super Admin with NO separate
+  // /admins doc of their own (the normal case - see functions/index.js's assertIsAdmin() and
+  // firestore.rules' isAllowedReviewer() for the two halves of this same fix) got "Not an admin"
+  // calling syncBintrackerTenants/deleteTenantPermanently, because assertIsAdmin() only ever
+  // checked /admins, never /superAdmins.
+  await setDoc(doc(owner.db, 'superAdmins', SUPER_ADMIN_ONLY_EMAIL), { addedBy: OWNER_EMAIL });
+  const superAdminOnly = await makeClient('superAdminOnly', SUPER_ADMIN_ONLY_EMAIL, PASSWORD);
+  const superAdminSync = await callFn(superAdminOnly.functions, 'syncBintrackerTenants', { buildingId: SEED_BUILDING_ID })();
+  check('syncBintrackerTenants: a Super Admin with NO /admins doc of their own is NOT rejected as "Not an admin"',
+    !(superAdminSync.code === 'functions/permission-denied'), JSON.stringify(superAdminSync));
+  const superAdminDelete = await callFn(superAdminOnly.functions, 'deleteTenantPermanently', { buildingId: 'does-not-exist', tenantId: 'does-not-exist', confirmName: 'x' })();
+  check('deleteTenantPermanently: same Super Admin is NOT rejected as "Not an admin" either (fails not-found instead, proving it got past the admin gate)',
+    superAdminDelete.code === 'functions/not-found', JSON.stringify(superAdminDelete));
 
   // --- syncBintrackerTenants: failed-precondition when bintrackerBuildingName isn't set ---
   const unmappedSync = await callFn(otherAdmin.functions, 'syncBintrackerTenants', { buildingId: UNMAPPED_BUILDING_ID })();
