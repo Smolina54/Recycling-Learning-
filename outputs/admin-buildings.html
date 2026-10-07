@@ -732,6 +732,7 @@ async function loadMasterBuildings(){
           .map(t => ({ id: t.id, name: t.data().name || '', levels: t.data().levels || [], emails: t.data().emails || [] })),
         managerEmails: d.data().managerEmails || [],
         bintrackerBuildingName: d.data().bintrackerBuildingName || '',
+        lastAutoRefreshAt: d.data().lastAutoRefreshAt || null,
       };
     }));
     buildingsCache = buildings.filter(b => b.active);

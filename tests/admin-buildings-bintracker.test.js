@@ -24,7 +24,7 @@ const url = require('url');
 const fs = require('fs');
 const puppeteer = require('puppeteer-core');
 const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
-const { doc, setDoc, getDoc, collection } = require('firebase/firestore');
+const { doc, setDoc, getDoc, updateDoc, collection, Timestamp } = require('firebase/firestore');
 
 const EDGE_PATH = process.env.TEST_BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const BUILDINGS_PATH = path.join(__dirname, '..', 'outputs', 'admin-buildings.html');
@@ -173,6 +173,17 @@ async function readMatchDoc(buildingId, tenantId){
   return data;
 }
 
+async function setLastAutoRefreshAt(buildingId){
+  const testEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), 'buildings', buildingId), { lastAutoRefreshAt: Timestamp.now() });
+  });
+  await testEnv.cleanup();
+}
+
 async function main(){
   const browser = await puppeteer.launch({ executablePath: EDGE_PATH, headless: true });
   const page = await browser.newPage();
@@ -259,6 +270,44 @@ async function runFlow(page){
   mappedRow = await findRowByName(page, '.building-row', mappedBuildingName);
   check('a building WITH a Bintracker mapping shows a "waiting for the next automatic refresh" note (no refresh has run yet)',
     await mappedRow.evaluate(el => el.textContent.includes('Waiting for the next automatic refresh')));
+
+  // --- Regression check for a real production bug found 2026-10-07: loadMasterBuildings() built
+  // each building object by hand, field by field, and simply omitted lastAutoRefreshAt entirely -
+  // the nightly scheduled sync genuinely succeeded and set it in Firestore (confirmed live via real
+  // Cloud Function logs: buildingsTouched:4, buildingsFailed:0), but the UI could never show it,
+  // always rendering "Waiting" regardless of the real backend state. A reload is needed since
+  // loadMasterBuildings() only runs on page load/sign-in, not on a live listener. ---
+  await setLastAutoRefreshAt(mappedBuildingId);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => document.getElementById('buildingsSection') && getComputedStyle(document.getElementById('buildingsSection')).display !== 'none',
+    { timeout: 10000 }
+  );
+  // A reload is a fresh JS context - the alert/confirm auto-responder installed above doesn't
+  // survive it (the exact same "stub doesn't survive a page.goto() mid-test" gotcha already
+  // documented elsewhere in this project's test suites), so it needs reinstalling here too for the
+  // match-review checks further below that still rely on it.
+  await page.evaluate(() => {
+    window.__alertCalls = [];
+    const overlay = document.getElementById('appModalOverlay');
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('open')) return;
+      const message = document.getElementById('appModalMessage').textContent;
+      const buttons = [...document.getElementById('appModalActions').querySelectorAll('button')];
+      window.__alertCalls.push(message);
+      buttons[buttons.length - 1].click();
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  });
+  await page.waitForFunction(
+    (name) => [...document.querySelectorAll('.building-row h3')].some(el => el.textContent === name),
+    { timeout: 8000 }, mappedBuildingName
+  );
+  mappedRow = await findRowByName(page, '.building-row', mappedBuildingName);
+  await mappedRow.$eval('.building-toggle-btn', el => el.click());
+  await new Promise(r => setTimeout(r, 300));
+  mappedRow = await findRowByName(page, '.building-row', mappedBuildingName);
+  check('after lastAutoRefreshAt is really set, the UI shows "Last automatic refresh:" instead of "Waiting" (the real bug this regresses)',
+    await mappedRow.evaluate(el => el.textContent.includes('Last automatic refresh:') && !el.textContent.includes('Waiting for the next automatic refresh')));
 
   // --- Matching/review UI, driven by the bintrackerRows seeded directly via Firestore ---
   await page.waitForFunction(
