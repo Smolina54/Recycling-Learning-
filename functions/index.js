@@ -1136,6 +1136,46 @@ exports.syncBintrackerTenants = onCall(
   }
 );
 
+// syncOneBuildingNow — Workstream 21 (2026-10-09): mapping a building (either "Add this
+// building" or saving an existing building's Bintracker-mapping field) automatically triggers
+// ONE immediate, single-building SCOPED sync, so a newly-mapped building's real data (and its
+// recyclingLevelPct) is available within seconds instead of waiting for the next 3am scheduled
+// run. Reuses the exact same fetch+diff+write logic the nightly job's own per-building pass uses
+// (processOneBuildingRows) - this is not a new sync mechanism, just a new, on-demand entry point
+// into the one that already exists. This is the one deliberate exception to "no button calls
+// Bintracker live" (Workstream 15 Part 4): it is never triggered by a manual "sync" button, only
+// automatically as a side effect of the mapping action itself - confirmed with the user, who
+// explicitly rejected a manual button in favor of this. A failure here must never be treated as
+// a mapping failure by the caller - the building/mapping is already saved by the time this runs.
+exports.syncOneBuildingNow = onCall(
+  { secrets: [BINTRACKER_APP_ID, BINTRACKER_APP_KEY], timeoutSeconds: 120, maxInstances: 5, concurrency: 5 },
+  async (request) => {
+    await assertIsAdmin(request.auth);
+
+    const { buildingId } = request.data || {};
+    if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
+      throw new HttpsError('invalid-argument', 'A valid building id is required.');
+    }
+
+    const db = admin.firestore();
+    const buildingSnap = await db.doc(`buildings/${buildingId}`).get();
+    if (!buildingSnap.exists) throw new HttpsError('not-found', 'No building found for that id.');
+    const name = buildingSnap.data().bintrackerBuildingName;
+    if (!name) throw new HttpsError('failed-precondition', 'No Bintracker mapping set for this building yet.');
+
+    const { fromDate, toDate } = recentDayRange(NIGHTLY_SYNC_WINDOW_DAYS);
+    const rawRows = await fetchBintrackerCollections({
+      building: name,
+      collectDateFrom: fromDate,
+      collectDateTo: toDate,
+      appId: BINTRACKER_APP_ID.value(),
+      appKey: BINTRACKER_APP_KEY.value(),
+    });
+    const result = await processOneBuildingRows(db, buildingId, rawRows, fromDate, toDate);
+    return { ok: true, rowsFetched: rawRows.length, ...result };
+  }
+);
+
 // Same chunked delete-in-batches idiom as deleteAllMatchingBuildingId above, scoped by tenantId
 // instead of buildingId. tenantIds are always crypto.randomUUID() values (see
 // admin-buildings.html's add-tenant/import-from-Excel handlers), so a single-field equality query

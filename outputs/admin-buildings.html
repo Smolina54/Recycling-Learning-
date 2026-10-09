@@ -689,6 +689,12 @@ let editingTenant = null; // {buildingId, tenantId}
 // which building's Save was just clicked so a brief "Saved" note can show next to its button.
 let justSavedManagersForBuildingId = null;
 let justSavedBintrackerMappingForBuildingId = null;
+// Workstream 21 (2026-10-09): holds a soft, non-blocking note about the automatic one-time sync
+// triggered right after saving a new Bintracker mapping - a sync failure is NOT a mapping failure
+// (the mapping is already saved by the time this fires), so it shows as inline text next to the
+// Save button rather than an interrupting alert.
+let bintrackerAutoSyncNoteForBuildingId = null;
+let bintrackerAutoSyncNoteText = '';
 let buildingSearchTerm = '';
 const expandedBuildingIds = new Set();
 let permanentDeletePanelBuildingId = null; // which archived row currently has its confirm panel open
@@ -824,6 +830,7 @@ function renderBintrackerMappingHtml(b){
         <button class="btn save-bintracker-mapping-btn">Save</button>
         ${justSavedBintrackerMappingForBuildingId === b.id ? '<span class="managers-saved-note">Saved ✓</span>' : ''}
       </div>
+      ${bintrackerAutoSyncNoteForBuildingId === b.id ? `<p class="block-sub bintracker-auto-sync-note" style="margin-top:6px;">${esc(bintrackerAutoSyncNoteText)}</p>` : ''}
       ${hasMapping ? `<p class="block-sub" style="margin-top:10px;">${lastAutoRefresh ? `Last automatic refresh: ${esc(lastAutoRefresh)}` : 'Waiting for the next automatic refresh (runs nightly).'}</p>` : ''}
     </div>`;
 }
@@ -1582,12 +1589,27 @@ document.getElementById('discoveredBuildingsList').addEventListener('click', asy
       discoveredBuildings = discoveredBuildings.filter(x => x.name !== bintrackerName);
       expandedDiscoveredBuildingNames.delete(bintrackerName);
       document.getElementById('discoverBuildingsStatus').textContent =
-        `Added "${displayName}" with ${checkedIndices.length} tenant${checkedIndices.length === 1 ? '' : 's'}.`;
+        `Added "${displayName}" with ${checkedIndices.length} tenant${checkedIndices.length === 1 ? '' : 's'}. Setting up real data for this building…`;
       // Render the discovered-buildings list's own removal right away - it doesn't need to wait
       // on loadMasterBuildings() below (a separate, slower refresh of the OTHER list on the
       // Buildings tab), and coupling the two made this row's removal feel laggy/racy.
       renderDiscoveredBuildingsList();
       await refreshOneBuildingInCache(newBuildingId);
+      // Workstream 21 (2026-10-09): mapping a building (this is one of the two ways) automatically
+      // triggers one immediate, single-building Bintracker sync, so its real data and
+      // recyclingLevelPct are available within seconds instead of waiting for the next 3am
+      // scheduled run. A sync failure here is NOT a mapping failure - the building was already
+      // created successfully above - so it only ever shows a soft, non-blocking note, falling back
+      // on the reliable nightly job to pick it up later.
+      try {
+        const syncOneBuildingNow = httpsCallable(functions, 'syncOneBuildingNow', { timeout: 120000 });
+        await syncOneBuildingNow({ buildingId: newBuildingId });
+        document.getElementById('discoverBuildingsStatus').textContent = `Added "${displayName}" - real data synced.`;
+      } catch (syncErr){
+        console.error('Automatic first sync failed for newly added building:', syncErr);
+        document.getElementById('discoverBuildingsStatus').textContent =
+          `Added "${displayName}", but the first sync didn't go through - it'll pick up at the next scheduled run.`;
+      }
     } catch (err){
       console.error('Failed to add discovered building:', err);
       await showAlert('Failed to add this building - check the console for details.');
@@ -1966,6 +1988,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
     const buildingId = saveBintrackerMappingBtn.closest('.building-row').dataset.buildingId;
     const inputEl = saveBintrackerMappingBtn.closest('.building-sub-card').querySelector('.bintracker-mapping-input');
     const newValue = inputEl.value.trim();
+    const previousValue = ([...buildingsCache, ...archivedBuildingsCache].find(b => b.id === buildingId) || {}).bintrackerBuildingName || '';
     try {
       await updateDoc(doc(db, 'buildings', buildingId), { bintrackerBuildingName: newValue });
       justSavedBintrackerMappingForBuildingId = buildingId;
@@ -1976,6 +1999,27 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
           refreshBuildingsView();
         }
       }, 2500);
+      // Workstream 21 (2026-10-09): only trigger the automatic one-time sync when the mapping
+      // actually changed to a real, non-blank value - re-saving the same value or clearing it to
+      // blank has nothing new to sync. A sync failure here is NOT a mapping failure (the mapping
+      // was already saved above), so it only ever shows a soft, non-blocking note.
+      if (newValue && newValue !== previousValue){
+        try {
+          const syncOneBuildingNow = httpsCallable(functions, 'syncOneBuildingNow', { timeout: 120000 });
+          await syncOneBuildingNow({ buildingId });
+        } catch (syncErr){
+          console.error('Automatic first sync failed after saving Bintracker mapping:', syncErr);
+          bintrackerAutoSyncNoteForBuildingId = buildingId;
+          bintrackerAutoSyncNoteText = 'Mapping saved, but the first sync didn\'t go through - it\'ll pick up at the next scheduled run.';
+          refreshBuildingsView();
+          setTimeout(() => {
+            if (bintrackerAutoSyncNoteForBuildingId === buildingId){
+              bintrackerAutoSyncNoteForBuildingId = null;
+              refreshBuildingsView();
+            }
+          }, 6000);
+        }
+      }
     } catch (err){
       console.error('Failed to save Bintracker mapping:', err);
       await showAlert('Failed to save - check the console for details.');
@@ -2425,6 +2469,7 @@ if (auth){
       document.getElementById('buildingSearchInput').value = '';
       justSavedManagersForBuildingId = null;
       justSavedBintrackerMappingForBuildingId = null;
+      bintrackerAutoSyncNoteForBuildingId = null;
       bintrackerRowsByBuildingId.clear();
       bintrackerMatchesByBuildingId.clear();
       bintrackerLoadedForBuildingId.clear();

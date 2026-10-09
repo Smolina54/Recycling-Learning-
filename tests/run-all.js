@@ -61,6 +61,7 @@ const SUITES = [
   { name: 'test:functions-bintrackersync', file: 'functions-bintrackersync.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
   { name: 'test:admin-buildings-bintrackersync', file: 'admin-buildings-bintrackersync.test.js' },
   { name: 'test:functions-scheduledbintrackerrefresh', file: 'functions-scheduledbintrackerrefresh.test.js' },
+  { name: 'test:functions-synconebuilding', file: 'functions-synconebuilding.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
 ];
 
 async function main(){

@@ -115,6 +115,20 @@ async function withRulesDisabled(fn) {
   await testEnv.cleanup();
 }
 
+async function readBintrackerBuildingNameByName(buildingName){
+  const testEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  let value;
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const snap = await getDocs(query(collection(context.firestore(), 'buildings'), where('name', '==', buildingName)));
+    value = snap.docs[0].data().bintrackerBuildingName;
+  });
+  await testEnv.cleanup();
+  return value;
+}
+
 async function readTenantsForBuilding(buildingId){
   const testEnv = await initializeTestEnvironment({
     projectId: 'esg-1-98f35',
@@ -167,11 +181,14 @@ async function main(){
   // same reasoning as admin-buildings-bintracker.test.js's own "Refresh Bintracker data" check.
   // "Check for new buildings" is NOT in this list (Workstream 15 Part 4) - it's a plain Firestore
   // read now, expected to succeed for real, so an error from it here would be a genuine bug.
+  // syncOneBuildingNow (Workstream 21) fires automatically after "Add this building" succeeds in
+  // this test's own flow above - also unreachable here, same graceful-failure reasoning.
   const unexpectedErrors = consoleErrors.filter(e =>
     !e.includes('Failed to load resource') && !e.includes('400')
     && !e.includes('syncBintrackerTenants') && !e.includes('deleteTenantPermanently')
     && !e.includes('CORS policy')
-    && !e.includes('Failed to synchronize Bintracker tenants') && !e.includes('Failed to permanently delete tenant'));
+    && !e.includes('Failed to synchronize Bintracker tenants') && !e.includes('Failed to permanently delete tenant')
+    && !e.includes('Automatic first sync failed'));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
   await browser.close();
@@ -220,6 +237,46 @@ async function runFlow(page){
     },
     { timeout: 8000 }, unmappedBuildingName, mappedBuildingName
   );
+
+  // --- Workstream 21 (2026-10-09): saving a NEW Bintracker mapping value automatically triggers
+  // a one-time sync, visible as a soft, non-blocking note (no Functions emulator in this suite, so
+  // the call fails gracefully - same reasoning as every other Cloud Function check in this file).
+  // Re-saving the SAME value, or clearing it to blank, must NOT trigger the sync again. ---
+  let unmappedRow = await findRowByName(page, '#buildingsList .building-row', unmappedBuildingName);
+  await unmappedRow.$eval('.building-toggle-btn', el => el.click());
+  await page.waitForSelector('#buildingsList .bintracker-mapping-input', { timeout: 8000 });
+
+  await page.evaluate(() => {
+    document.querySelector('#buildingsList .bintracker-mapping-input').value = 'Fresh Mapping Name';
+  });
+  await page.click('#buildingsList .save-bintracker-mapping-btn');
+  await page.waitForSelector('#buildingsList .bintracker-auto-sync-note', { timeout: 8000 });
+  const firstSaveNote = await page.$eval('#buildingsList .bintracker-auto-sync-note', el => el.textContent);
+  check('saving a NEW, non-blank Bintracker mapping triggers the automatic sync, which fails gracefully with a soft note',
+    firstSaveNote.includes('first sync didn\'t go through'), firstSaveNote);
+
+  const mappingAfterFirstSave = await readBintrackerBuildingNameByName(unmappedBuildingName);
+  check('the mapping itself was saved regardless of the sync failure', mappingAfterFirstSave === 'Fresh Mapping Name', mappingAfterFirstSave);
+
+  // admin-buildings.html uses <script type="module">, so its own bintrackerAutoSyncNoteForBuildingId/
+  // refreshBuildingsView are module-scoped, not reachable from page.evaluate()'s global context (the
+  // same well-known pitfall already hit elsewhere in this project) - wait out the note's real 6s
+  // auto-clear instead of reaching in to clear it directly, so the next check starts from a clean slate.
+  await page.waitForFunction(() => !document.querySelector('#buildingsList .bintracker-auto-sync-note'), { timeout: 8000 });
+
+  unmappedRow = await findRowByName(page, '#buildingsList .building-row', unmappedBuildingName);
+  await page.click('#buildingsList .save-bintracker-mapping-btn'); // same value already in the input - unchanged
+  await new Promise(r => setTimeout(r, 1500));
+  check('re-saving the SAME mapping value does not re-trigger the automatic sync',
+    !(await page.evaluate(() => Boolean(document.querySelector('#buildingsList .bintracker-auto-sync-note')))));
+
+  await page.evaluate(() => { document.querySelector('#buildingsList .bintracker-mapping-input').value = ''; });
+  await page.click('#buildingsList .save-bintracker-mapping-btn');
+  await new Promise(r => setTimeout(r, 1500));
+  check('clearing the mapping to blank does not trigger the automatic sync either',
+    !(await page.evaluate(() => Boolean(document.querySelector('#buildingsList .bintracker-auto-sync-note')))));
+  const mappingAfterClear = await readBintrackerBuildingNameByName(unmappedBuildingName);
+  check('the mapping was actually cleared to blank', mappingAfterClear === '', JSON.stringify(mappingAfterClear));
 
   // --- Switch to the Bintracker Sync tab ---
   await page.click('#tabBintrackerSyncBtn');
