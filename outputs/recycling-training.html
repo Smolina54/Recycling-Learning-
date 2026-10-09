@@ -98,7 +98,11 @@
      swatch sitting next to a plain native checkbox — two competing colored shapes per row read as
      cluttered; one colored control per row reads as organized. Each checkbox sets its own
      --stream-color custom property inline (see markup) so this one CSS rule serves all 5. */
-  .bin-access-options{display:flex; flex-wrap:wrap; gap:12px 20px; margin-top:4px;}
+  /* Grid, not flex-wrap: flex-wrap flows items left-to-right and wraps based on available width,
+     which never produces a clean 2-column alignment (confirmed visually - Mixed Recycling/Organics
+     sat slightly off from General Waste/Paper & Cardboard above them). A real 2-column grid lines
+     every row up exactly, regardless of each label's own text width. */
+  .bin-access-options{display:grid; grid-template-columns:1fr 1fr; gap:12px 20px; margin-top:4px;}
   .bin-access-option{display:flex; align-items:center; gap:10px; font-family:var(--body); font-size:14px; color:var(--ink); cursor:pointer;}
   /* ".id-field input" above (class+element = higher specificity than a single class) was winning
      over a bare ".bin-access-checkbox" rule for width/padding/border/background, collapsing this
