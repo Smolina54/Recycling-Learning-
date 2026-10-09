@@ -91,12 +91,30 @@
     background:var(--paper); border-radius:var(--radius); color:var(--ink); width:100%;
   }
   .id-field input:focus-visible, .id-field select:focus-visible{outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);}
-  /* Workstream 16 (2026-10-09): color-coded per stream, reusing the same --{stream}/--{stream}-tint
-     tokens the pre-game stream tabs already use for their own swatches, so this question speaks
-     the same color language as the rest of the app. */
-  .bin-access-options{display:flex; flex-wrap:wrap; gap:10px 18px; margin-top:4px;}
-  .bin-access-option{display:flex; align-items:center; gap:8px; font-family:var(--body); font-size:14px; color:var(--ink); cursor:pointer;}
-  .bin-access-swatch{width:18px; height:18px; border-radius:50%; flex-shrink:0;}
+  /* Workstream 16 (2026-10-09): color-coded per stream, reusing the same --{stream} tokens the
+     pre-game stream tabs already use, so this question speaks the same color language as the
+     rest of the app. Revised (2026-10-09, per feedback): the checkbox itself carries the color
+     (border when empty, filled with a checkmark once checked) instead of a separate circular
+     swatch sitting next to a plain native checkbox — two competing colored shapes per row read as
+     cluttered; one colored control per row reads as organized. Each checkbox sets its own
+     --stream-color custom property inline (see markup) so this one CSS rule serves all 5. */
+  .bin-access-options{display:flex; flex-wrap:wrap; gap:12px 20px; margin-top:4px;}
+  .bin-access-option{display:flex; align-items:center; gap:10px; font-family:var(--body); font-size:14px; color:var(--ink); cursor:pointer;}
+  /* ".id-field input" above (class+element = higher specificity than a single class) was winning
+     over a bare ".bin-access-checkbox" rule for width/padding/border/background, collapsing this
+     into a giant full-width box instead of a small square - ".id-field input.bin-access-checkbox"
+     matches that same specificity shape (class+element+class) so this rule reliably wins instead. */
+  .id-field input.bin-access-checkbox{
+    appearance:none; -webkit-appearance:none; margin:0; flex-shrink:0;
+    width:22px; height:22px; padding:0; border:2px solid var(--stream-color); border-radius:var(--radius);
+    background:var(--paper); cursor:pointer;
+    background-repeat:no-repeat; background-position:center; background-size:13px 13px;
+  }
+  .id-field input.bin-access-checkbox:checked{
+    background-color:var(--stream-color);
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.5l3.5 3.5L13 4.5'/%3E%3C/svg%3E");
+  }
+  .id-field input.bin-access-checkbox:focus-visible{outline:3px solid var(--forest); outline-offset:2px;}
   .id-form .btn{width:100%; justify-content:center; margin-top:10px;}
 
   /* ---------- Top bar ---------- */
@@ -529,28 +547,23 @@
         <span>Which bins do you have access to on your level?</span>
         <div class="bin-access-options">
           <label class="bin-access-option">
-            <input type="checkbox" class="bin-access-checkbox" value="gw">
-            <span class="bin-access-swatch" style="background:var(--gw-tint); border:2px solid var(--gw);"></span>
+            <input type="checkbox" class="bin-access-checkbox" value="gw" style="--stream-color:var(--gw);">
             General Waste
           </label>
           <label class="bin-access-option">
-            <input type="checkbox" class="bin-access-checkbox" value="mr">
-            <span class="bin-access-swatch" style="background:var(--mr-tint); border:2px solid var(--mr);"></span>
+            <input type="checkbox" class="bin-access-checkbox" value="mr" style="--stream-color:var(--mr);">
             Mixed Recycling
           </label>
           <label class="bin-access-option">
-            <input type="checkbox" class="bin-access-checkbox" value="pc">
-            <span class="bin-access-swatch" style="background:var(--pc-tint); border:2px solid var(--pc);"></span>
+            <input type="checkbox" class="bin-access-checkbox" value="pc" style="--stream-color:var(--pc);">
             Paper &amp; Cardboard
           </label>
           <label class="bin-access-option">
-            <input type="checkbox" class="bin-access-checkbox" value="og">
-            <span class="bin-access-swatch" style="background:var(--og-tint); border:2px solid var(--og);"></span>
+            <input type="checkbox" class="bin-access-checkbox" value="og" style="--stream-color:var(--og);">
             Organics
           </label>
           <label class="bin-access-option">
-            <input type="checkbox" class="bin-access-checkbox" value="ew">
-            <span class="bin-access-swatch" style="background:var(--ew-tint); border:2px solid var(--ew);"></span>
+            <input type="checkbox" class="bin-access-checkbox" value="ew" style="--stream-color:var(--ew);">
             E-Waste
           </label>
         </div>
