@@ -36,7 +36,7 @@ const SUITES = [
   { name: 'test:preview', file: 'preview-mode.test.js' },
   { name: 'test:report', file: 'report-ui.test.js' },
   { name: 'test:admin', file: 'admin-buildings.test.js' },
-  { name: 'test:admin-admins', file: 'admin-admins.test.js' },
+  { name: 'test:admin-admins', file: 'admin-admins.test.js', env: { FUNCTIONS_EMULATOR_PORT: '5003' } },
   { name: 'test:admin-buildings-page', file: 'admin-buildings-page.test.js' },
   { name: 'test:admin-buildings-bintracker', file: 'admin-buildings-bintracker.test.js' },
   { name: 'test:catalog-admin', file: 'admin-catalog.test.js' },

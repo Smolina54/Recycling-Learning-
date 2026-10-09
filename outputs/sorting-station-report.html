@@ -3022,7 +3022,12 @@ try {
   if (isEmulatorMode){
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
     connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-    connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+    // See admin-admins.html's identical comment (2026-10-09): the Functions emulator port is
+    // read from a URL param (defaulting to 5001, unchanged for any normal load) instead of being
+    // hardcoded, so a test running against firebase.local-test.json's port-5003 setup can pass
+    // the real port through - a file:// page can't read the Node-side env var directly.
+    const functionsPort = Number(new URLSearchParams(window.location.search).get('functionsPort')) || 5001;
+    connectFunctionsEmulator(functions, '127.0.0.1', functionsPort);
     // Test-only sign-in hook (no real Google popup against the emulator) — never runs
     // outside ?emulator=1, so it never exists on the real deployed page.
     window.__testSignIn = async (email, password) => {

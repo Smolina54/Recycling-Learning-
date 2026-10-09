@@ -951,7 +951,12 @@ try {
   // used only by the automated tests in tests/, so they never write real test data live.
   if (isEmulatorMode){
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
-    connectFunctionsEmulator(functionsInstance, '127.0.0.1', 5001);
+    // See admin-admins.html's identical comment (2026-10-09): the Functions emulator port is
+    // read from a URL param (defaulting to 5001, unchanged for any normal load) instead of being
+    // hardcoded, so a test running against firebase.local-test.json's port-5003 setup can pass
+    // the real port through - a file:// page can't read the Node-side env var directly.
+    const functionsPort = Number(new URLSearchParams(window.location.search).get('functionsPort')) || 5001;
+    connectFunctionsEmulator(functionsInstance, '127.0.0.1', functionsPort);
   }
 } catch (err) {
   console.error('Firebase is not configured yet - the id-gate will show a fallback message until firebaseConfig is filled in.', err);

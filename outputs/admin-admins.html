@@ -232,7 +232,15 @@ try {
   if (isEmulatorMode){
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
     connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-    connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+    // Found 2026-10-09: a Puppeteer test driving this page's own Functions callable (the only
+    // browser-driven caller in this app) kept timing out under npm run test:all, which runs
+    // against firebase.local-test.json's Functions emulator on port 5003 (avoids colliding with
+    // an unrelated dev server on 5001) - this page had 5001 hardcoded, so its calls silently went
+    // nowhere. A file:// page can't read the Node-side FUNCTIONS_EMULATOR_PORT env var directly,
+    // so the port is instead passed as a URL param (same idea as ?emulator=1), defaulting to 5001
+    // so nothing changes for a plain emulator=1 load or any test that doesn't pass it.
+    const functionsPort = Number(new URLSearchParams(window.location.search).get('functionsPort')) || 5001;
+    connectFunctionsEmulator(functions, '127.0.0.1', functionsPort);
     window.__testSignIn = async (email, password) => {
       try { await createUserWithEmailAndPassword(auth, email, password); }
       catch (err) { /* user already exists from a previous test run — fine */ }

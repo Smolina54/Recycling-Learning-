@@ -13,7 +13,13 @@ const url = require('url');
 const puppeteer = require('puppeteer-core');
 
 const EDGE_PATH = process.env.TEST_BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const ADMINS_URL = `${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'admin-admins.html')).href}?emulator=1`;
+// Found 2026-10-09: this page is the only one in the app that calls a Functions callable
+// (provisionUserAccount) directly from the browser, and it used to hardcode port 5001 - silently
+// wrong under npm run test:all, which runs against firebase.local-test.json's port-5003 Functions
+// emulator (to dodge an unrelated dev server on 5001). Passed through as a URL param since a
+// file:// page can't read this env var itself; see admin-admins.html's own comment.
+const FUNCTIONS_PORT = Number(process.env.FUNCTIONS_EMULATOR_PORT || 5001);
+const ADMINS_URL = `${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 'admin-admins.html')).href}?emulator=1&functionsPort=${FUNCTIONS_PORT}`;
 const REPORT_PATH = path.join(__dirname, '..', 'outputs', 'sorting-station-report.html');
 const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
 
