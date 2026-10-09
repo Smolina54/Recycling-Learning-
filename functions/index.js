@@ -679,6 +679,39 @@ exports.deleteBuildingPermanently = onCall({ timeoutSeconds: 300, maxInstances: 
     throw new HttpsError('failed-precondition', 'Typed name does not match. Nothing was deleted.');
   }
 
+  // Workstream 20 (2026-10-09): a permanently-deleted building's Bintracker name should reappear
+  // in "Check for new buildings" INSTANTLY, not after waiting for the next nightly/forced sync -
+  // read this building's own bintrackerRows ONE LAST TIME, right before they're deleted below, to
+  // derive its name + real candidate tenants and push them into the discovery doc immediately.
+  // Considered and rejected: keeping bintrackerRows/bintrackerTenantMatches around after a
+  // permanent delete instead - they'd be orphaned (keyed to this now-deleted building's id, which
+  // nothing will ever query again) with no functional benefit, since a re-added building gets a
+  // brand-new id and its very next sync re-fetches everything fresh from Bintracker regardless.
+  // This read-then-inject approach gets the same outcome (instant rediscoverability) with zero
+  // orphaned data and zero new retention/cleanup machinery.
+  const db = admin.firestore();
+  if (building.bintrackerBuildingName) {
+    const ownRowsSnap = await db.collection('bintrackerRows').where('buildingId', '==', buildingId).get();
+    const rawRowsForDiscovery = ownRowsSnap.docs.map((d) => {
+      const data = d.data();
+      return { tenant: data.bintrackerTenantRaw, primaryLocation: data.bintrackerLocationRaw };
+    });
+    const { newTenants: candidateTenants } = diffBintrackerTenants(rawRowsForDiscovery, []);
+    const normBuildingName = normalizeForMatching(building.bintrackerBuildingName);
+    await db.runTransaction(async (tx) => {
+      const discoveryRef = db.doc('discovery/bintrackerBuildings');
+      const discoverySnap = await tx.get(discoveryRef);
+      const existingDiscovered = (discoverySnap.exists && discoverySnap.data().discoveredBuildings) || [];
+      const alreadyThere = existingDiscovered.some((d) => normalizeForMatching(d.name) === normBuildingName);
+      if (!alreadyThere) {
+        tx.set(discoveryRef, {
+          discoveredBuildings: [...existingDiscovered, { name: building.bintrackerBuildingName, tenants: candidateTenants }],
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    });
+  }
+
   // Children before the parent building doc — if this crashes partway through, the building doc
   // (and whatever's already deleted) is a safely retriable state: nothing is left orphaned under
   // a vanished building, since the building itself is only removed once every child is gone.

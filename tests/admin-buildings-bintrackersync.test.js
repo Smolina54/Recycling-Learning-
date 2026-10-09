@@ -337,6 +337,64 @@ async function runFlow(page){
   check('the new building is NOT auto-enrolled in anything, same as a plain "+ Add building"',
     enrollmentCount === 0, enrollmentCount);
 
+  // --- Workstream 17 (2026-10-09): re-filter against the live buildingsCache, so a building
+  // mapped since the discovery doc was last computed never lingers in "Check for new buildings" -
+  // seed a stale discovery doc that (incorrectly, as if computed before the mapping happened)
+  // still lists the already-mapped `mappedBuildingName`'s own Bintracker name as "new". ---
+  await withRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'discovery', 'bintrackerBuildings'), {
+      discoveredBuildings: [
+        { name: 'Bintracker Sync Test Tower', tenants: [] }, // already mapped to mappedBuildingId - must be filtered out
+        { name: 'Genuinely New Tower', tenants: [] },
+      ],
+      updatedAt: new Date(),
+    });
+  });
+  await page.click('#discoverBuildingsBtn');
+  await page.waitForFunction(
+    () => document.getElementById('discoverBuildingsStatus').textContent.includes('Found'),
+    { timeout: 8000 }
+  );
+  const staleFilterStatus = await page.$eval('#discoverBuildingsStatus', el => el.textContent);
+  check('an already-mapped building\'s name is filtered OUT of "Check for new buildings", even from a stale stored doc',
+    staleFilterStatus.includes('Found 1 building name not yet mapped')
+    && !(await page.$eval('#discoveredBuildingsList', el => el.textContent)).includes('Bintracker Sync Test Tower'),
+    staleFilterStatus);
+  check('...while the genuinely-new entry in that same stale doc still appears',
+    (await page.$eval('#discoveredBuildingsList', el => el.textContent)).includes('Genuinely New Tower'));
+
+  // --- Defensive duplicate-creation guard: even if some other path let an already-mapped name
+  // reach the "Add this building" button (bypassing the filter above), it must still refuse rather
+  // than silently create a second building for the same real Bintracker building. Simulated by
+  // injecting a matching entry directly into the page's own in-memory discoveredBuildings/render,
+  // since the real UI path (correctly) never shows this button for an already-filtered name. ---
+  const alertCountBeforeDuplicateGuard = await page.evaluate(() => window.__alertCalls.length);
+  await page.evaluate((existingBintrackerName) => {
+    window.__testInjectDiscoveredBuilding({ name: existingBintrackerName, tenants: [] });
+  }, 'Bintracker Sync Test Tower');
+  let duplicateRow = await findDiscoveredBuildingRow(page, 'Bintracker Sync Test Tower');
+  await duplicateRow.$eval('.building-toggle-btn', el => el.click());
+  await page.waitForSelector('#discoveredBuildingsList .add-discovered-building-btn', { timeout: 8000 });
+  duplicateRow = await findDiscoveredBuildingRow(page, 'Bintracker Sync Test Tower');
+  await duplicateRow.$eval('.add-discovered-building-btn', el => el.click());
+  await page.waitForFunction((n) => window.__alertCalls.length > n, { timeout: 8000 }, alertCountBeforeDuplicateGuard);
+  const duplicateGuardAlert = await page.evaluate((n) => window.__alertCalls[n], alertCountBeforeDuplicateGuard);
+  check('"Add this building" refuses a name already mapped to an existing building, naming it in the alert',
+    duplicateGuardAlert.includes(mappedBuildingName) && duplicateGuardAlert.toLowerCase().includes('duplicate'),
+    duplicateGuardAlert);
+
+  const duplicateCheckEnv = await initializeTestEnvironment({
+    projectId: 'esg-1-98f35',
+    firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
+  });
+  let buildingsWithThatMapping = 0;
+  await duplicateCheckEnv.withSecurityRulesDisabled(async (context) => {
+    buildingsWithThatMapping = (await getDocs(query(collection(context.firestore(), 'buildings'),
+      where('bintrackerBuildingName', '==', 'Bintracker Sync Test Tower')))).size;
+  });
+  await duplicateCheckEnv.cleanup();
+  check('...and no second building doc was actually created for that Bintracker name', buildingsWithThatMapping === 1, buildingsWithThatMapping);
+
   // --- Clicking "Synchronise" with no reachable Cloud Function also fails gracefully ---
   let mappedRow = await findRowByName(page, '#bintrackerSyncBuildingsList .building-row', mappedBuildingName);
   const alertCountBeforeSync = await page.evaluate(() => window.__alertCalls.length);

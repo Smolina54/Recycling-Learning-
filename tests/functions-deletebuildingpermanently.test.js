@@ -171,6 +171,87 @@ async function main() {
   const otherSubsAfter = await collectionCountForBuilding(otherAdmin.db, 'submissions', OTHER_BUILDING_ID);
   check('an unrelated building\'s data survives untouched', otherSubsAfter === 1, String(otherSubsAfter));
 
+  // --- Workstream 20: a permanently-deleted building's Bintracker name should reappear in
+  // "Check for new buildings" INSTANTLY, via the discovery-doc injection step ---
+
+  // Case 1: building with bintrackerBuildingName + real bintrackerRows
+  const DISCOVERY_BUILDING_ID = 'discovery-tower-' + Date.now();
+  await withRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'buildings', DISCOVERY_BUILDING_ID), {
+      name: 'Discovery Tower', active: false, bintrackerBuildingName: 'Discovery Tower (Bintracker)',
+    });
+    await setDoc(doc(db, 'bintrackerRows', `${DISCOVERY_BUILDING_ID}-row-1`), {
+      buildingId: DISCOVERY_BUILDING_ID, bintrackerTenantRaw: 'Acme Co', bintrackerLocationRaw: 'Level 5',
+    });
+    await setDoc(doc(db, 'bintrackerRows', `${DISCOVERY_BUILDING_ID}-row-2`), {
+      buildingId: DISCOVERY_BUILDING_ID, bintrackerTenantRaw: 'Acme Co', bintrackerLocationRaw: 'Level 6',
+    });
+    await setDoc(doc(db, 'discovery', 'bintrackerBuildings'), { discoveredBuildings: [] });
+  });
+  const discoveryResult = await callDelete(otherAdmin.functions, { buildingId: DISCOVERY_BUILDING_ID, confirmName: 'Discovery Tower' });
+  check('building with real bintrackerRows deletes successfully', discoveryResult.ok, JSON.stringify(discoveryResult));
+  const discoveryDocAfter1 = await getDoc(doc(otherAdmin.db, 'discovery', 'bintrackerBuildings'));
+  const discoveredList1 = (discoveryDocAfter1.exists() && discoveryDocAfter1.data().discoveredBuildings) || [];
+  const injectedEntry1 = discoveredList1.find((d) => d.name === 'Discovery Tower (Bintracker)');
+  check('the deleted building\'s Bintracker name was injected into the discovery doc', Boolean(injectedEntry1), JSON.stringify(discoveredList1));
+  check('the injected entry carries the real candidate tenant derived from its own bintrackerRows',
+    Boolean(injectedEntry1) && injectedEntry1.tenants.length === 1 && injectedEntry1.tenants[0].bintrackerTenantRaw === 'Acme Co'
+      && [...injectedEntry1.tenants[0].primaryLocations].sort().join(',') === 'Level 5,Level 6',
+    JSON.stringify(injectedEntry1));
+  const discoveryRowsAfter = await collectionCountForBuilding(otherAdmin.db, 'bintrackerRows', DISCOVERY_BUILDING_ID);
+  check('bintrackerRows for the deleted building are still fully gone (read-then-delete ordering is correct)', discoveryRowsAfter === 0, String(discoveryRowsAfter));
+
+  // Case 2: building with bintrackerBuildingName but ZERO bintrackerRows (mapped, never synced)
+  const NO_ROWS_BUILDING_ID = 'norows-tower-' + Date.now();
+  await withRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'buildings', NO_ROWS_BUILDING_ID), {
+      name: 'No Rows Tower', active: false, bintrackerBuildingName: 'No Rows Tower (Bintracker)',
+    });
+  });
+  const noRowsResult = await callDelete(otherAdmin.functions, { buildingId: NO_ROWS_BUILDING_ID, confirmName: 'No Rows Tower' });
+  check('building with zero bintrackerRows deletes successfully', noRowsResult.ok, JSON.stringify(noRowsResult));
+  const discoveryDocAfter2 = await getDoc(doc(otherAdmin.db, 'discovery', 'bintrackerBuildings'));
+  const discoveredList2 = (discoveryDocAfter2.exists() && discoveryDocAfter2.data().discoveredBuildings) || [];
+  const injectedEntry2 = discoveredList2.find((d) => d.name === 'No Rows Tower (Bintracker)');
+  check('a mapped-but-never-synced building still gets a discovery entry, with an empty tenants array',
+    Boolean(injectedEntry2) && Array.isArray(injectedEntry2.tenants) && injectedEntry2.tenants.length === 0,
+    JSON.stringify(injectedEntry2));
+
+  // Case 3: building with NO bintrackerBuildingName at all - discovery doc must be untouched
+  const UNMAPPED_BUILDING_ID = 'unmapped-tower-' + Date.now();
+  await seedBuildingData(UNMAPPED_BUILDING_ID, 'Unmapped Tower', { active: false, submissionCount: 1, attemptCount: 1 });
+  const discoveredCountBeforeCase3 = discoveredList2.length;
+  const unmappedResult = await callDelete(otherAdmin.functions, { buildingId: UNMAPPED_BUILDING_ID, confirmName: 'Unmapped Tower' });
+  check('building with no bintrackerBuildingName deletes successfully', unmappedResult.ok, JSON.stringify(unmappedResult));
+  const discoveryDocAfter3 = await getDoc(doc(otherAdmin.db, 'discovery', 'bintrackerBuildings'));
+  const discoveredList3 = (discoveryDocAfter3.exists() && discoveryDocAfter3.data().discoveredBuildings) || [];
+  check('discovery doc is untouched when the deleted building has no Bintracker mapping',
+    discoveredList3.length === discoveredCountBeforeCase3, JSON.stringify({ before: discoveredCountBeforeCase3, after: discoveredList3.length }));
+
+  // Case 4: building whose Bintracker name is ALREADY present in the discovery doc (e.g. a
+  // concurrent nightly/forced sync run already added it) - no duplicate entry should be created.
+  const DUPLICATE_BUILDING_ID = 'duplicate-tower-' + Date.now();
+  await withRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'buildings', DUPLICATE_BUILDING_ID), {
+      name: 'Duplicate Tower', active: false, bintrackerBuildingName: 'Already There Co',
+    });
+    const existingDiscoveryDoc = await getDoc(doc(db, 'discovery', 'bintrackerBuildings'));
+    const existingDiscoveredList = (existingDiscoveryDoc.exists() && existingDiscoveryDoc.data().discoveredBuildings) || [];
+    await setDoc(doc(db, 'discovery', 'bintrackerBuildings'), {
+      discoveredBuildings: [...existingDiscoveredList, { name: 'Already There Co', tenants: [] }],
+    });
+  });
+  const duplicateResult = await callDelete(otherAdmin.functions, { buildingId: DUPLICATE_BUILDING_ID, confirmName: 'Duplicate Tower' });
+  check('building whose Bintracker name is already discovered deletes successfully', duplicateResult.ok, JSON.stringify(duplicateResult));
+  const discoveryDocAfter4 = await getDoc(doc(otherAdmin.db, 'discovery', 'bintrackerBuildings'));
+  const discoveredList4 = (discoveryDocAfter4.exists() && discoveryDocAfter4.data().discoveredBuildings) || [];
+  const matchingEntries4 = discoveredList4.filter((d) => d.name === 'Already There Co');
+  check('no duplicate discovery entry is created when the name is already present',
+    matchingEntries4.length === 1, JSON.stringify(matchingEntries4));
+
   // --- Chunking correctness: >400 submissions for one building ---
   const CHUNK_BUILDING_ID = 'chunk-tower-' + Date.now();
   await withRulesDisabled(async (context) => {

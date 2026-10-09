@@ -430,6 +430,16 @@ try {
       });
       renderBintrackerSyncBuildingsList();
     };
+    // Test-only seam (Workstream 17, 2026-10-09): discoveredBuildings is module-scoped (not on
+    // window), so a test can't push into it directly - this lets
+    // tests/admin-buildings-bintrackersync.test.js simulate "a stale/duplicate name reached the
+    // Add-this-building button anyway" (the real scenario fix 5's defensive guard protects
+    // against), which the real discovery-filter correctly makes unreachable through the normal
+    // button click. Only defined under ?emulator=1 - never present in production.
+    window.__testInjectDiscoveredBuilding = (entry) => {
+      discoveredBuildings.push(entry);
+      renderDiscoveredBuildingsList();
+    };
     // Cross-page links (the settings sidebar) are plain hrefs with no query string — without
     // this, clicking one drops out of ?emulator=1 entirely on the next page (real Firebase, no
     // auto sign-in) instead of staying in the local test session.
@@ -1474,7 +1484,15 @@ document.getElementById('discoverBuildingsBtn').addEventListener('click', async 
     // sync already writes this doc every night; this button just reads it.
     const snap = await getDoc(doc(db, 'discovery', 'bintrackerBuildings'));
     const data = snap.exists() ? snap.data() : null;
-    discoveredBuildings = (data && data.discoveredBuildings) || [];
+    const storedDiscovered = (data && data.discoveredBuildings) || [];
+    // Workstream 17 (2026-10-09): the stored doc only gets recomputed once per nightly/forced
+    // sync run - it does NOT know about a building mapped since then (via "Add this building" or
+    // by typing a Bintracker name directly into an existing building). Re-filter against the
+    // page's own live buildingsCache every time this renders, so a name that's already mapped
+    // never lingers in this list (and is never click-able to "Add" again, which used to be able
+    // to create a real duplicate building for the same real Bintracker building).
+    const mappedNormSet = new Set(buildingsCache.map(b => normalizeForMatching(b.bintrackerBuildingName)).filter(Boolean));
+    discoveredBuildings = storedDiscovered.filter(d => !mappedNormSet.has(normalizeForMatching(d.name)));
     const asOf = data && data.updatedAt ? ` (as of ${data.updatedAt.toDate().toLocaleString()})` : '';
     status.textContent = discoveredBuildings.length
       ? `Found ${discoveredBuildings.length} building name${discoveredBuildings.length === 1 ? '' : 's'} not yet mapped${asOf}.`
@@ -1510,6 +1528,17 @@ document.getElementById('discoveredBuildingsList').addEventListener('click', asy
     const bintrackerName = row.dataset.bintrackerName;
     const b = discoveredBuildings.find(x => x.name === bintrackerName);
     if (!b || addDiscoveredBuildingInFlight) return;
+    // Workstream 17 (2026-10-09): defensive duplicate guard, independent of the discovered-list
+    // filter above - checks both active and archived buildings (an archived one can still hold a
+    // real bintrackerBuildingName) so this real Bintracker building can never be added twice, even
+    // if some other path let a stale/duplicate name reach this button.
+    const normBintrackerName = normalizeForMatching(bintrackerName);
+    const existingDuplicate = [...buildingsCache, ...archivedBuildingsCache]
+      .find(existing => normalizeForMatching(existing.bintrackerBuildingName) === normBintrackerName);
+    if (existingDuplicate){
+      await showAlert(`Can't add this building - "${existingDuplicate.name}" is already mapped to this exact Bintracker name. Adding another would create a duplicate.`);
+      return;
+    }
     const displayName = (row.querySelector('.discovered-building-name-input').value || '').trim() || bintrackerName;
     const checkedIndices = [...row.querySelectorAll('.discovered-tenant-checkbox:checked')].map(cb => Number(cb.dataset.tenantIndex));
     addDiscoveredBuildingInFlight = bintrackerName;
