@@ -216,12 +216,67 @@ async function runFlow(page, seedEnv){
   check('game stage visible after clicking Begin the sort',
     await page.$eval('#gameStage', el => getComputedStyle(el).display !== 'none'));
 
+  // Workstream 22 (2026-10-09): the board must lay out as a fixed 2 rows of 5 on desktop (not a
+  // variable column count that depends on viewport width), and must never reflow when an item is
+  // correctly collected (the old behavior removed the card from the DOM, which made CSS Grid
+  // auto-placement shift every remaining item - a real complaint: it forced trainees to re-scan
+  // the whole board after every correct drop).
+  const gridColumnCount = await page.$eval('#itemBoard', el =>
+    getComputedStyle(el).gridTemplateColumns.trim().split(/\s+/).length);
+  check('item board renders exactly 5 grid columns on desktop', gridColumnCount === 5, gridColumnCount);
+
+  // Positions are captured RELATIVE to the board container, not the page - the board's own
+  // absolute page position can legitimately shift as feedback messages appear/grow elsewhere on
+  // the page during play, which has nothing to do with whether items reflow WITHIN the grid.
+  const initialPositions = await page.$$eval('#itemBoard .board-item', els => {
+    const boardRect = els[0].closest('#itemBoard').getBoundingClientRect();
+    return els.map(el => {
+      const r = el.getBoundingClientRect();
+      return { id: el.dataset.id, top: r.top - boardRect.top, left: r.left - boardRect.left };
+    });
+  });
+  const rowTops = [...new Set(initialPositions.map(p => Math.round(p.top)))];
+  check('phase 0\'s 10 items render as exactly 2 rows', rowTops.length === 2, JSON.stringify(rowTops));
+  check('...with 5 items per row', initialPositions.length === 10 &&
+    rowTops.every(top => initialPositions.filter(p => Math.round(p.top) === top).length === 5),
+    JSON.stringify(initialPositions.map(p => Math.round(p.top))));
+
   // Phase 0: press every card (not just until 5/5) so both outcomes are exercised,
   // then check the new "collected tray" + "wrong items stay on the board" behavior
   // before moving on.
   await resolveAllBoardItems(page);
   const collectedCount = await page.$$eval('#binCollected .collected-icon', els => els.length);
   check('collected tray shows 5 mini-icons for the 5 correctly-sorted items', collectedCount === 5, collectedCount);
+
+  // The 5 correctly-collected items must still exist in the DOM (hidden, not removed), and every
+  // item that was NOT collected (the resolved-wrong ones still on the board) must be at the exact
+  // same position it started at - proving collecting an item never reflows the rest of the board.
+  const collectedCards = await page.$$eval('#itemBoard .board-item.collected', els =>
+    els.map(el => ({ id: el.dataset.id, pointerEvents: getComputedStyle(el).pointerEvents, opacity: parseFloat(getComputedStyle(el).opacity) })));
+  check('exactly 5 collected cards remain in the DOM (hidden, not removed)', collectedCards.length === 5, collectedCards.length);
+  check('every collected card is non-interactive (pointer-events:none) and invisible (opacity 0)',
+    collectedCards.every(c => c.pointerEvents === 'none' && c.opacity === 0), JSON.stringify(collectedCards));
+
+  const positionsAfterCollecting = await page.$$eval('#itemBoard .board-item:not(.collected)', els => {
+    const boardRect = els[0].closest('#itemBoard').getBoundingClientRect();
+    return els.map(el => {
+      const r = el.getBoundingClientRect();
+      return { id: el.dataset.id, top: r.top - boardRect.top, left: r.left - boardRect.left };
+    });
+  });
+  // Compare by grid CELL (row-rank + exact left/column), not raw pixel "top" - a wrongly-dropped
+  // item's reveal-badge legitimately makes its own row a little taller once resolved-wrong, which
+  // nudges every row below it down by a few pixels (unrelated to this fix - it already happened
+  // before this change too, for items that stayed on the board). What must never happen is an
+  // item moving to a DIFFERENT column (left) or jumping to a different row relative to the others.
+  const rowRank = (positions, top) => [...new Set(positions.map(p => Math.round(p.top)))].sort((a, b) => a - b).indexOf(Math.round(top));
+  const stillInPlace = positionsAfterCollecting.every(after => {
+    const before = initialPositions.find(p => p.id === after.id);
+    return before && Math.round(before.left) === Math.round(after.left)
+      && rowRank(initialPositions, before.top) === rowRank(positionsAfterCollecting, after.top);
+  });
+  check('every still-on-the-board item keeps its original column and relative row (collecting others never reflowed the board)',
+    stillInPlace, JSON.stringify({ before: initialPositions, after: positionsAfterCollecting }));
 
   const resolvedWrongCount = await page.$$eval('.board-item.resolved-wrong', els => els.length);
   check('at least one wrongly-dropped item stays on the board (does not disappear)', resolvedWrongCount > 0, resolvedWrongCount);

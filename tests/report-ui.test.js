@@ -26,9 +26,23 @@ async function main(){
   page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
   page.on('pageerror', (err) => consoleErrors.push('pageerror: ' + err.message));
 
-  await page.goto(REPORT_URL, { waitUntil: 'networkidle0' });
+  await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded' });
 
-  check('sign-in button visible on load',
+  // Workstream 19 (2026-10-09): this page used to show the sign-in button immediately, visible
+  // from the very first paint, with no "Loading…" placeholder - a real, visible login-form flash
+  // for the brief window before Firebase Auth's own onAuthStateChanged first fires (the same gap
+  // every other admin page in this app already closed). Catch the pre-auth state before it
+  // resolves, then confirm it correctly settles into "signed out" afterward.
+  check('shows "Loading…" (not the sign-in form) before auth state resolves',
+    await page.$eval('#authStatus', el => el.textContent.trim()) === 'Loading…'
+      && await page.$eval('#signInBtn', el => getComputedStyle(el).display === 'none')
+      && await page.$eval('#showEmailSignInBtn', el => getComputedStyle(el).display === 'none'));
+
+  await page.waitForFunction(
+    () => document.getElementById('signInBtn') && getComputedStyle(document.getElementById('signInBtn')).display !== 'none',
+    { timeout: 8000 }
+  );
+  check('sign-in button visible once signed-out state resolves',
     await page.$eval('#signInBtn', el => getComputedStyle(el).display !== 'none'));
   check('report section hidden before any data is loaded',
     await page.$eval('#reportSection', el => getComputedStyle(el).display === 'none'));
