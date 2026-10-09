@@ -135,6 +135,10 @@ async function passIdGate(page, email, gameUrl, tenantId){
   await page.select('#idTenant', tenantId);
   await new Promise(r => setTimeout(r, 200));
   await page.select('#idLevel', 'Level 1');
+  // Workstream 16 (2026-10-09): the "Which bins do you have access to on your level?" question is
+  // now mandatory - this suite isn't testing that specific feature, so just check one box to clear
+  // the gate (see tests/game-regression.test.js for the dedicated validation/persistence coverage).
+  await page.click('.bin-access-checkbox[value="gw"]');
   await page.click('#idForm button[type=submit]');
   await new Promise(r => setTimeout(r, 300));
 }

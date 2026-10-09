@@ -24,6 +24,8 @@ const REPORT_URL = `${url.pathToFileURL(path.join(__dirname, '..', 'outputs', 's
 const RULES_PATH = path.join(__dirname, '..', 'firestore.rules');
 const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
 const XSS_PAYLOAD = '<img src=x onerror="window.__xssFired = true">';
+const ARCHIVED_BUILDING_ID = 'workstream18-archived-building';
+const ARCHIVED_BUILDING_NAME = 'Archived Test Tower';
 
 const results = [];
 function check(label, cond, extra){ results.push({label, ok: Boolean(cond), extra: extra || ''}); }
@@ -80,6 +82,31 @@ async function seedMaliciousAttempt(){
       items: { 'pc-box': 0 },
       timestamp: new Date().toISOString(),
     });
+    // Workstream 18 (2026-10-09): a real building doc (active:false) with a real submission
+    // under it — proves loadLiveData() hides an archived building's data from Reports, unlike
+    // every other seeded submission above, which deliberately has NO matching building doc at
+    // all (and must still render normally — see excludeArchivedBuildingRows' own "no meta found
+    // -> keep it" comment in sorting-station-report.html).
+    await setDoc(doc(db, 'buildings', ARCHIVED_BUILDING_ID), { name: ARCHIVED_BUILDING_NAME, active: false });
+    await setDoc(doc(db, 'submissions', 'workstream18-archived-submission'), {
+      buildingId: ARCHIVED_BUILDING_ID, buildingName: ARCHIVED_BUILDING_NAME,
+      tenantId: 'archived-tenant', tenantName: 'Archived Tenant Co',
+      level: 'Level 1', name: 'Archived Trainee', email: 'archived-trainee@example.com',
+      programId: 'recycling-sorting', score: 90, avoided: 18, total: 20,
+      timestamp: new Date().toISOString(),
+    });
+    // Workstream 16 (2026-10-09): the only seeded submission with a real reportedBinAccess value -
+    // every other submission above has none at all (pre-existing data), so the "Reported bin
+    // access" section's percentages must be computed from this ONE submission alone, not diluted
+    // by treating the others as "reported no access."
+    await setDoc(doc(db, 'submissions', 'workstream16-binaccess-submission'), {
+      buildingId: 'binaccess-test-building', buildingName: 'Bin Access Test Tower',
+      tenantId: 'binaccess-tenant', tenantName: 'Bin Access Co',
+      level: 'Level 1', name: 'Bin Access Trainee', email: 'binaccess-trainee@example.com',
+      programId: 'recycling-sorting', score: 85, avoided: 17, total: 20,
+      reportedBinAccess: ['mr', 'pc'],
+      timestamp: new Date().toISOString(),
+    });
   });
   return testEnv; // not cleaned up here — same reasoning as game-regression.test.js
 }
@@ -103,6 +130,8 @@ async function main(){
     await runFlow(page, seedEnv, consoleErrors);
   } catch (err) {
     console.error('CRASHED — dumping diagnostics:', err.message);
+    console.error('--- results so far ---');
+    for (const r of results) console.error(`${r.ok ? 'PASS' : 'FAIL'} — ${r.label}${r.ok ? '' : ' :: ' + r.extra}`);
     await page.screenshot({ path: path.join(__dirname, '..', 'debug-crash.png') }).catch(() => {});
     await browser.close();
     process.exit(1);
@@ -190,6 +219,31 @@ async function runFlow(page, seedEnv, consoleErrors){
       !missedListText.includes('Paper & Cardboard') && !missedListText.includes('→'),
     missedListText.slice(0, 400));
 
+  // --- Workstream 18 (2026-10-09): an archived building's data must not show in Reports at all -
+  // not in Completed, and not as a selectable option in the building filter dropdown. ---
+  check('an archived building\'s submission does not appear in Completed while the building is archived',
+    !completedText.includes(ARCHIVED_BUILDING_NAME), completedText.slice(0, 300));
+  const buildingFilterOptionsWhileArchived = await page.$$eval('#filterBuilding option', els => els.map(el => el.textContent));
+  check('...nor does it appear as an option in the building filter dropdown while archived',
+    !buildingFilterOptionsWhileArchived.includes(ARCHIVED_BUILDING_NAME), buildingFilterOptionsWhileArchived.join(', '));
+
+  // --- Workstream 16 (2026-10-09): "Reported bin access" - only ONE seeded submission has this
+  // field, so its 2 checked bins (mr, pc) must read 100%, and the others (gw/og/ew, and anything
+  // else not reported) must NOT read 100% - proving the other submissions (which have no
+  // reportedBinAccess field at all) were excluded rather than treated as "reported no access"
+  // (which would instead make mr/pc read a diluted fraction, not 100%). ---
+  const binAccessSectionVisible = await page.$eval('#binAccessSection', el => getComputedStyle(el).display !== 'none');
+  check('the "Reported bin access" section is visible once at least one submission has the field', binAccessSectionVisible);
+  const binAccessByLabel = await page.$$eval('#binAccessBars .stream-bar-row', rows => Object.fromEntries(
+    rows.map(r => [r.querySelector('.stream-bar-label').textContent.trim(), r.querySelector('.stream-bar-value').textContent.trim()])
+  ));
+  check('Mixed Recycling reads 100% (the one bin-access-reporting submission checked it, and nothing dilutes it)',
+    binAccessByLabel['Mixed Recycling'] === '100%', JSON.stringify(binAccessByLabel));
+  check('Paper & Cardboard reads 100% too (the same submission also checked it)',
+    binAccessByLabel['Paper & Cardboard'] === '100%', JSON.stringify(binAccessByLabel));
+  check('General Waste reads 0%, not checked by the one reporting submission',
+    binAccessByLabel['General Waste'] === '0%', JSON.stringify(binAccessByLabel));
+
   // --- The Overview "Preview the training" button: no building/tenant to pick, opens the
   // trainer with preview=1 and no ?b= at all. ---
   await page.evaluate(() => { window.__openedUrls = []; window.open = (u) => { window.__openedUrls.push(u); return null; }; });
@@ -260,6 +314,14 @@ async function runFlow(page, seedEnv, consoleErrors){
     await page.$eval('#programSelectorRow', el => getComputedStyle(el).display === 'none') &&
     (await page.$eval('#programSelector', el => el.innerHTML.trim())) === '');
 
+  // --- Workstream 18 (2026-10-09): restoring the archived building (active:true) must bring its
+  // data back into Reports - this is a live filter on current state, not a permanent exclusion.
+  // Flipped here, right before the re-sign-in below, so the upcoming fresh loadLiveData() run
+  // (triggered by selectProgram further down) picks it up without needing a separate page reload. ---
+  await seedEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'buildings', ARCHIVED_BUILDING_ID), { name: ARCHIVED_BUILDING_NAME, active: true });
+  });
+
   // --- Email/Password sign-in: Firebase's own auth, no external Google/Microsoft account needed ---
   const emailAdmin = 'email-login-admin@example.com';
   const emailAdminPassword = 'test-password-123';
@@ -274,6 +336,16 @@ async function runFlow(page, seedEnv, consoleErrors){
     () => getComputedStyle(document.getElementById('programTabs')).display !== 'none',
     { timeout: 10000 }
   );
+  await page.waitForFunction(
+    (name) => document.getElementById('completedTable').textContent.includes(name),
+    { timeout: 10000 }, ARCHIVED_BUILDING_NAME
+  );
+  const completedTextAfterRestore = await page.$eval('#completedTable', el => el.textContent);
+  check('restoring the building (active:true) brings its data back into Completed',
+    completedTextAfterRestore.includes(ARCHIVED_BUILDING_NAME));
+  const buildingFilterOptionsAfterRestore = await page.$$eval('#filterBuilding option', els => els.map(el => el.textContent));
+  check('...and it reappears as an option in the building filter dropdown too',
+    buildingFilterOptionsAfterRestore.includes(ARCHIVED_BUILDING_NAME), buildingFilterOptionsAfterRestore.join(', '));
   // Granting this admin is now admin-admins.html's own job (see tests/admin-admins.test.js) —
   // here it's just a precondition for the real thing this block tests (email/password sign-in),
   // so seed it directly rather than driving a page that isn't this one.

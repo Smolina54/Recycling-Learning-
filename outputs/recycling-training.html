@@ -91,6 +91,12 @@
     background:var(--paper); border-radius:var(--radius); color:var(--ink); width:100%;
   }
   .id-field input:focus-visible, .id-field select:focus-visible{outline:3px solid var(--forest); outline-offset:1px; border-color:var(--forest);}
+  /* Workstream 16 (2026-10-09): color-coded per stream, reusing the same --{stream}/--{stream}-tint
+     tokens the pre-game stream tabs already use for their own swatches, so this question speaks
+     the same color language as the rest of the app. */
+  .bin-access-options{display:flex; flex-wrap:wrap; gap:10px 18px; margin-top:4px;}
+  .bin-access-option{display:flex; align-items:center; gap:8px; font-family:var(--body); font-size:14px; color:var(--ink); cursor:pointer;}
+  .bin-access-swatch{width:18px; height:18px; border-radius:50%; flex-shrink:0;}
   .id-form .btn{width:100%; justify-content:center; margin-top:10px;}
 
   /* ---------- Top bar ---------- */
@@ -519,6 +525,37 @@
         <span>Level / Floor</span>
         <select id="idLevel" name="level" required></select>
       </label>
+      <div class="id-field" id="idBinAccessField">
+        <span>Which bins do you have access to on your level?</span>
+        <div class="bin-access-options">
+          <label class="bin-access-option">
+            <input type="checkbox" class="bin-access-checkbox" value="gw">
+            <span class="bin-access-swatch" style="background:var(--gw-tint); border:2px solid var(--gw);"></span>
+            General Waste
+          </label>
+          <label class="bin-access-option">
+            <input type="checkbox" class="bin-access-checkbox" value="mr">
+            <span class="bin-access-swatch" style="background:var(--mr-tint); border:2px solid var(--mr);"></span>
+            Mixed Recycling
+          </label>
+          <label class="bin-access-option">
+            <input type="checkbox" class="bin-access-checkbox" value="pc">
+            <span class="bin-access-swatch" style="background:var(--pc-tint); border:2px solid var(--pc);"></span>
+            Paper &amp; Cardboard
+          </label>
+          <label class="bin-access-option">
+            <input type="checkbox" class="bin-access-checkbox" value="og">
+            <span class="bin-access-swatch" style="background:var(--og-tint); border:2px solid var(--og);"></span>
+            Organics
+          </label>
+          <label class="bin-access-option">
+            <input type="checkbox" class="bin-access-checkbox" value="ew">
+            <span class="bin-access-swatch" style="background:var(--ew-tint); border:2px solid var(--ew);"></span>
+            E-Waste
+          </label>
+        </div>
+        <p class="id-field-error" id="idBinAccessError">Select at least one bin you have access to.</p>
+      </div>
       <button class="btn" type="submit">Continue</button>
     </form>
     <p class="hero-sub" style="font-size:12px; opacity:.7; margin-top:16px;"><strong>How we use your data:</strong> Your name and email are used only for this induction. They're used to confirm your training completion for your building, tenant, and level, and to let your building's training coordinator see who has completed it. They're never used for anything else, and never shared with any third party.</p>
@@ -946,7 +983,7 @@ try {
   }
 
   // ---------------- Identification gate ----------------
-  const siteContext = {buildingId:'', buildingName:'', tenantId:'', tenantName:'', level:'', name:'', email:'', linkId:''};
+  const siteContext = {buildingId:'', buildingName:'', tenantId:'', tenantName:'', level:'', name:'', email:'', linkId:'', reportedBinAccess:[]};
   let tenantsCache = [];
 
   const idCardLoading = document.getElementById('idCardLoading');
@@ -1198,12 +1235,23 @@ try {
       return;
     }
     emailError.style.display = 'none';
+    // Workstream 16 (2026-10-09): mandatory, self-reported bin access - purely for reporting
+    // (Reports/the client PDF show what share of trainees reported access to each bin type), never
+    // used to change which streams THIS trainee gets tested on.
+    const checkedBinAccess = [...document.querySelectorAll('.bin-access-checkbox:checked')].map(cb => cb.value);
+    const binAccessError = document.getElementById('idBinAccessError');
+    if (!checkedBinAccess.length){
+      binAccessError.style.display = 'block';
+      return;
+    }
+    binAccessError.style.display = 'none';
     const tenant = tenantsCache.find(t => t.id === idTenantSelect.value);
     siteContext.tenantId = idTenantSelect.value;
     siteContext.tenantName = tenant ? tenant.name : '';
     siteContext.level = idLevelSelect.value;
     siteContext.name = document.getElementById('idName').value.trim();
     siteContext.email = email;
+    siteContext.reportedBinAccess = checkedBinAccess;
     document.getElementById('idGate').style.display = 'none';
     document.getElementById('mainApp').style.display = 'block';
     window.scrollTo(0,0);
@@ -2247,6 +2295,7 @@ try {
       name: siteContext.name,
       email: siteContext.email,
       programId: PROGRAM_ID,
+      reportedBinAccess: siteContext.reportedBinAccess,
       ...(siteContext.linkId ? { linkId: siteContext.linkId } : {}),
       itemOverridesSnapshot: JSON.stringify(itemOverrides),
       score: pct,

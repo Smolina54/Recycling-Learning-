@@ -196,9 +196,22 @@ async function runFlow(page, seedEnv){
 
   await page.$eval('#idEmail', el => { el.value = ''; });
   await page.type('#idEmail', 'jane@example.com');
+
+  // --- Workstream 16 (2026-10-09): the "Which bins do you have access to on your level?"
+  // question is mandatory - submitting with nothing checked is rejected inline, same pattern as
+  // the malformed-email check above. Everything else on the form is correctly filled at this
+  // point - only the bin-access question is left blank, then answered. ---
+  await page.click('#idForm button[type=submit]');
+  check('submitting with no bin access checkbox checked is rejected inline, with a visible error message',
+    await page.$eval('#idBinAccessError', el => getComputedStyle(el).display !== 'none'));
+  check('mainApp is NOT shown after a no-bin-access-checked submit',
+    await page.$eval('#mainApp', el => getComputedStyle(el).display === 'none'));
+
+  await page.click('.bin-access-checkbox[value="gw"]');
+  await page.click('.bin-access-checkbox[value="og"]');
   await page.click('#idForm button[type=submit]');
   await new Promise(r => setTimeout(r, 300));
-  check('mainApp is shown after a valid gate submit',
+  check('mainApp is shown after a valid gate submit (email fixed + at least one bin checked)',
     await page.$eval('#mainApp', el => getComputedStyle(el).display !== 'none'));
 
   const tabs = await page.$$('.bin-tab');
@@ -394,6 +407,19 @@ async function runFlow(page, seedEnv){
 
   const countAfterFirstRun = await countRealSubmissions();
   check('exactly one real submission exists after the first completion', countAfterFirstRun === 1, countAfterFirstRun);
+
+  // Workstream 16 (2026-10-09): the real saved submission must carry exactly what was checked
+  // on the id-gate above ('gw' and 'og', in that click order).
+  let savedReportedBinAccess = null;
+  await seedEnv.withSecurityRulesDisabled(async (context) => {
+    const snap = await getDocs(query(collection(context.firestore(), 'submissions'),
+      where('buildingId', '==', TEST_BUILDING_ID), where('email', '==', 'jane@example.com')));
+    savedReportedBinAccess = snap.docs[0] ? snap.docs[0].data().reportedBinAccess : null;
+  });
+  check('the saved submission\'s reportedBinAccess matches exactly what was checked on the id-gate',
+    Array.isArray(savedReportedBinAccess) && savedReportedBinAccess.length === 2 &&
+      savedReportedBinAccess.includes('gw') && savedReportedBinAccess.includes('og'),
+    JSON.stringify(savedReportedBinAccess));
 
   await page.click('#retryBtn');
   await new Promise(r => setTimeout(r, 300));

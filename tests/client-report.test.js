@@ -83,8 +83,11 @@ async function seedTestData(){
 
     const now = Timestamp.now();
     const subs = [
-      { buildingId: b1, buildingName: 'Collins Tower', email: 'a1@example.com', score: 60, avoided: 15, total: 25, breakdown: { gw:{avoided:3,total:5}, mr:{avoided:2,total:5}, pc:{avoided:3,total:5}, og:{avoided:3,total:5}, ew:{avoided:4,total:5} }, items: { 'mr-jar': 0, 'og-coffee': 1 } },
-      { buildingId: b1, buildingName: 'Collins Tower', email: 'a2@example.com', score: 68, avoided: 17, total: 25, breakdown: { gw:{avoided:4,total:5}, mr:{avoided:2,total:5}, pc:{avoided:3,total:5}, og:{avoided:4,total:5}, ew:{avoided:4,total:5} }, items: { 'mr-jar': 0, 'og-coffee': 0 } },
+      // Workstream 16 (2026-10-09): two of these three report a bin-access answer, one (c1, b2)
+      // has none at all - simulating pre-existing data from before the question existed, which
+      // must be excluded from BOTH sides of the computed percentage, not counted as "no access."
+      { buildingId: b1, buildingName: 'Collins Tower', email: 'a1@example.com', score: 60, avoided: 15, total: 25, breakdown: { gw:{avoided:3,total:5}, mr:{avoided:2,total:5}, pc:{avoided:3,total:5}, og:{avoided:3,total:5}, ew:{avoided:4,total:5} }, items: { 'mr-jar': 0, 'og-coffee': 1 }, reportedBinAccess: ['gw', 'mr'] },
+      { buildingId: b1, buildingName: 'Collins Tower', email: 'a2@example.com', score: 68, avoided: 17, total: 25, breakdown: { gw:{avoided:4,total:5}, mr:{avoided:2,total:5}, pc:{avoided:3,total:5}, og:{avoided:4,total:5}, ew:{avoided:4,total:5} }, items: { 'mr-jar': 0, 'og-coffee': 0 }, reportedBinAccess: ['gw'] },
       { buildingId: b2, buildingName: 'Harbor Plaza', email: 'c1@example.com', score: 100, avoided: 25, total: 25, breakdown: { gw:{avoided:5,total:5}, mr:{avoided:5,total:5}, pc:{avoided:5,total:5}, og:{avoided:5,total:5}, ew:{avoided:5,total:5} }, items: { 'mr-jar': 1, 'og-coffee': 1 } },
     ];
     for (let i = 0; i < subs.length; i++){
@@ -291,6 +294,22 @@ async function runFlow(page, consoleErrors){
 
   const streamChartText = await page.$eval('#streamChart', el => el.textContent);
   check('stream chart renders stream names', streamChartText.includes('Mixed Recycling') && streamChartText.includes('General Waste'), streamChartText.replace(/\s+/g,' ').slice(0,200));
+
+  // Workstream 16 (2026-10-09): 2 of the 3 in-scope submissions reported bin access (a1: gw+mr,
+  // a2: gw-only); c1 (Harbor Plaza) has no reportedBinAccess field at all and must be excluded
+  // from both sides of the ratio - so gw should read 100% (2/2), mr 50% (1/2), and the section
+  // must actually be visible (not hidden, since there IS qualifying data).
+  const binAccessSectionVisible = await page.$eval('#binAccessSection', el => getComputedStyle(el).display !== 'none');
+  check('the "Reported bin access" section is visible when at least one in-scope submission has the field', binAccessSectionVisible);
+  const binAccessByLabel = await page.$$eval('#binAccessChart .stream-row', rows => Object.fromEntries(
+    rows.map(r => [r.querySelector('.name').textContent.trim(), r.querySelector('.pct').textContent.trim()])
+  ));
+  check('General Waste reads 100% (both bin-access-reporting submissions checked it)',
+    binAccessByLabel['General Waste'] === '100%', JSON.stringify(binAccessByLabel));
+  check('Mixed Recycling reads 50% (only one of the two bin-access-reporting submissions checked it)',
+    binAccessByLabel['Mixed Recycling'] === '50%', JSON.stringify(binAccessByLabel));
+  check('the submission with no reportedBinAccess field at all did not drag every stream\'s percentage down (would read 33%/67% if it had)',
+    binAccessByLabel['General Waste'] !== '67%' && binAccessByLabel['Mixed Recycling'] !== '33%', JSON.stringify(binAccessByLabel));
 
   const missedText = await page.$eval('#missedList', el => el.textContent);
   check('missed items list shows a seeded item name', missedText.includes('Rinsed glass jar') || missedText.includes('Coffee grounds'), missedText.replace(/\s+/g,' ').slice(0,200));

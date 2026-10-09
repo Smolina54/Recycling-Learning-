@@ -77,6 +77,19 @@ service cloud.firestore {
         && data.level is string && data.level.size() <= 200;
     }
 
+    // Workstream 16 (2026-10-09): the id-gate's "Which bins do you have access to on your level?"
+    // question - mandatory on the id-gate form, but SUBMISSIONS-only (never attempts, which are
+    // recorded before the trainee even reaches the results screen in spirit — the report's own
+    // "% of completed inductions" framing only ever means a real submission) and
+    // Recycling Sorting-only (organics/battery-training.html are confirmed dummy/example programs
+    // and never send this field at all). Deliberately NOT folded into isValidPersonFields, which
+    // is shared by attempts too and would otherwise reject every attempt doc ever written.
+    function isValidReportedBinAccessIfRequired(data) {
+      return data.programId != 'recycling-sorting'
+        || (data.reportedBinAccess is list
+            && data.reportedBinAccess.size() >= 1 && data.reportedBinAccess.size() <= 5);
+    }
+
     // A hard allowlist of every field any of the 3 real induction pages (recycling-training.html,
     // organics-training.html, battery-training.html) actually sends — without this, a direct API
     // write could attach ANY extra field to a brand-new submissions doc, including sendCount
@@ -89,7 +102,7 @@ service cloud.firestore {
         'buildingId', 'buildingName', 'tenantId', 'tenantName', 'level', 'name', 'email',
         'programId', 'linkId', 'itemOverridesSnapshot', 'score', 'avoided', 'total',
         'breakdown', 'items', 'correctCount', 'answers', 'duration_seconds', 'device_type',
-        'timestamp'
+        'timestamp', 'reportedBinAccess'
       ]);
     }
 
@@ -249,6 +262,7 @@ service cloud.firestore {
         && isValidLinkIfPresent(request.resource.data)
         && hasOnlyKnownSubmissionFields(request.resource.data)
         && hasReasonableSizes(request.resource.data)
+        && isValidReportedBinAccessIfRequired(request.resource.data)
         && request.resource.data.score is number
         && request.resource.data.score >= 0 && request.resource.data.score <= 100
         // Recycling Sorting only (2026-10-02): one real, saved result per person per building - a

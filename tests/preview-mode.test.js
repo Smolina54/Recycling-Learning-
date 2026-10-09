@@ -109,6 +109,9 @@ async function runFlow(page, seedEnv){
   await page.select('#idTenant', TEST_TENANT_ID);
   await page.type('#idName', 'Preview Tester');
   await page.type('#idEmail', 'preview-tester@example.com');
+  // Workstream 16 (2026-10-09): mandatory bin-access checkbox - this suite isn't testing that
+  // feature, just check one box to clear the gate.
+  await page.click('.bin-access-checkbox[value="gw"]');
   await page.click('#idForm button[type=submit]');
   await page.waitForSelector('.bin-tab', { visible: true, timeout: 5000 });
   // The "Begin the sort" card (and its button) now stays hidden - not just disabled - until

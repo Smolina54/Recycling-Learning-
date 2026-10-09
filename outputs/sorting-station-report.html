@@ -2887,6 +2887,12 @@ var qrcode = function() {
         <div id="streamBars"></div>
       </div>
 
+      <div class="report-block" id="binAccessSection" style="display:none;">
+        <h3>Reported bin access</h3>
+        <p class="block-sub">Share of completed inductions that reported having access to each bin type on their level - self-reported by the trainee, not configured by an admin.</p>
+        <div id="binAccessBars"></div>
+      </div>
+
       <div class="report-block">
         <h3>Score trend over time</h3>
         <p class="block-sub">Average score per day across the current filter - use the date range above to zoom into a period.</p>
@@ -3288,6 +3294,11 @@ function showConfirm(message){
       if (breakdown[s]){ row[s+'_avoided'] = breakdown[s].avoided; row[s+'_total'] = breakdown[s].total; }
     });
     Object.entries(items).forEach(([itemId, wasAvoided]) => { row['item_' + itemId] = wasAvoided ? 1 : 0; });
+    // Workstream 16 (2026-10-09): null (not an empty array) when the field is missing entirely -
+    // distinguishes "this submission predates the question" from "they checked nothing," so the
+    // reported-bin-access % below can correctly exclude the former from both sides of the ratio
+    // rather than counting it as 0% access to everything.
+    row.reportedBinAccess = Array.isArray(data.reportedBinAccess) ? data.reportedBinAccess : null;
     return row;
   }
 
@@ -3296,10 +3307,33 @@ function showConfirm(message){
   function attemptToRow(id, data){
     return {
       _id: id,
+      // buildingId: added for Workstream 18 (2026-10-09) - needed to filter out an archived
+      // building's attempts, same reason submissionToRow already carries it (see its own comment).
+      buildingId: data.buildingId || '',
       building: data.buildingName || '', tenant: data.tenantName || '', level: data.level || '',
       name: data.name || '', email: data.email || '', programId: data.programId || '',
       timestamp: (data.startedAt && typeof data.startedAt.toDate === 'function') ? data.startedAt.toDate().toISOString() : (data.startedAt || null)
     };
+  }
+
+  // Workstream 18 (2026-10-09): an archived building's data must disappear from Reports too, same
+  // as it already does from admin-buildings.html's own list and client-report.html's building
+  // picker - today this is the only place in the app that didn't already honor that. Filters BOTH
+  // arrays against buildingsMetaById (must already be populated - see loadBuildingsMetaById()'s
+  // await above) so an archived building's submissions/attempts also drop out of
+  // populateFilterOptions()' derived building/tenant/level dropdowns, not just the main table.
+  // A row whose buildingId isn't found in buildingsMetaById at all is kept, NOT excluded - "no
+  // matching building doc" is a different, unrelated condition from "explicitly archived"
+  // (e.g. a permanently-deleted building's data is already gone entirely by the time this runs,
+  // per Workstream 10's cascade delete, so this never fires for that case in practice) - only an
+  // explicit active:false is ever treated as "hide this," matching the "never guess, graceful
+  // absence" principle used everywhere else in this app.
+  function excludeArchivedBuildingRows(rows, attempts){
+    const isFromActiveBuilding = (row) => {
+      const meta = buildingsMetaById.get(row.buildingId);
+      return !meta || meta.active !== false;
+    };
+    return { rows: rows.filter(isFromActiveBuilding), attempts: attempts.filter(isFromActiveBuilding) };
   }
 
   function rowsToCSV(rows){
@@ -4184,6 +4218,28 @@ function showConfirm(message){
       </div>
     `).join('');
 
+    // Workstream 16 (2026-10-09): self-reported bin access - excludes any submission with no
+    // reportedBinAccess field at all (pre-existing data from before this question existed) from
+    // BOTH sides of the ratio, never treated as "reported no access."
+    const binAccessSection = document.getElementById('binAccessSection');
+    const binAccessRows = rows.filter(r => Array.isArray(r.reportedBinAccess));
+    if (binAccessRows.length){
+      const binAccessAgg = streams.map(s => ({
+        stream: s,
+        pct: Math.round((binAccessRows.filter(r => r.reportedBinAccess.includes(s)).length / binAccessRows.length) * 100),
+      }));
+      document.getElementById('binAccessBars').innerHTML = binAccessAgg.map(s => `
+        <div class="stream-bar-row">
+          <span class="stream-bar-label">${streamNames[s.stream]}</span>
+          <div class="stream-bar-track"><div class="stream-bar-fill" style="width:${s.pct}%; background:var(--${s.stream});"></div></div>
+          <span class="stream-bar-value">${s.pct}%</span>
+        </div>
+      `).join('');
+      binAccessSection.style.display = '';
+    } else {
+      binAccessSection.style.display = 'none';
+    }
+
     // Most commonly missed items. Just the name and miss rate — used to show which stream the
     // item currently resolves to (global default or a building's override), but that read as
     // ambiguous (unclear whether it meant where the item was missed FROM or where it SHOULD go)
@@ -4324,9 +4380,13 @@ function showConfirm(message){
         getDocs(query(collection(db, 'submissions'), where('programId', '==', currentProgramId), orderBy('timestamp', 'desc'), limit(MAX_ROWS))),
         getDocs(query(collection(db, 'attempts'), where('programId', '==', currentProgramId), orderBy('startedAt', 'desc'), limit(MAX_ROWS)))
       ]);
-      const rows = submissionsSnap.docs.map(d => submissionToRow(d.id, d.data()));
-      const attempts = attemptsSnap.docs.map(d => attemptToRow(d.id, d.data()));
-      const truncated = rows.length >= MAX_ROWS || attempts.length >= MAX_ROWS;
+      const rawRows = submissionsSnap.docs.map(d => submissionToRow(d.id, d.data()));
+      const rawAttempts = attemptsSnap.docs.map(d => attemptToRow(d.id, d.data()));
+      // Truncation is judged against the RAW fetched counts (did the query itself hit MAX_ROWS?),
+      // not the post-filter counts below - archiving a building shouldn't make an otherwise-capped
+      // query look complete.
+      const truncated = rawRows.length >= MAX_ROWS || rawAttempts.length >= MAX_ROWS;
+      const { rows, attempts } = excludeArchivedBuildingRows(rawRows, rawAttempts);
       const sourceLabel = `Live data from Firestore · ${rows.length} submissions` +
         (truncated ? ` (most recent ${MAX_ROWS} - narrow with the date filter to see an older period)` : '');
       isGlobalReviewer = true;
@@ -4342,12 +4402,14 @@ function showConfirm(message){
         }
         // Same truncation caveat as the unscoped path above - a pre-production audit found this
         // was missing here even though loadScopedLiveData() slices to the exact same MAX_ROWS,
-        // so a high-volume granted building could silently look complete when it wasn't.
+        // so a high-volume granted building could silently look complete when it wasn't. Judged
+        // against the raw (pre-archived-filter) counts, same reasoning as the unscoped path above.
         const scopedTruncated = scoped.rows.length >= MAX_ROWS || scoped.attempts.length >= MAX_ROWS;
-        const sourceLabel = `Live data from Firestore · ${scoped.rows.length} submissions (scoped to your granted building(s))` +
+        const { rows: scopedRows, attempts: scopedAttempts } = excludeArchivedBuildingRows(scoped.rows, scoped.attempts);
+        const sourceLabel = `Live data from Firestore · ${scopedRows.length} submissions (scoped to your granted building(s))` +
           (scopedTruncated ? ` (most recent ${MAX_ROWS} - narrow with the date filter to see an older period)` : '');
         isGlobalReviewer = false;
-        loadRows(scoped.rows, scoped.attempts, sourceLabel, true);
+        loadRows(scopedRows, scopedAttempts, sourceLabel, true);
       } catch (scopedErr){
         console.error('Failed to load submissions (both unscoped and scoped attempts failed):', err, scopedErr);
         document.getElementById('authStatus').textContent = "Your account isn't authorised to view this report, or something went wrong loading it.";
@@ -4691,7 +4753,11 @@ function showConfirm(message){
         document.getElementById('programSelectorRow').style.display = 'flex';
         document.getElementById('pageLoadError').style.display = 'none';
         try {
-          loadBuildingsMetaById().catch(err => console.error('Failed to load buildings metadata (Bintracker mapping):', err));
+          // Workstream 18 (2026-10-09): awaited, not fire-and-forget - loadLiveData()/
+          // loadScopedLiveData() now filter out archived buildings' data using this same cache, so
+          // it must be fully populated before any report load can run, not just before whatever
+          // low-stakes Bintracker-mapping check used to be its only consumer.
+          await loadBuildingsMetaById().catch(err => console.error('Failed to load buildings metadata (Bintracker mapping):', err));
           await refreshProgramSelector();
           // Lets admin-distribution.html's "← Back to reports" link (Workstream 2 Phase 4 of the
           // architecture roadmap) land back on the same induction instead of the neutral "nothing

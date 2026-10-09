@@ -331,6 +331,11 @@
               <p class="report-h2">Accuracy by stream - combined</p>
               <div class="stream-chart" id="streamChart"></div>
             </div>
+            <div class="report-section" id="binAccessSection" style="display:none;">
+              <p class="report-h2">Reported bin access</p>
+              <p class="block-sub">Share of completed inductions that reported having access to each bin type on their level - self-reported by the trainee, not configured by an admin.</p>
+              <div class="stream-chart" id="binAccessChart"></div>
+            </div>
             <div class="report-section">
               <p class="report-h2">Most commonly missed items</p>
               <ul class="missed-list" id="missedList"></ul>
@@ -583,6 +588,10 @@ async function fetchSubmissionsInRange(programId, buildingIds, fromDate, toDate)
     };
     streams.forEach(s => { if (breakdown[s]){ row[s+'_avoided'] = breakdown[s].avoided; row[s+'_total'] = breakdown[s].total; } });
     Object.entries(items).forEach(([itemId, wasAvoided]) => { row['item_' + itemId] = wasAvoided ? 1 : 0; });
+    // Workstream 16 (2026-10-09): null (not []) when missing entirely - lets computeBinAccessAgg
+    // exclude a pre-existing submission (made before this question existed) from both sides of
+    // the ratio, same reasoning as sorting-station-report.html's own submissionToRow.
+    row.reportedBinAccess = Array.isArray(data.reportedBinAccess) ? data.reportedBinAccess : null;
     return row;
   }));
 }
@@ -650,6 +659,20 @@ function computeStreamAgg(rows){
     });
     return { stream: s, pct: tot ? Math.round((av/tot)*100) : null };
   }).filter(s => s.pct !== null);
+}
+
+// Workstream 16 (2026-10-09): same shape/reasoning as sorting-station-report.html's own inline
+// computation - share of completed inductions (within the current filter) that reported having
+// access to each bin type, excluding any submission with no reportedBinAccess field at all.
+// Returns null (not an empty array) when there's nothing to compute from yet, so the caller can
+// hide the whole section rather than showing a misleading all-zero chart.
+function computeBinAccessAgg(rows){
+  const binAccessRows = rows.filter(r => Array.isArray(r.reportedBinAccess));
+  if (!binAccessRows.length) return null;
+  return streams.map(s => ({
+    stream: s,
+    pct: Math.round((binAccessRows.filter(r => r.reportedBinAccess.includes(s)).length / binAccessRows.length) * 100),
+  }));
 }
 
 function computeItemAgg(rows){
@@ -1020,6 +1043,21 @@ async function generateReport(){
           <span class="pct">${s.pct}%</span>
         </div>
       `).join('') || '<p class="block-sub">No stream data in this range.</p>';
+
+      const binAccessAgg = computeBinAccessAgg(rows);
+      const binAccessSection = document.getElementById('binAccessSection');
+      if (binAccessAgg){
+        document.getElementById('binAccessChart').innerHTML = binAccessAgg.map(s => `
+          <div class="stream-row">
+            <span class="name">${streamNames[s.stream]}</span>
+            <div class="stream-track"><div class="stream-fill" style="width:${s.pct}%; background:var(--${s.stream});"></div></div>
+            <span class="pct">${s.pct}%</span>
+          </div>
+        `).join('');
+        binAccessSection.style.display = 'block';
+      } else {
+        binAccessSection.style.display = 'none';
+      }
 
       const itemAgg = computeItemAgg(rows);
       document.getElementById('missedList').innerHTML = itemAgg.map(it => `

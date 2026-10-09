@@ -17,6 +17,10 @@ const validSubmission = {
   buildingId: 'building-1', buildingName: 'Test Tower',
   tenantId: 'tenant-1', tenantName: 'Test Co', level: 'Level 4',
   name: 'Jane Doe', email: 'jane@example.com', programId: 'recycling-sorting', score: 88,
+  // Workstream 16 (2026-10-09): mandatory for recycling-sorting submissions - included on the
+  // shared base payload so every pre-existing "valid" test case here stays genuinely valid; the
+  // field's own requiredness/bounds get dedicated test cases further down instead.
+  reportedBinAccess: ['gw'],
 };
 
 const validAttempt = {
@@ -117,6 +121,25 @@ async function main(){
   await record('anon CANNOT create a submission missing programId', () => {
     const bad = { ...validSubmission }; delete bad.programId;
     return assertFails(addDoc(collection(anon, 'submissions'), bad));
+  });
+
+  // Workstream 16 (2026-10-09): "Which bins do you have access to on your level?" - mandatory
+  // on a recycling-sorting submission, never on an attempt (see isValidReportedBinAccessIfRequired's
+  // own comment in firestore.rules for why this is a separate function, not folded into the
+  // shared isValidPersonFields).
+  await record('anon CANNOT create a recycling-sorting submission missing reportedBinAccess entirely', () => {
+    const bad = { ...validSubmission }; delete bad.reportedBinAccess;
+    return assertFails(addDoc(collection(anon, 'submissions'), bad));
+  });
+  await record('anon CANNOT create a submission with an empty reportedBinAccess array', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, reportedBinAccess: [] })));
+  await record('anon CANNOT create a submission with more than 5 reportedBinAccess entries', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, reportedBinAccess: ['gw', 'mr', 'pc', 'og', 'ew', 'extra'] })));
+  await record('anon CANNOT create a submission with reportedBinAccess as a non-list value (type confusion)', () =>
+    assertFails(addDoc(collection(anon, 'submissions'), { ...validSubmission, reportedBinAccess: 'gw' })));
+  await record('anon CAN create a submission with all 5 reportedBinAccess entries (the allowed maximum)', () => {
+    const data = { ...validSubmission, email: 'jane-binaccess@example.com', reportedBinAccess: ['gw', 'mr', 'pc', 'og', 'ew'] };
+    return assertSucceeds(setDoc(doc(anon, 'submissions', submissionDocId(data)), data));
   });
   await record('anon can create a submission carrying a linkId with no expiresAt (permanent link)', () =>
     testEnv.withSecurityRulesDisabled(async (context) => {
