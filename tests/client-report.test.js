@@ -86,13 +86,16 @@ async function seedTestData(){
       // Workstream 16 (2026-10-09): two of these three report a bin-access answer, one (c1, b2)
       // has none at all - simulating pre-existing data from before the question existed, which
       // must be excluded from BOTH sides of the computed percentage, not counted as "no access."
-      { buildingId: b1, buildingName: 'Collins Tower', email: 'a1@example.com', score: 60, avoided: 15, total: 25, breakdown: { gw:{avoided:3,total:5}, mr:{avoided:2,total:5}, pc:{avoided:3,total:5}, og:{avoided:3,total:5}, ew:{avoided:4,total:5} }, items: { 'mr-jar': 0, 'og-coffee': 1 }, reportedBinAccess: ['gw', 'mr'] },
-      { buildingId: b1, buildingName: 'Collins Tower', email: 'a2@example.com', score: 68, avoided: 17, total: 25, breakdown: { gw:{avoided:4,total:5}, mr:{avoided:2,total:5}, pc:{avoided:3,total:5}, og:{avoided:4,total:5}, ew:{avoided:4,total:5} }, items: { 'mr-jar': 0, 'og-coffee': 0 }, reportedBinAccess: ['gw'] },
-      { buildingId: b2, buildingName: 'Harbor Plaza', email: 'c1@example.com', score: 100, avoided: 25, total: 25, breakdown: { gw:{avoided:5,total:5}, mr:{avoided:5,total:5}, pc:{avoided:5,total:5}, og:{avoided:5,total:5}, ew:{avoided:5,total:5} }, items: { 'mr-jar': 1, 'og-coffee': 1 } },
+      // Workstream 16 follow-up (2026-10-12): a1/a2 are deliberately DIFFERENT tenants (both in
+      // b1/Collins Tower) so the per-building "by tenant" breakdown table has two real, distinct
+      // rows to verify against, instead of one tenant's rows being silently combined.
+      { buildingId: b1, buildingName: 'Collins Tower', tenantId: 'acme-co', tenantName: 'Acme Co', email: 'a1@example.com', score: 60, avoided: 15, total: 25, breakdown: { gw:{avoided:3,total:5}, mr:{avoided:2,total:5}, pc:{avoided:3,total:5}, og:{avoided:3,total:5}, ew:{avoided:4,total:5} }, items: { 'mr-jar': 0, 'og-coffee': 1 }, reportedBinAccess: ['gw', 'mr'] },
+      { buildingId: b1, buildingName: 'Collins Tower', tenantId: 'beta-co', tenantName: 'Beta Co', email: 'a2@example.com', score: 68, avoided: 17, total: 25, breakdown: { gw:{avoided:4,total:5}, mr:{avoided:2,total:5}, pc:{avoided:3,total:5}, og:{avoided:4,total:5}, ew:{avoided:4,total:5} }, items: { 'mr-jar': 0, 'og-coffee': 0 }, reportedBinAccess: ['gw'] },
+      { buildingId: b2, buildingName: 'Harbor Plaza', tenantId: 'gamma-co', tenantName: 'Gamma Co', email: 'c1@example.com', score: 100, avoided: 25, total: 25, breakdown: { gw:{avoided:5,total:5}, mr:{avoided:5,total:5}, pc:{avoided:5,total:5}, og:{avoided:5,total:5}, ew:{avoided:5,total:5} }, items: { 'mr-jar': 1, 'og-coffee': 1 } },
     ];
     for (let i = 0; i < subs.length; i++){
       await setDoc(doc(db, 'submissions', 'client-report-test-sub-' + i + '-' + Date.now()), {
-        ...subs[i], programId: 'recycling-sorting', tenantName: 'Test Tenant', level: 'Level 1',
+        tenantName: 'Test Tenant', ...subs[i], programId: 'recycling-sorting', level: 'Level 1',
         name: 'Test Person', timestamp: now, device_type: 'desktop', duration_seconds: 180,
       });
       await setDoc(doc(db, 'attempts', 'client-report-test-attempt-' + i + '-' + Date.now()), {
@@ -360,9 +363,46 @@ async function runFlow(page, consoleErrors){
   check('Collins Tower block includes its own stream accuracy chart', collinsBlock.includes('Accuracy by stream') && collinsBlock.includes('Mixed Recycling'), collinsBlock.slice(0,400));
   check('Collins Tower block flags its own weak stream and missed item', collinsBlock.includes('Mixed Recycling accuracy below average') && collinsBlock.includes('Rinsed glass jar'), collinsBlock.slice(0,600));
 
+  // Workstream 16 follow-up (2026-10-12): per-building "Reported bin access" By building/By
+  // tenant toggle. Collins Tower has 2 distinct tenants, each with its own reportedBinAccess
+  // answer (Acme Co: gw+mr, Beta Co: gw-only) - real, verifiable data to check the toggle against.
+  const buildingBlockHandles = await page.$$('.building-block');
+  let collinsHandle = null, harborHandle = null;
+  for (const h of buildingBlockHandles){
+    const text = await h.evaluate(el => el.textContent);
+    if (text.includes('Collins Tower')) collinsHandle = h;
+    if (text.includes('Harbor Plaza')) harborHandle = h;
+  }
+  check('Collins Tower\'s bin-access section defaults to the "By building" chart visible',
+    await collinsHandle.$eval('.bin-access-view-building', el => getComputedStyle(el).display !== 'none'));
+  check('...with the "By tenant" table hidden by default',
+    await collinsHandle.$eval('.bin-access-view-tenant', el => getComputedStyle(el).display === 'none'));
+
+  await collinsHandle.$eval('.bin-access-view-btn[data-view="tenant"]', el => el.click());
+  check('clicking "By tenant" reveals the per-tenant table',
+    await collinsHandle.$eval('.bin-access-view-tenant', el => getComputedStyle(el).display !== 'none'));
+  check('...and hides the "By building" chart',
+    await collinsHandle.$eval('.bin-access-view-building', el => getComputedStyle(el).display === 'none'));
+
+  const tenantRows = await collinsHandle.$$eval('.bin-access-tenant-table tbody tr', rows => rows.map(r => [...r.querySelectorAll('td')].map(td => td.textContent.trim())));
+  const acmeRow = tenantRows.find(r => r[0] === 'Acme Co');
+  const betaRow = tenantRows.find(r => r[0] === 'Beta Co');
+  check('the tenant table shows both Acme Co and Beta Co as separate rows', Boolean(acmeRow) && Boolean(betaRow), JSON.stringify(tenantRows));
+  // Columns: Tenant, General Waste, Mixed Recycling, Paper & Cardboard, Organics, E-Waste.
+  check('Acme Co (checked gw+mr) reads 100% for both General Waste and Mixed Recycling',
+    acmeRow && acmeRow[1] === '100%' && acmeRow[2] === '100%', JSON.stringify(acmeRow));
+  check('Beta Co (checked gw only) reads 100% for General Waste and 0% for Mixed Recycling',
+    betaRow && betaRow[1] === '100%' && betaRow[2] === '0%', JSON.stringify(betaRow));
+
+  await collinsHandle.$eval('.bin-access-view-btn[data-view="building"]', el => el.click());
+  check('clicking "By building" again switches back to the combined chart',
+    await collinsHandle.$eval('.bin-access-view-building', el => getComputedStyle(el).display !== 'none'));
+
   // Harbor Plaza: 1 attempt, 1 completed, 0 did not - 100% completion rate, no issues of its own.
   check('Harbor Plaza block shows its own completed/did-not-complete/completion-rate stats', harborBlock.includes('Completed') && harborBlock.includes('Did not complete') && harborBlock.includes('100%'), harborBlock.slice(0,400));
   check('Harbor Plaza block shows the graceful fallback (no issues of its own)', harborBlock.includes('No significant issues identified'), harborBlock.slice(0,600));
+  check('Harbor Plaza (no reportedBinAccess data at all) has no bin-access toggle rendered',
+    (await harborHandle.$('.bin-access-toggle')) === null);
 
   const metaText = await page.$eval('#reportBuildingsMeta', el => el.textContent);
   check('cover shows both building names', metaText.includes('Collins Tower') && metaText.includes('Harbor Plaza'), metaText);

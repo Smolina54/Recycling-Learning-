@@ -119,6 +119,20 @@
   .stream-fill{height:100%; border-radius:5px;}
   .stream-row .pct{font-family:var(--mono); font-size:12px; text-align:right; font-variant-numeric:tabular-nums;}
 
+  /* Workstream 16 follow-up (2026-10-12): per-building "Reported bin access" view toggle - lets
+     the viewer (and, since this prints whatever's currently visible, the generated PDF) switch
+     between the building's own combined % and a per-tenant breakdown table. */
+  .bin-access-toggle{display:flex; gap:8px; margin-bottom:10px;}
+  .bin-access-view-btn{
+    font-family:var(--body); font-size:12px; font-weight:500; padding:5px 12px; border-radius:4px;
+    border:1px solid var(--line); background:var(--paper); color:var(--ink-soft); cursor:pointer;
+  }
+  .bin-access-view-btn.active{background:var(--forest); border-color:var(--forest); color:#fff;}
+  .bin-access-tenant-table{width:100%; border-collapse:collapse; font-family:var(--body); font-size:12px;}
+  .bin-access-tenant-table th, .bin-access-tenant-table td{padding:7px 8px; text-align:left; border-bottom:1px solid var(--line);}
+  .bin-access-tenant-table th{font-family:var(--mono); font-size:10px; letter-spacing:0.04em; text-transform:uppercase; color:var(--ink-soft); font-weight:500;}
+  .bin-access-tenant-table td.pct-cell{font-family:var(--mono); text-align:right; font-variant-numeric:tabular-nums;}
+
   .findings-list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px;}
   .findings-list li{background:var(--panel); border-left:3px solid var(--forest); border-radius:4px; padding:14px 16px; font-family:var(--body); font-size:13.5px; line-height:1.55;}
   .finding-headline{font-family:var(--display); font-weight:700; font-size:13.5px; margin:0 0 4px;}
@@ -675,6 +689,26 @@ function computeBinAccessAgg(rows){
   }));
 }
 
+// Workstream 16 follow-up (2026-10-12): per-tenant version of computeBinAccessAgg, for the
+// per-building "by tenant" toggle view. Groups by tenantId (stable key) but displays tenantName.
+// A tenant with zero reportedBinAccess submissions simply doesn't appear - same "never guess"
+// principle as computeBinAccessAgg returning null when there's nothing to compute from.
+function computeBinAccessByTenant(rows){
+  const binAccessRows = rows.filter(r => Array.isArray(r.reportedBinAccess));
+  const tenantIds = [...new Set(binAccessRows.map(r => r.tenantId).filter(Boolean))];
+  return tenantIds.map(tenantId => {
+    const tRows = binAccessRows.filter(r => r.tenantId === tenantId);
+    const tenantName = tRows[0].tenantName || tenantId;
+    return {
+      tenantId, tenantName,
+      byStream: streams.map(s => ({
+        stream: s,
+        pct: Math.round((tRows.filter(r => r.reportedBinAccess.includes(s)).length / tRows.length) * 100),
+      })),
+    };
+  }).sort((a, b) => a.tenantName.localeCompare(b.tenantName));
+}
+
 function computeItemAgg(rows){
   return Object.keys(catalog).map(id => {
     const col = 'item_' + id;
@@ -692,11 +726,13 @@ function computeBuildingStats(rows, attempts, selectedBuildings){
     const bRows = rows.filter(r => r.buildingId === b.id);
     const bAttempts = attempts.filter(a => a.buildingId === b.id);
     const { completed, notCompleted, completionRate } = computeCompletion(bRows, bAttempts);
-    if (!bRows.length) return { id: b.id, name: b.name, rows: 0, pass: null, weakestStream: null, streamAgg: [], itemAgg: [], completed, notCompleted, completionRate };
+    if (!bRows.length) return { id: b.id, name: b.name, rows: 0, pass: null, weakestStream: null, streamAgg: [], itemAgg: [], completed, notCompleted, completionRate, binAccessAgg: null, binAccessByTenant: [] };
     const pass = Math.round((bRows.filter(r => (r.score||0) >= 75).length / bRows.length) * 100);
     const bStreamAgg = computeStreamAgg(bRows).sort((a,b2) => a.pct - b2.pct);
     const bItemAgg = computeItemAgg(bRows);
-    return { id: b.id, name: b.name, rows: bRows.length, pass, weakestStream: bStreamAgg[0] ? bStreamAgg[0].stream : null, streamAgg: bStreamAgg, itemAgg: bItemAgg, completed, notCompleted, completionRate };
+    const binAccessAgg = computeBinAccessAgg(bRows);
+    const binAccessByTenant = computeBinAccessByTenant(bRows);
+    return { id: b.id, name: b.name, rows: bRows.length, pass, weakestStream: bStreamAgg[0] ? bStreamAgg[0].stream : null, streamAgg: bStreamAgg, itemAgg: bItemAgg, completed, notCompleted, completionRate, binAccessAgg, binAccessByTenant };
   });
 }
 
@@ -1111,6 +1147,38 @@ async function generateReport(){
           `).join('') || '<p class="block-sub">No stream data in this range.</p>';
           const findings = computeSingleBuildingFindings(b.streamAgg, b.itemAgg);
 
+          // Workstream 16 follow-up (2026-10-12): per-building "Reported bin access" with a
+          // by-building/by-tenant toggle. Omitted entirely (same graceful-absence principle as
+          // the combined section above) if no submission in this building's range has the field.
+          let binAccessHtml = '';
+          if (b.binAccessAgg){
+            const buildingViewChart = b.binAccessAgg.map(s => `
+              <div class="stream-row">
+                <span class="name">${streamNames[s.stream]}</span>
+                <div class="stream-track"><div class="stream-fill" style="width:${s.pct}%; background:var(--${s.stream});"></div></div>
+                <span class="pct">${s.pct}%</span>
+              </div>
+            `).join('');
+            const tenantTableRows = b.binAccessByTenant.map(t => `
+              <tr>
+                <td>${esc(t.tenantName)}</td>
+                ${t.byStream.map(s => `<td class="pct-cell">${s.pct}%</td>`).join('')}
+              </tr>
+            `).join('');
+            binAccessHtml = `
+              <h4>Reported bin access</h4>
+              <p class="block-sub">Share of completed inductions that reported having access to each bin type on their level - self-reported by the trainee, not configured by an admin.</p>
+              <div class="bin-access-toggle" data-building-id="${b.id}">
+                <button type="button" class="bin-access-view-btn active" data-view="building">By building</button>
+                <button type="button" class="bin-access-view-btn" data-view="tenant">By tenant</button>
+              </div>
+              <div class="stream-chart bin-access-view bin-access-view-building" data-building-id="${b.id}">${buildingViewChart}</div>
+              <table class="bin-access-tenant-table bin-access-view bin-access-view-tenant" data-building-id="${b.id}" style="display:none;">
+                <thead><tr><th>Tenant</th><th>General Waste</th><th>Mixed Recycling</th><th>Paper &amp; Cardboard</th><th>Organics</th><th>E-Waste</th></tr></thead>
+                <tbody>${tenantTableRows || '<tr><td colspan="6">No tenant-level data in this range.</td></tr>'}</tbody>
+              </table>`;
+          }
+
           // Each comparison is only rendered for a building mapped to Bintracker AND that produced
           // at least one real finding FOR THAT comparison — silently omitted otherwise (graceful
           // absence, per this document's own conventions: no "no real-world data available" line in
@@ -1152,6 +1220,7 @@ async function generateReport(){
               </div>
               <h4>Accuracy by stream</h4>
               <div class="stream-chart">${bChart}</div>
+              ${binAccessHtml}
               <h4>Key findings</h4>
               <ul class="findings-list">${renderFindingsList(findings)}</ul>
               ${bintrackerHtml}
@@ -1226,6 +1295,24 @@ ${reportPageHtml}
 }
 
 document.getElementById('generateBtn').addEventListener('click', generateReport);
+
+// Workstream 16 follow-up (2026-10-12): the "By building"/"By tenant" toggle for each building's
+// own "Reported bin access" section. Delegated on #buildingBreakdown (a stable element whose
+// innerHTML gets replaced on every Generate click) rather than attached per-button, since the
+// buttons themselves are recreated each time the report is generated. Printing/saving as PDF
+// captures whichever view is currently visible, per the user's own confirmed design - no special
+// print-time handling needed, since this file's print flow already just prints the live DOM.
+document.getElementById('buildingBreakdown').addEventListener('click', (e) => {
+  const btn = e.target.closest('.bin-access-view-btn');
+  if (!btn) return;
+  const toggle = btn.closest('.bin-access-toggle');
+  const buildingId = toggle.dataset.buildingId;
+  const view = btn.dataset.view;
+  toggle.querySelectorAll('.bin-access-view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  document.querySelectorAll(`.bin-access-view[data-building-id="${buildingId}"]`).forEach(el => {
+    el.style.display = el.classList.contains(`bin-access-view-${view}`) ? '' : 'none';
+  });
+});
 let printInProgress = false; // guards against a second activation before the first overlay/
 // iframe pair is cleaned up — both would contain an element with the same id ("cancelPrintBtn"),
 // and getElementById always resolves to the FIRST one in document order, so the second (visible,
