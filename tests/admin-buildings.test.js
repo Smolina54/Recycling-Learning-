@@ -26,6 +26,9 @@ const ALLOWED_EMAIL = 'esgtradeflex@gmail.com';
 const XSS_PAYLOAD = '<img src=x onerror="window.__xssFired = true">';
 const ARCHIVED_BUILDING_ID = 'workstream18-archived-building';
 const ARCHIVED_BUILDING_NAME = 'Archived Test Tower';
+const RENAMED_BUILDING_ID = 'workstream24-renamed-building';
+const RENAMED_BUILDING_OLD_NAME = '627 Chapel St';
+const RENAMED_BUILDING_NEW_NAME = '627 Chapel Street';
 
 const results = [];
 function check(label, cond, extra){ results.push({label, ok: Boolean(cond), extra: extra || ''}); }
@@ -105,6 +108,26 @@ async function seedMaliciousAttempt(){
       level: 'Level 1', name: 'Bin Access Trainee', email: 'binaccess-trainee@example.com',
       programId: 'recycling-sorting', score: 85, avoided: 17, total: 20,
       reportedBinAccess: ['mr', 'pc'],
+      timestamp: new Date().toISOString(),
+    });
+    // Workstream 24 (2026-10-12): the building doc already carries its CURRENT (post-rename)
+    // name, but one submission was saved under the OLD name (frozen at write time, before the
+    // rename) and one under the new name (saved after) - a real building doc is required here
+    // (unlike every other seeded submission above, which has no matching building doc at all),
+    // since the fix being tested resolves display names via buildingId -> buildings/{id}.name.
+    await setDoc(doc(db, 'buildings', RENAMED_BUILDING_ID), { name: RENAMED_BUILDING_NEW_NAME, active: true });
+    await setDoc(doc(db, 'submissions', 'workstream24-pre-rename-submission'), {
+      buildingId: RENAMED_BUILDING_ID, buildingName: RENAMED_BUILDING_OLD_NAME,
+      tenantId: 'chapel-tenant', tenantName: 'Chapel Tenant Co',
+      level: 'Level 1', name: 'Pre Rename Trainee', email: 'pre-rename-trainee@example.com',
+      programId: 'recycling-sorting', score: 70, avoided: 14, total: 20,
+      timestamp: new Date(Date.now() - 86400000).toISOString(),
+    });
+    await setDoc(doc(db, 'submissions', 'workstream24-post-rename-submission'), {
+      buildingId: RENAMED_BUILDING_ID, buildingName: RENAMED_BUILDING_NEW_NAME,
+      tenantId: 'chapel-tenant', tenantName: 'Chapel Tenant Co',
+      level: 'Level 1', name: 'Post Rename Trainee', email: 'post-rename-trainee@example.com',
+      programId: 'recycling-sorting', score: 90, avoided: 18, total: 20,
       timestamp: new Date().toISOString(),
     });
   });
@@ -243,6 +266,41 @@ async function runFlow(page, seedEnv, consoleErrors){
     binAccessByLabel['Paper & Cardboard'] === '100%', JSON.stringify(binAccessByLabel));
   check('General Waste reads 0%, not checked by the one reporting submission',
     binAccessByLabel['General Waste'] === '0%', JSON.stringify(binAccessByLabel));
+
+  // --- Workstream 24 (2026-10-12): a renamed building's old and new submissions must show as ONE
+  // building (resolved to its CURRENT name), not fragmented into two by each row's own frozen
+  // buildingName - the real bug the user found (627 Chapel St / 627 Chapel Street). ---
+  const buildingFilterOptionsAll = await page.$$eval('#filterBuilding option', els => els.map(el => el.textContent));
+  check('the renamed building appears exactly once in the filter dropdown, under its CURRENT name',
+    buildingFilterOptionsAll.filter(t => t === RENAMED_BUILDING_NEW_NAME).length === 1 &&
+      !buildingFilterOptionsAll.includes(RENAMED_BUILDING_OLD_NAME),
+    buildingFilterOptionsAll.join(', '));
+
+  await page.select('#filterBuilding', RENAMED_BUILDING_ID);
+  await new Promise(r => setTimeout(r, 300));
+  const completedTextAfterRenameFilter = await page.$eval('#completedTable', el => el.textContent);
+  check('selecting the renamed building shows BOTH the pre-rename and post-rename submissions combined',
+    completedTextAfterRenameFilter.includes('Pre Rename Trainee') && completedTextAfterRenameFilter.includes('Post Rename Trainee'),
+    completedTextAfterRenameFilter.slice(0, 400));
+  // "627 Chapel St" is a SUBSTRING of "627 Chapel Street" - a plain .includes() check on the old
+  // name would false-positive against the new name's own text, so compare each row's actual
+  // Building cell value exactly instead of substring-matching the whole table's flattened text.
+  const completedBuildingCells = await page.$$eval('#completedTable tbody tr', rows => rows.map(r => r.children[2].textContent.trim()));
+  check('both rows display exactly the building\'s CURRENT name, not the old frozen one',
+    completedBuildingCells.length === 2 && completedBuildingCells.every(c => c === RENAMED_BUILDING_NEW_NAME),
+    JSON.stringify(completedBuildingCells));
+
+  // Reset the building filter back to "All buildings" before checking the group table, which is
+  // scoped to whatever's currently filtered.
+  await page.select('#filterBuilding', '');
+  await new Promise(r => setTimeout(r, 300));
+  const groupTableRows = await page.$$eval('#groupTable tbody tr', rows => rows.map(r => [...r.querySelectorAll('td')].map(td => td.textContent.trim())));
+  const renamedBuildingRows = groupTableRows.filter(r => r[0] === RENAMED_BUILDING_NEW_NAME);
+  check('the building/tenant/level table shows the renamed building as exactly ONE row (both submissions merged)',
+    renamedBuildingRows.length === 1 && renamedBuildingRows[0][3] === '2',
+    JSON.stringify(groupTableRows));
+  check('no row anywhere in that table still shows the old frozen name',
+    !groupTableRows.some(r => r[0] === RENAMED_BUILDING_OLD_NAME), JSON.stringify(groupTableRows));
 
   // --- The Overview "Preview the training" button: no building/tenant to pick, opens the
   // trainer with preview=1 and no ?b= at all. ---

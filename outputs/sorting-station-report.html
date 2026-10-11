@@ -2995,9 +2995,11 @@ const firebaseConfig = {
 const RECAPTCHA_SITE_KEY = '';
 
 let db = null, auth = null, functions = null;
-// buildingId -> raw buildings/{id} doc data, cached once per sign-in — used only to check
-// bintrackerBuildingName (Point 1, Phase C's "is this building mapped to Bintracker at all" gate),
-// via loadBuildingsMetaById() below.
+// buildingId -> raw buildings/{id} doc data, cached once per sign-in — used to check
+// bintrackerBuildingName (Point 1, Phase C's "is this building mapped to Bintracker at all" gate)
+// and, as of Workstream 24, to resolve every building's CURRENT display name live (see
+// resolveBuildingName() below) rather than trusting each row's own frozen `building` string.
+// Populated via loadBuildingsMetaById() below.
 let buildingsMetaById = new Map();
 // Hoisted out of the try block below (not `const` inside it) — code further down the page
 // (the Preview/Demo-link builders) needs to read this too, and a `const` scoped to the try
@@ -3407,7 +3409,11 @@ function showConfirm(message){
           });
           const timestamp = new Date(Date.now() - Math.floor(Math.random()*20)*86400000).toISOString();
           rows.push(Object.assign({
-            building: b.building, level: t.level, tenant: t.tenant,
+            // buildingId: demo data has no real building doc, so the building's own NAME doubles
+            // as its stable pseudo-id here (demo buildings are never renamed) - keeps this sample
+            // data compatible with the real filter/grouping logic below, which now keys off
+            // buildingId (not the display name) so a real renamed building doesn't fragment.
+            buildingId: b.building, building: b.building, level: t.level, tenant: t.tenant,
             name: person.name, email: person.email,
             score, avoided, total,
             duration_seconds: 90 + Math.floor(Math.random()*180),
@@ -3419,11 +3425,11 @@ function showConfirm(message){
           const retries = Math.random() < 0.3 ? 1 + Math.floor(Math.random()*2) : 0;
           for (let r=0; r<retries; r++){
             attempts.push({
-              building: b.building, level: t.level, tenant: t.tenant, name: person.name, email: person.email,
+              buildingId: b.building, building: b.building, level: t.level, tenant: t.tenant, name: person.name, email: person.email,
               timestamp: new Date(new Date(timestamp).getTime() - (r+1)*3600000).toISOString()
             });
           }
-          attempts.push({ building: b.building, level: t.level, tenant: t.tenant, name: person.name, email: person.email, timestamp });
+          attempts.push({ buildingId: b.building, building: b.building, level: t.level, tenant: t.tenant, name: person.name, email: person.email, timestamp });
         }
         // A few people who started but never finished, so the demo completion rate isn't 100%
         // and the "pending completion" list has something to show.
@@ -3431,7 +3437,7 @@ function showConfirm(message){
         for (let i=0; i<dropped; i++){
           const person = samplePerson();
           attempts.push({
-            building: b.building, level: t.level, tenant: t.tenant,
+            buildingId: b.building, building: b.building, level: t.level, tenant: t.tenant,
             name: person.name, email: person.email,
             timestamp: new Date(Date.now() - Math.floor(Math.random()*20)*86400000).toISOString()
           });
@@ -3567,13 +3573,33 @@ function showConfirm(message){
     return [...set].sort();
   }
 
+  // Workstream 24 (2026-10-12): a submission/attempt freezes the building's NAME as it was at
+  // write time - renaming a building afterward (admin-buildings.html's Save) never touches
+  // already-saved docs, so without this, a renamed building's old and new rows would show up as
+  // two entirely separate "buildings" everywhere below (the filter dropdown, the building/tenant/
+  // level table, Completed/Pending). Resolving the CURRENT name live via buildingId (stable,
+  // never changes) instead of trusting the row's own frozen string fixes this at the display
+  // layer - falls back to the frozen name if the id isn't found (a permanently-deleted building,
+  // or demo/sample data, which has no real building doc at all).
+  function resolveBuildingName(buildingId, fallbackName){
+    const meta = buildingId ? buildingsMetaById.get(buildingId) : null;
+    return (meta && meta.name) || fallbackName || '(unknown building)';
+  }
+
   function populateFilterOptions(){
     const buildingSel = document.getElementById('filterBuilding');
     const prev = buildingSel.value;
-    const buildings = distinctValues(allRows, 'building', () => true);
+    // Grouped by buildingId (stable), not the frozen `building` name string - see
+    // resolveBuildingName()'s own comment above for why.
+    const nameById = new Map();
+    allRows.forEach(r => {
+      if (!r.buildingId || nameById.has(r.buildingId)) return;
+      nameById.set(r.buildingId, resolveBuildingName(r.buildingId, r.building));
+    });
+    const buildingIds = [...nameById.keys()].sort((a, b) => nameById.get(a).localeCompare(nameById.get(b)));
     buildingSel.innerHTML = '<option value="">All buildings</option>' +
-      buildings.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
-    buildingSel.value = buildings.includes(prev) ? prev : '';
+      buildingIds.map(id => `<option value="${esc(id)}">${esc(nameById.get(id))}</option>`).join('');
+    buildingSel.value = buildingIds.includes(prev) ? prev : '';
     updateTenantOptions();
   }
 
@@ -3588,7 +3614,7 @@ function showConfirm(message){
     }
     tenantSel.disabled = false;
     const prev = tenantSel.value;
-    const tenants = distinctValues(allRows, 'tenant', r => r.building === b);
+    const tenants = distinctValues(allRows, 'tenant', r => r.buildingId === b);
     tenantSel.innerHTML = '<option value="">All tenants</option>' +
       tenants.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
     tenantSel.value = tenants.includes(prev) ? prev : '';
@@ -3605,7 +3631,7 @@ function showConfirm(message){
       return;
     }
     levelSel.disabled = false;
-    const levels = distinctValues(allRows, 'level', r => r.building === b && r.tenant === t);
+    const levels = distinctValues(allRows, 'level', r => r.buildingId === b && r.tenant === t);
     levelSel.innerHTML = '<option value="">All levels</option>' +
       levels.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
   }
@@ -3617,7 +3643,7 @@ function showConfirm(message){
     const from = document.getElementById('filterDateFrom').value; // 'YYYY-MM-DD' or ''
     const to = document.getElementById('filterDateTo').value;
     return rows.filter(r => {
-      if (b && r.building !== b) return false;
+      if (b && r.buildingId !== b) return false;
       if (t && r.tenant !== t) return false;
       if (l && r.level !== l) return false;
       if ((from || to) && !r.timestamp) return false; // undated rows excluded once a date filter is active
@@ -3630,14 +3656,17 @@ function showConfirm(message){
   function getFilteredRows(){ return filterByCurrentScope(allRows); }
 
   function renderFiltered(sourceLabel){
-    const b = document.getElementById('filterBuilding').value;
+    const b = document.getElementById('filterBuilding').value; // a buildingId now, not a name
     const t = document.getElementById('filterTenant').value;
     const l = document.getElementById('filterLevel').value;
     const from = document.getElementById('filterDateFrom').value;
     const to = document.getElementById('filterDateTo').value;
     const focused = Boolean(b || t || l || from || to);
     document.getElementById('reportTitle').textContent = focused ? 'Focused Report' : 'Overview';
-    const scopeParts = [t, b, l].filter(Boolean);
+    // Resolve b's current display name for the two text notes below - the filter's own <option>
+    // text already shows this, but these two spots build their own strings from the raw value.
+    const bName = b ? resolveBuildingName(b, b) : '';
+    const scopeParts = [t, bName, l].filter(Boolean);
     if (from || to) scopeParts.push(`${from || '…'} to ${to || '…'}`);
     document.getElementById('focusNote').textContent = focused ? `Focused on: ${scopeParts.join(' - ')}` : '';
     document.getElementById('deleteBtn').style.display = (isLiveData && isGlobalReviewer) ? 'inline-flex' : 'none';
@@ -3648,7 +3677,7 @@ function showConfirm(message){
     const program = currentProgram();
     document.getElementById('printHeaderInduction').textContent = program.name || 'Recycling Sorting';
     document.getElementById('printHeaderDesc').textContent = program.description || '';
-    const buildingText = b || 'All buildings';
+    const buildingText = bName || 'All buildings';
     const periodText = (from || to) ? `${from || '…'} to ${to || '…'}` : 'All time';
     document.getElementById('printHeaderMeta').textContent = `${buildingText} · ${periodText}`;
 
@@ -3768,7 +3797,7 @@ function showConfirm(message){
       <tbody>
         ${completed.map(p => `
           <tr>
-            <td>${esc(p.name) || '-'}</td><td>${esc(p.email)}</td><td>${esc(p.building) || '-'}</td>
+            <td>${esc(p.name) || '-'}</td><td>${esc(p.email)}</td><td>${esc(resolveBuildingName(p.buildingId, p.building)) || '-'}</td>
             <td>${esc(p.tenant) || '-'}</td><td>${esc(p.level) || '-'}</td>
             <td><span class="pass-pill ${(p.score||0)>=75?'pass':'fail'}">${p.score!=null ? p.score+'%' : '-'}</span></td>
             <td>${p.timestamp ? esc(p.timestamp.slice(0,10)) : '-'}</td>
@@ -3802,7 +3831,7 @@ function showConfirm(message){
       <tbody>
         ${pending.map(p => `
           <tr>
-            <td>${esc(p.name) || '-'}</td><td>${esc(p.email)}</td><td>${esc(p.building) || '-'}</td>
+            <td>${esc(p.name) || '-'}</td><td>${esc(p.email)}</td><td>${esc(resolveBuildingName(p.buildingId, p.building)) || '-'}</td>
             <td>${esc(p.tenant) || '-'}</td><td>${esc(p.level) || '-'}</td>
             <td>${p.timestamp ? esc(p.timestamp.slice(0,10)) : '-'}</td>
           </tr>
@@ -4266,11 +4295,13 @@ function showConfirm(message){
       </div>
     `).join('') || '<p class="block-sub">No per-item data found in this file - item_&lt;id&gt; columns are missing.</p>';
 
-    // Group table (building / level / tenant)
+    // Group table (building / level / tenant) — grouped by buildingId (stable), displayed with
+    // the building's CURRENT name (see resolveBuildingName()'s own comment), so a renamed
+    // building's old and new rows land in the same group instead of two separate ones.
     const groups = {};
     rows.forEach(r => {
-      const key = [r.building, r.tenant, r.level].join('||');
-      if (!groups[key]) groups[key] = {building:r.building, tenant:r.tenant, level:r.level, scores:[]};
+      const key = [r.buildingId, r.tenant, r.level].join('||');
+      if (!groups[key]) groups[key] = {buildingId:r.buildingId, building:resolveBuildingName(r.buildingId, r.building), tenant:r.tenant, level:r.level, scores:[]};
       groups[key].scores.push(r.score||0);
     });
     const groupRows = Object.values(groups).map(g => {

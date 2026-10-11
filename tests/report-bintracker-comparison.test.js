@@ -246,11 +246,15 @@ async function runFlow(page, { b1, b2 }){
     { timeout: 10000 }
   );
 
+  // Workstream 24 (2026-10-12): #filterBuilding's <option value> is now the building's stable
+  // buildingId, not its display name (so a rename doesn't fragment Reports - see that workstream)
+  // - b1 (already known here) IS that id directly, so select by it rather than looking an option
+  // up by a name-shaped value. The option's TEXT is still the display name, which is what gets
+  // checked for presence.
   await page.waitForFunction(() => document.querySelectorAll('#filterBuilding option').length >= 3, { timeout: 10000 });
-  const unmappedName = await page.$$eval('#filterBuilding option', opts =>
-    opts.map(o => o.value).find(v => v.startsWith('Unmapped Building')));
-  check('the unmapped building appears as a filter option', Boolean(unmappedName), unmappedName);
-  await page.select('#filterBuilding', unmappedName);
+  const unmappedOptionText = await page.$eval(`#filterBuilding option[value="${b1}"]`, el => el.textContent).catch(() => null);
+  check('the unmapped building appears as a filter option', Boolean(unmappedOptionText) && unmappedOptionText.startsWith('Unmapped Building'), unmappedOptionText);
+  await page.select('#filterBuilding', b1);
   await new Promise(r => setTimeout(r, 500)); // let the fire-and-forget renderBintrackerComparison() settle
 
   const blockHiddenForUnmapped = await page.$eval('#bintrackerComparisonBlock', el => getComputedStyle(el).display === 'none');
