@@ -257,8 +257,8 @@ async function runFlow(page, seedEnv, consoleErrors){
   // (which would instead make mr/pc read a diluted fraction, not 100%). ---
   const binAccessSectionVisible = await page.$eval('#binAccessSection', el => getComputedStyle(el).display !== 'none');
   check('the "Reported bin access" section is visible once at least one submission has the field', binAccessSectionVisible);
-  const binAccessByLabel = await page.$$eval('#binAccessBars .stream-bar-row', rows => Object.fromEntries(
-    rows.map(r => [r.querySelector('.stream-bar-label').textContent.trim(), r.querySelector('.stream-bar-value').textContent.trim()])
+  const binAccessByLabel = await page.$$eval('#binAccessBars .bin-access-tile', tiles => Object.fromEntries(
+    tiles.map(t => [t.querySelector('.lbl').textContent.trim(), t.querySelector('.val').textContent.trim()])
   ));
   check('Mixed Recycling reads 100% (the one bin-access-reporting submission checked it, and nothing dilutes it)',
     binAccessByLabel['Mixed Recycling'] === '100%', JSON.stringify(binAccessByLabel));

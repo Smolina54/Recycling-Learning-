@@ -304,8 +304,8 @@ async function runFlow(page, consoleErrors){
   // must actually be visible (not hidden, since there IS qualifying data).
   const binAccessSectionVisible = await page.$eval('#binAccessSection', el => getComputedStyle(el).display !== 'none');
   check('the "Reported bin access" section is visible when at least one in-scope submission has the field', binAccessSectionVisible);
-  const binAccessByLabel = await page.$$eval('#binAccessChart .stream-row', rows => Object.fromEntries(
-    rows.map(r => [r.querySelector('.name').textContent.trim(), r.querySelector('.pct').textContent.trim()])
+  const binAccessByLabel = await page.$$eval('#binAccessChart .bin-access-tile', tiles => Object.fromEntries(
+    tiles.map(t => [t.querySelector('.lbl').textContent.trim(), t.querySelector('.val').textContent.trim()])
   ));
   check('General Waste reads 100% (both bin-access-reporting submissions checked it)',
     binAccessByLabel['General Waste'] === '100%', JSON.stringify(binAccessByLabel));

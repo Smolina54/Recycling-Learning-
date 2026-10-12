@@ -2601,6 +2601,16 @@ var qrcode = function() {
   .stream-bar-fill{height:100%; transition:width .5s ease;}
   .stream-bar-value{font-family:var(--mono); font-size:12.5px; text-align:right;}
 
+  /* Workstream 16 follow-up (2026-10-12, Option A — confirmed with the user over the bar-chart
+     alternative): "Reported bin access" renders as colored stat tiles instead of reusing
+     "Accuracy by stream"'s horizontal-bar style, so the two sections read as visually distinct
+     rather than near-duplicates. Mirrors the color language already used for the id-gate's own
+     bin-access checkboxes (a colored swatch per stream). */
+  .bin-access-tiles{display:grid; grid-template-columns:repeat(5,1fr); gap:12px;}
+  .bin-access-tile{color:#fff; border-radius:10px; padding:14px 8px 12px; text-align:center; display:flex; flex-direction:column; justify-content:center; gap:6px;}
+  .bin-access-tile .val{font-family:var(--display); font-weight:700; font-size:22px; line-height:1; font-variant-numeric:tabular-nums;}
+  .bin-access-tile .lbl{font-family:var(--body); font-weight:500; font-size:10.5px; letter-spacing:0.01em; line-height:1.25; opacity:0.94;}
+
   .missed-list{display:flex; flex-direction:column; gap:10px;}
   .missed-row{display:grid; grid-template-columns:22px 1fr 90px 50px; align-items:center; gap:12px; padding:10px 14px; background:var(--paper); border:1px solid var(--line);}
   .missed-rank{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
@@ -2652,6 +2662,9 @@ var qrcode = function() {
      the <select> fields do) just leaves visible dead space around the small date control. Cap
      their growth instead of letting them inherit .filter-field's flex:1. */
   .filter-field-date{flex:0 1 170px; min-width:150px;}
+  /* From/To grouped into one flex unit so .filter-row's wrap always moves them together — without
+     this, each date field wraps independently and From/To can land on two separate rows. */
+  .filter-date-group{display:flex; gap:16px; flex:0 1 auto;}
   .filter-field span{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-soft);}
   #trendChart{position:relative;}
   .trend-svg{width:100%; height:220px; display:block; cursor:crosshair;}
@@ -2671,6 +2684,7 @@ var qrcode = function() {
 
   @media (max-width:640px){
     .stream-bar-row{grid-template-columns:100px 1fr 46px;}
+    .bin-access-tiles{grid-template-columns:repeat(2,1fr);}
     .missed-row{grid-template-columns:18px 1fr 60px;}
     .missed-bar-track{display:none;}
     table.group-table{font-size:12px;}
@@ -2867,8 +2881,10 @@ var qrcode = function() {
         <label class="filter-field"><span>Building</span><select id="filterBuilding"><option value="">All buildings</option></select></label>
         <label class="filter-field"><span>Tenant</span><select id="filterTenant" disabled><option value="">All tenants</option></select></label>
         <label class="filter-field"><span>Level</span><select id="filterLevel" disabled><option value="">All levels</option></select></label>
-        <label class="filter-field filter-field-date"><span>From date</span><input type="date" id="filterDateFrom"></label>
-        <label class="filter-field filter-field-date"><span>To date</span><input type="date" id="filterDateTo"></label>
+        <div class="filter-date-group">
+          <label class="filter-field filter-field-date"><span>From date</span><input type="date" id="filterDateFrom"></label>
+          <label class="filter-field filter-field-date"><span>To date</span><input type="date" id="filterDateTo"></label>
+        </div>
       </div>
       <p class="block-sub" id="focusNote" style="margin:14px 0 0;"></p>
     </div>
@@ -2890,7 +2906,7 @@ var qrcode = function() {
       <div class="report-block" id="binAccessSection" style="display:none;">
         <h3>Reported bin access</h3>
         <p class="block-sub">Share of completed inductions that reported having access to each bin type on their level - self-reported by the trainee, not configured by an admin.</p>
-        <div id="binAccessBars"></div>
+        <div class="bin-access-tiles" id="binAccessBars"></div>
       </div>
 
       <div class="report-block">
@@ -4262,11 +4278,12 @@ function showConfirm(message){
         stream: s,
         pct: Math.round((binAccessRows.filter(r => r.reportedBinAccess.includes(s)).length / binAccessRows.length) * 100),
       }));
+      // Option A (confirmed with the user, 2026-10-12): colored stat tiles, not a bar row — keeps
+      // this section visually distinct from "Accuracy by stream" directly above it.
       document.getElementById('binAccessBars').innerHTML = binAccessAgg.map(s => `
-        <div class="stream-bar-row">
-          <span class="stream-bar-label">${streamNames[s.stream]}</span>
-          <div class="stream-bar-track"><div class="stream-bar-fill" style="width:${s.pct}%; background:var(--${s.stream});"></div></div>
-          <span class="stream-bar-value">${s.pct}%</span>
+        <div class="bin-access-tile" style="background:var(--${s.stream});">
+          <span class="val">${s.pct}%</span>
+          <span class="lbl">${streamNames[s.stream]}</span>
         </div>
       `).join('');
       binAccessSection.style.display = '';

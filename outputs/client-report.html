@@ -119,6 +119,15 @@
   .stream-fill{height:100%; border-radius:5px;}
   .stream-row .pct{font-family:var(--mono); font-size:12px; text-align:right; font-variant-numeric:tabular-nums;}
 
+  /* Workstream 16 follow-up (2026-10-12, Option A): "Reported bin access" renders as colored stat
+     tiles instead of reusing the "Accuracy by stream" horizontal-bar style, so the two sections
+     read as visually distinct rather than near-duplicates. Mirrors the color language already used
+     for the id-gate's own bin-access checkboxes (a colored swatch per stream). */
+  .bin-access-tiles{display:grid; grid-template-columns:repeat(5,1fr); gap:10px;}
+  .bin-access-tile{color:#fff; border-radius:8px; padding:12px 6px 10px; text-align:center; display:flex; flex-direction:column; justify-content:center; gap:5px;}
+  .bin-access-tile .val{font-family:var(--display); font-weight:700; font-size:19px; line-height:1; font-variant-numeric:tabular-nums;}
+  .bin-access-tile .lbl{font-family:var(--body); font-weight:500; font-size:9.5px; letter-spacing:0.01em; line-height:1.25; opacity:0.94;}
+
   /* Workstream 16 follow-up (2026-10-12): per-building "Reported bin access" view toggle - lets
      the viewer (and, since this prints whatever's currently visible, the generated PDF) switch
      between the building's own combined % and a per-tenant breakdown table. */
@@ -180,6 +189,7 @@
     .kpi-strip{grid-template-columns:1fr 1fr;}
     .building-block-stats{grid-template-columns:1fr 1fr;}
     .stream-row{grid-template-columns:110px 1fr 40px;}
+    .bin-access-tiles{grid-template-columns:repeat(2,1fr);}
     .report-cover, .report-body{padding-left:24px; padding-right:24px;}
   }
 
@@ -348,7 +358,7 @@
             <div class="report-section" id="binAccessSection" style="display:none;">
               <p class="report-h2">Reported bin access</p>
               <p class="block-sub">Share of completed inductions that reported having access to each bin type on their level - self-reported by the trainee, not configured by an admin.</p>
-              <div class="stream-chart" id="binAccessChart"></div>
+              <div class="bin-access-tiles" id="binAccessChart"></div>
             </div>
             <div class="report-section">
               <p class="report-h2">Most commonly missed items</p>
@@ -687,6 +697,17 @@ function computeBinAccessAgg(rows){
     stream: s,
     pct: Math.round((binAccessRows.filter(r => r.reportedBinAccess.includes(s)).length / binAccessRows.length) * 100),
   }));
+}
+
+// Option A (confirmed with the user, 2026-10-12): colored stat tiles, not the "Accuracy by
+// stream" bar style - shared by the combined section and each building's "By building" view.
+function renderBinAccessTiles(agg){
+  return agg.map(s => `
+    <div class="bin-access-tile" style="background:var(--${s.stream});">
+      <span class="val">${s.pct}%</span>
+      <span class="lbl">${streamNames[s.stream]}</span>
+    </div>
+  `).join('');
 }
 
 // Workstream 16 follow-up (2026-10-12): per-tenant version of computeBinAccessAgg, for the
@@ -1083,13 +1104,7 @@ async function generateReport(){
       const binAccessAgg = computeBinAccessAgg(rows);
       const binAccessSection = document.getElementById('binAccessSection');
       if (binAccessAgg){
-        document.getElementById('binAccessChart').innerHTML = binAccessAgg.map(s => `
-          <div class="stream-row">
-            <span class="name">${streamNames[s.stream]}</span>
-            <div class="stream-track"><div class="stream-fill" style="width:${s.pct}%; background:var(--${s.stream});"></div></div>
-            <span class="pct">${s.pct}%</span>
-          </div>
-        `).join('');
+        document.getElementById('binAccessChart').innerHTML = renderBinAccessTiles(binAccessAgg);
         binAccessSection.style.display = 'block';
       } else {
         binAccessSection.style.display = 'none';
@@ -1152,13 +1167,7 @@ async function generateReport(){
           // the combined section above) if no submission in this building's range has the field.
           let binAccessHtml = '';
           if (b.binAccessAgg){
-            const buildingViewChart = b.binAccessAgg.map(s => `
-              <div class="stream-row">
-                <span class="name">${streamNames[s.stream]}</span>
-                <div class="stream-track"><div class="stream-fill" style="width:${s.pct}%; background:var(--${s.stream});"></div></div>
-                <span class="pct">${s.pct}%</span>
-              </div>
-            `).join('');
+            const buildingViewChart = renderBinAccessTiles(b.binAccessAgg);
             const tenantTableRows = b.binAccessByTenant.map(t => `
               <tr>
                 <td>${esc(t.tenantName)}</td>
@@ -1172,7 +1181,7 @@ async function generateReport(){
                 <button type="button" class="bin-access-view-btn active" data-view="building">By building</button>
                 <button type="button" class="bin-access-view-btn" data-view="tenant">By tenant</button>
               </div>
-              <div class="stream-chart bin-access-view bin-access-view-building" data-building-id="${b.id}">${buildingViewChart}</div>
+              <div class="bin-access-tiles bin-access-view bin-access-view-building" data-building-id="${b.id}">${buildingViewChart}</div>
               <table class="bin-access-tenant-table bin-access-view bin-access-view-tenant" data-building-id="${b.id}" style="display:none;">
                 <thead><tr><th>Tenant</th><th>General Waste</th><th>Mixed Recycling</th><th>Paper &amp; Cardboard</th><th>Organics</th><th>E-Waste</th></tr></thead>
                 <tbody>${tenantTableRows || '<tr><td colspan="6">No tenant-level data in this range.</td></tr>'}</tbody>
