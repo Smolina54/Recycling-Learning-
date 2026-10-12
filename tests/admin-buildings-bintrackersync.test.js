@@ -373,7 +373,7 @@ async function runFlow(page){
     projectId: 'esg-1-98f35',
     firestore: { rules: fs.readFileSync(RULES_PATH, 'utf8'), host: '127.0.0.1', port: 8080 },
   });
-  let newBuildingDocData = null, newBuildingId = null, newTenantNames = [], enrollmentCount = 0;
+  let newBuildingDocData = null, newBuildingId = null, newTenantDocs = [], enrollmentCount = 0;
   await verifyEnv.withSecurityRulesDisabled(async (context) => {
     const verifyDb = context.firestore();
     const newBuildingSnap = await getDocs(query(collection(verifyDb, 'buildings'), where('name', '==', 'My Tower')));
@@ -382,17 +382,28 @@ async function runFlow(page){
       newBuildingId = newBuildingSnap.docs[0].id;
       newBuildingDocData = newBuildingSnap.docs[0].data();
       const newTenantsSnap = await getDocs(collection(verifyDb, 'buildings', newBuildingId, 'tenants'));
-      newTenantNames = newTenantsSnap.docs.map(d => d.data().name);
+      newTenantDocs = newTenantsSnap.docs.map(d => ({ id: d.id, name: d.data().name }));
       enrollmentCount = (await getDocs(query(collection(verifyDb, 'enrollments'), where('buildingId', '==', newBuildingId)))).size;
     }
   });
   await verifyEnv.cleanup();
+  const newTenantNames = newTenantDocs.map(t => t.name);
   check('...but mapped to the ORIGINAL Bintracker name, not the edited one',
     newBuildingDocData && newBuildingDocData.bintrackerBuildingName === 'New Tower Pty Ltd', newBuildingDocData && newBuildingDocData.bintrackerBuildingName);
   check('only the CHECKED tenant (Acme Startup) was created, not the unchecked one (Beta Co)',
     newTenantNames.length === 1 && newTenantNames[0] === 'Acme Startup', JSON.stringify(newTenantNames));
   check('the new building is NOT auto-enrolled in anything, same as a plain "+ Add building"',
     enrollmentCount === 0, enrollmentCount);
+
+  // Workstream: a tenant added straight from "Add this building" (Bintracker discovery) has its
+  // name SET FROM the real Bintracker string - zero fuzzy-matching risk, same as the Synchronize
+  // tab's own "Import selected" flow - so its match must be auto-confirmed in the SAME action,
+  // not left for the admin to re-confirm a second time (the real gap the user found 2026-10-12).
+  const acmeStartupTenant = newTenantDocs.find(t => t.name === 'Acme Startup');
+  const discoveryMatch = acmeStartupTenant ? await readMatchDoc(newBuildingId, acmeStartupTenant.id) : null;
+  check('a tenant added via "Add this building" has its Bintracker match auto-confirmed in the same action',
+    discoveryMatch && discoveryMatch.status === 'confirmed' && discoveryMatch.bintrackerTenantRaw === 'Acme Startup',
+    JSON.stringify(discoveryMatch));
 
   // --- Workstream 17 (2026-10-09): re-filter against the live buildingsCache, so a building
   // mapped since the discovery doc was last computed never lingers in "Check for new buildings" -

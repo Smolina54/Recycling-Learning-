@@ -1566,6 +1566,7 @@ document.getElementById('discoveredBuildingsList').addEventListener('click', asy
       // here - adding a building, discovered via Bintracker or not, no longer auto-enrols it in any
       // program; see "Enrol an existing building" in Enrolled Buildings for that deliberate step.)
       const base = slugify(displayName) || crypto.randomUUID();
+      const confirmedByEmail = (auth && auth.currentUser) ? auth.currentUser.email : '';
       let newBuildingId = null;
       for (let attempt = 0; attempt < 5 && !newBuildingId; attempt++){
         const candidate = attempt === 0 ? base : `${base}-${crypto.randomUUID().slice(0, 6)}`;
@@ -1578,8 +1579,21 @@ document.getElementById('discoveredBuildingsList').addEventListener('click', asy
             checkedIndices.forEach(i => {
               const t = b.tenants[i];
               if (!t) return;
-              tx.set(doc(db, 'buildings', candidate, 'tenants', crypto.randomUUID()), {
+              // A tenant added straight from Bintracker discovery has its name SET FROM the real
+              // Bintracker string - zero fuzzy-matching risk, same reasoning already applied to the
+              // Synchronize tab's "Import selected" (fixed 2026-10-06) - so its match is written as
+              // already-confirmed in the SAME transaction instead of leaving the admin to re-confirm
+              // it a second time later (the real gap the user found 2026-10-12: "I added this
+              // building straight from Bintracker sync, why do I have to confirm it again?").
+              const tenantId = crypto.randomUUID();
+              const bintrackerLocationRaw = (t.primaryLocations && t.primaryLocations[0]) || '';
+              tx.set(doc(db, 'buildings', candidate, 'tenants', tenantId), {
                 name: t.bintrackerTenantRaw, levels: t.primaryLocations || [],
+              });
+              tx.set(doc(db, 'bintrackerTenantMatches', `${candidate}__${tenantId}`), {
+                buildingId: candidate, tenantId, tenantName: t.bintrackerTenantRaw,
+                bintrackerTenantRaw: t.bintrackerTenantRaw, bintrackerLocationRaw,
+                confirmedBy: confirmedByEmail, confirmedAt: serverTimestamp(), status: 'confirmed',
               });
             });
           });
