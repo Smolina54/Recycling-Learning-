@@ -497,6 +497,63 @@ async function runFlow(page, consoleErrors){
   check('Collins Tower (no bintrackerBuildingName set) shows no Real-world data sub-block at all - graceful absence',
     !pass1.collinsBlock.includes('Real-world data'), pass1.collinsBlock.slice(0, 400));
 
+  // --- Real bug found and fixed live, 2026-10-12: the user reported a building's own title
+  // "disappearing" on a page change while printing a real multi-building report. Root cause: a
+  // .building-block taller than one printed page (stats + chart + bin access + several findings,
+  // exactly what "Bintracker Test Tower" has here with 5 real findings) gets split by Paged.js -
+  // .building-block's own break-inside:avoid is only a hint, overridden once content is physically
+  // taller than a page - and the title (just the block's first child, not a running header) never
+  // reappeared on the continuation page. Fixed via a Paged.js running string (string-set on
+  // .building-block-name, read back as string(building-name, start) in a new @top-right margin box)
+  // - the same CSS Paged Media mechanism this file's @top-left/@bottom-left/@bottom-right already
+  // use for the document-level title/footer. Verified here against a REAL rendered PDF page (not a
+  // DOM scrollHeight/clientHeight guess, which this project's own established lesson says is not
+  // proof of anything print-related): every page whose running header names a building must
+  // actually contain that building's own content, and the report must genuinely span more than one
+  // page (otherwise this test would be checking nothing).
+  await page.click('#printReportBtn');
+  await page.waitForFunction(
+    () => { const f = document.querySelector('.print-frame'); return f && f.contentDocument && f.contentDocument.querySelectorAll('.pagedjs_page').length > 0; },
+    { timeout: 15000 }
+  );
+  await new Promise(r => setTimeout(r, 300));
+  const runningHeaderCheck = await page.evaluate(() => {
+    const iframeWin = document.querySelector('.print-frame').contentWindow;
+    const iframeDoc = document.querySelector('.print-frame').contentDocument;
+    const pages = [...iframeDoc.querySelectorAll('.pagedjs_page')];
+    // Paged.js injects the resolved string(building-name, start) value as a CSS `content` value on
+    // a ::after pseudo-element of .pagedjs_margin-content (confirmed by direct inspection - it is
+    // NOT a real DOM text node, so .textContent is always empty here even when the header renders
+    // correctly on screen/in the PDF).
+    return pages.map(p => {
+      const el = p.querySelector('.pagedjs_margin-top-right .pagedjs_margin-content');
+      const raw = el ? iframeWin.getComputedStyle(el, '::after').content : '';
+      const headerName = raw && raw !== 'none' && raw !== '""' ? raw.replace(/^"|"$/g, '') : '';
+      return { headerName, bodyText: p.textContent };
+    });
+  });
+  check('the real printed report spans more than one page (otherwise the running-header check below proves nothing)',
+    runningHeaderCheck.length > 1, runningHeaderCheck.length);
+  // Ground truth: the real order .building-block-name elements appear in the un-paginated source
+  // (not assumed - a finding's own prose doesn't always repeat its building's name, so checking a
+  // page's plain text for a literal substring match is unreliable; the real invariant that must
+  // hold is ordering, never which exact words a given page's content happens to contain).
+  const groundTruthOrder = await page.$$eval('.building-block-name', els => els.map(el => el.textContent.trim()));
+  let lastIndex = -1;
+  let orderingBroken = null;
+  for (const p of runningHeaderCheck) {
+    if (!p.headerName) continue;
+    const idx = groundTruthOrder.indexOf(p.headerName);
+    if (idx === -1 || idx < lastIndex) { orderingBroken = { headerName: p.headerName, idx, lastIndex, groundTruthOrder }; break; }
+    lastIndex = idx;
+  }
+  check('every non-empty running header names a real building, in the same order buildings actually appear (never wrong, never goes backward)',
+    !orderingBroken, orderingBroken ? JSON.stringify(orderingBroken) : '');
+  const anyNamedHeader = runningHeaderCheck.some(p => groundTruthOrder.includes(p.headerName));
+  check('at least one continuation page actually shows a running building-name header (the fix is doing real work, not just passing vacuously)',
+    anyNamedHeader, JSON.stringify(runningHeaderCheck.map(p => p.headerName)));
+  await page.evaluate(() => { const btn = document.getElementById('cancelPrintBtn'); if (btn) btn.click(); });
+
   // --- The two checkboxes are independent: uncheck one at a time, then both ---
   const editBtnCb1 = await page.waitForSelector('#editSelectionBtn', { visible: true, timeout: 5000 });
   await editBtnCb1.evaluate(el => el.scrollIntoView());

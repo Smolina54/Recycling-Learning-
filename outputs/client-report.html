@@ -140,7 +140,12 @@
   .bin-access-tenant-table{width:100%; border-collapse:collapse; font-family:var(--body); font-size:12px;}
   .bin-access-tenant-table th, .bin-access-tenant-table td{padding:7px 8px; text-align:left; border-bottom:1px solid var(--line);}
   .bin-access-tenant-table th{font-family:var(--mono); font-size:10px; letter-spacing:0.04em; text-transform:uppercase; color:var(--ink-soft); font-weight:500;}
-  .bin-access-tenant-table td.pct-cell{font-family:var(--mono); text-align:right; font-variant-numeric:tabular-nums;}
+  /* Stream columns carry that stream's own color (set inline per column, same tokens the tiles/bars
+     already use) so the table visually relates back to the rest of the app instead of reading as
+     plain, uncolored data - and sit centered under their header, matching the centered header text,
+     instead of the previous right-justified alignment. */
+  .bin-access-tenant-table th.stream-th{text-align:center; font-weight:700;}
+  .bin-access-tenant-table td.pct-cell{font-family:var(--mono); text-align:center; font-weight:500; font-variant-numeric:tabular-nums;}
 
   .findings-list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px;}
   .findings-list li{background:var(--panel); border-left:3px solid var(--forest); border-radius:4px; padding:14px 16px; font-family:var(--body); font-size:13.5px; line-height:1.55;}
@@ -211,6 +216,26 @@
         font-family:'Space Mono', monospace; font-size:8.5px; letter-spacing:0.08em;
         text-transform:uppercase; color:#8A968E;
       }
+      /* Real bug found 2026-10-12 (reported live by the user, then reproduced and confirmed via a
+         real generated PDF): a building's own .building-block can be taller than one page (stats +
+         stream chart + bin-access + key findings + Bintracker sections) - .building-block's own
+         break-inside:avoid is only a "please don't split this" hint, and is overridden once content
+         is physically taller than a page, same as any CSS fragmentation rule. When that split
+         happens, the building's name (just the block's own first child, not a running header) never
+         reappears on the continuation page - a reader landing on that page has no way to tell which
+         building it's about. Fixed the same way the document-level title/footer above already solve
+         an identical problem: a Paged.js running string, captured off the building name each time
+         one is encountered in the flow and redisplayed in a margin box on every page of the "By
+         building" section - continuation pages included, not just the first page of each building. */
+      @top-right{
+        /* "start" (not the default "first"): the building whose content is AT THE TOP of this page
+           - found live, the default showed whichever building's title happened to appear ANYWHERE
+           on the page, which on a page that starts mid-building-A and also contains building-B's
+           own title further down, wrongly showed "B" even above A's own continued content. */
+        content:string(building-name, start);
+        font-family:'Space Mono', monospace; font-size:8.5px; letter-spacing:0.08em;
+        text-transform:uppercase; color:#8A968E;
+      }
       @bottom-left{
         content:"Tradeflex · FutureGreen Program";
         font-family:'Space Mono', monospace; font-size:8.5px; color:#8A968E;
@@ -246,6 +271,10 @@
     #byBuildingSection{break-inside:auto;}
     .building-block, .findings-list li{break-inside:avoid;}
     .report-h2{break-after:avoid;}
+    /* Feeds the @top-right running header above - captures this building's name the moment its
+       title renders, so every later page (until the next building's title is reached) keeps
+       showing it, continuation pages included. */
+    .building-block-name{string-set: building-name content();}
   }
 </style>
 </head>
@@ -1171,9 +1200,10 @@ async function generateReport(){
             const tenantTableRows = b.binAccessByTenant.map(t => `
               <tr>
                 <td>${esc(t.tenantName)}</td>
-                ${t.byStream.map(s => `<td class="pct-cell">${s.pct}%</td>`).join('')}
+                ${t.byStream.map(s => `<td class="pct-cell" style="color:var(--${s.stream});">${s.pct}%</td>`).join('')}
               </tr>
             `).join('');
+            const tenantTableHead = `<tr><th>Tenant</th>${streams.map(s => `<th class="stream-th" style="color:var(--${s});">${streamNames[s]}</th>`).join('')}</tr>`;
             binAccessHtml = `
               <h4>Reported bin access</h4>
               <p class="block-sub">Share of completed inductions that reported having access to each bin type on their level - self-reported by the trainee, not configured by an admin.</p>
@@ -1183,7 +1213,7 @@ async function generateReport(){
               </div>
               <div class="bin-access-tiles bin-access-view bin-access-view-building" data-building-id="${b.id}">${buildingViewChart}</div>
               <table class="bin-access-tenant-table bin-access-view bin-access-view-tenant" data-building-id="${b.id}" style="display:none;">
-                <thead><tr><th>Tenant</th><th>General Waste</th><th>Mixed Recycling</th><th>Paper &amp; Cardboard</th><th>Organics</th><th>E-Waste</th></tr></thead>
+                <thead>${tenantTableHead}</thead>
                 <tbody>${tenantTableRows || '<tr><td colspan="6">No tenant-level data in this range.</td></tr>'}</tbody>
               </table>`;
           }

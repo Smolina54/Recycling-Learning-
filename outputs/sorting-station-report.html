@@ -2611,6 +2611,23 @@ var qrcode = function() {
   .bin-access-tile .val{font-family:var(--display); font-weight:700; font-size:22px; line-height:1; font-variant-numeric:tabular-nums;}
   .bin-access-tile .lbl{font-family:var(--body); font-weight:500; font-size:10.5px; letter-spacing:0.01em; line-height:1.25; opacity:0.94;}
 
+  /* "By building"/"By tenant" toggle, shown only once the filter narrows to exactly one building -
+     same pattern/classes already proven in client-report.html's own per-building bin-access block. */
+  .bin-access-toggle{display:flex; gap:8px; margin-bottom:14px;}
+  .bin-access-view-btn{
+    font-family:var(--body); font-size:12px; font-weight:500; padding:6px 14px; border-radius:var(--radius);
+    border:1px solid var(--line); background:var(--paper); color:var(--ink-soft); cursor:pointer;
+  }
+  .bin-access-view-btn.active{background:var(--forest); border-color:var(--forest); color:#fff;}
+  .bin-access-tenant-table{width:100%; border-collapse:collapse; font-family:var(--body); font-size:13px;}
+  .bin-access-tenant-table th, .bin-access-tenant-table td{padding:9px 10px; text-align:left; border-bottom:1px solid var(--line);}
+  .bin-access-tenant-table th{font-family:var(--mono); font-size:11px; letter-spacing:0.04em; text-transform:uppercase; color:var(--ink-soft); font-weight:500;}
+  /* Stream columns carry that stream's own color (inline, per column) so the table visually relates
+     back to the tiles/bars elsewhere instead of reading as plain data, and sit centered under their
+     header - matching the centered header text - instead of right-justified. */
+  .bin-access-tenant-table th.stream-th{text-align:center; font-weight:700;}
+  .bin-access-tenant-table td.pct-cell{font-family:var(--mono); text-align:center; font-weight:500; font-variant-numeric:tabular-nums;}
+
   .missed-list{display:flex; flex-direction:column; gap:10px;}
   .missed-row{display:grid; grid-template-columns:22px 1fr 90px 50px; align-items:center; gap:12px; padding:10px 14px; background:var(--paper); border:1px solid var(--line);}
   .missed-rank{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
@@ -2906,7 +2923,15 @@ var qrcode = function() {
       <div class="report-block" id="binAccessSection" style="display:none;">
         <h3>Reported bin access</h3>
         <p class="block-sub">Share of completed inductions that reported having access to each bin type on their level - self-reported by the trainee, not configured by an admin.</p>
-        <div class="bin-access-tiles" id="binAccessBars"></div>
+        <div class="bin-access-toggle" id="binAccessToggle" style="display:none;">
+          <button type="button" class="bin-access-view-btn active" data-view="building">By building</button>
+          <button type="button" class="bin-access-view-btn" data-view="tenant">By tenant</button>
+        </div>
+        <div class="bin-access-tiles bin-access-view bin-access-view-building" id="binAccessBars"></div>
+        <table class="bin-access-tenant-table bin-access-view bin-access-view-tenant" id="binAccessTenantTable" style="display:none;">
+          <thead id="binAccessTenantHead"></thead>
+          <tbody id="binAccessTenantBody"></tbody>
+        </table>
       </div>
 
       <div class="report-block">
@@ -4147,6 +4172,18 @@ function showConfirm(message){
     bintrackerActiveTab = 'impact'; renderActiveBintrackerTab();
   });
 
+  // "Reported bin access" By building/By tenant toggle (follow-up, 2026-10-12) - only ever visible
+  // when the filter has narrowed to exactly one building (see renderReport()), so a plain pair of
+  // direct listeners is enough - no per-building scoping needed, unlike the client PDF's version.
+  document.getElementById('binAccessToggle').addEventListener('click', (e) => {
+    const btn = e.target.closest('.bin-access-view-btn');
+    if (!btn) return;
+    const view = btn.dataset.view;
+    document.getElementById('binAccessToggle').querySelectorAll('.bin-access-view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+    document.getElementById('binAccessBars').style.display = view === 'building' ? '' : 'none';
+    document.getElementById('binAccessTenantTable').style.display = view === 'tenant' ? '' : 'none';
+  });
+
   async function renderBintrackerComparison(rows){
     const token = ++bintrackerRenderToken;
     const block = document.getElementById('bintrackerComparisonBlock');
@@ -4199,6 +4236,27 @@ function showConfirm(message){
     bintrackerFindingsByTab = { current: findingsCurrent, impact: findingsImpact };
     block.style.display = 'block';
     renderActiveBintrackerTab();
+  }
+
+  // Per-tenant version of the combined "reported bin access" aggregate, for the By building/By
+  // tenant toggle - only meaningful (and only shown) once the filter narrows to exactly one
+  // building, same "By tenant" shape client-report.html's own per-building block already uses. A
+  // tenant with zero reportedBinAccess submissions simply doesn't appear - same "never guess"
+  // principle as the combined aggregate returning nothing to show when there's no qualifying data.
+  function computeBinAccessByTenant(rows){
+    const binAccessRows = rows.filter(r => Array.isArray(r.reportedBinAccess));
+    const tenantIds = [...new Set(binAccessRows.map(r => r.tenantId).filter(Boolean))];
+    return tenantIds.map(tenantId => {
+      const tRows = binAccessRows.filter(r => r.tenantId === tenantId);
+      const tenantName = tRows[0].tenant || tenantId;
+      return {
+        tenantId, tenantName,
+        byStream: streams.map(s => ({
+          stream: s,
+          pct: Math.round((tRows.filter(r => r.reportedBinAccess.includes(s)).length / tRows.length) * 100),
+        })),
+      };
+    }).sort((a, b) => a.tenantName.localeCompare(b.tenantName));
   }
 
   function renderReport(rows, sourceLabel, attempts){
@@ -4287,6 +4345,34 @@ function showConfirm(message){
         </div>
       `).join('');
       binAccessSection.style.display = '';
+
+      // Follow-up (2026-10-12): the By building/By tenant toggle, same as the one already in the
+      // client PDF's own per-building block - only meaningful once the filter has narrowed to
+      // exactly one building (otherwise "by tenant" would mix tenants from different buildings
+      // together under one list, same ambiguity the combined aggregate already avoids by just not
+      // trying to split by tenant at all). Always reset to the "By building" view on every render
+      // (a fresh filter/date change shouldn't carry over a stale toggle choice).
+      const binAccessToggle = document.getElementById('binAccessToggle');
+      const singleBuildingId = document.getElementById('filterBuilding').value;
+      const binAccessByTenant = singleBuildingId ? computeBinAccessByTenant(rows) : [];
+      if (singleBuildingId && binAccessByTenant.length){
+        document.getElementById('binAccessTenantHead').innerHTML =
+          `<tr><th>Tenant</th>${streams.map(s => `<th class="stream-th" style="color:var(--${s});">${streamNames[s]}</th>`).join('')}</tr>`;
+        document.getElementById('binAccessTenantBody').innerHTML = binAccessByTenant.map(t => `
+          <tr>
+            <td>${esc(t.tenantName)}</td>
+            ${t.byStream.map(s => `<td class="pct-cell" style="color:var(--${s.stream});">${s.pct}%</td>`).join('')}
+          </tr>
+        `).join('');
+        binAccessToggle.style.display = '';
+        binAccessToggle.querySelectorAll('.bin-access-view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === 'building'));
+        document.getElementById('binAccessBars').style.display = '';
+        document.getElementById('binAccessTenantTable').style.display = 'none';
+      } else {
+        binAccessToggle.style.display = 'none';
+        document.getElementById('binAccessBars').style.display = '';
+        document.getElementById('binAccessTenantTable').style.display = 'none';
+      }
     } else {
       binAccessSection.style.display = 'none';
     }
