@@ -203,8 +203,13 @@ async function main(){
     process.exit(1);
   }
 
+  // recomputeRecyclingLevelNow (Workstream 26, 2026-10-12) fires automatically after confirming a
+  // Bintracker tenant match - this suite doesn't start the Functions emulator, so it's expected to
+  // fail gracefully (soft, non-blocking - same reasoning as every other automatic Cloud Function
+  // trigger in this app's admin-buildings.html).
   const unexpectedErrors = consoleErrors.filter(e =>
-    !e.includes('Failed to load resource') && !e.includes('400'));
+    !e.includes('Failed to load resource') && !e.includes('400')
+    && !e.includes('Automatic recycling-level recompute failed'));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
   await browser.close();

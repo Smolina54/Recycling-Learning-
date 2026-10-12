@@ -183,12 +183,15 @@ async function main(){
   // read now, expected to succeed for real, so an error from it here would be a genuine bug.
   // syncOneBuildingNow (Workstream 21) fires automatically after "Add this building" succeeds in
   // this test's own flow above - also unreachable here, same graceful-failure reasoning.
+  // recomputeRecyclingLevelNow (Workstream 26) fires automatically after "Add this building",
+  // "Import selected", and confirming a tenant match - same reasoning, unreachable in this suite.
   const unexpectedErrors = consoleErrors.filter(e =>
     !e.includes('Failed to load resource') && !e.includes('400')
     && !e.includes('syncBintrackerTenants') && !e.includes('deleteTenantPermanently')
     && !e.includes('CORS policy')
     && !e.includes('Failed to synchronize Bintracker tenants') && !e.includes('Failed to permanently delete tenant')
-    && !e.includes('Automatic first sync failed'));
+    && !e.includes('Automatic first sync failed')
+    && !e.includes('Automatic recycling-level recompute failed'));
   check('no UNEXPECTED console/page errors during the whole flow', unexpectedErrors.length === 0, unexpectedErrors.join(' || '));
 
   await browser.close();

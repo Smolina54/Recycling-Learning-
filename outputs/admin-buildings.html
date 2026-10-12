@@ -891,6 +891,22 @@ function mostCommonLocationForTenant(buildingId, bintrackerTenantRaw){
 // Writes the admin-confirmed match (a suggested candidate, accepted as-is, or a manually-picked
 // one from the "Change" select — both funnel through here) — composite key mirrors the
 // buildingAccess convention already used elsewhere in this codebase.
+// Workstream 26 (2026-10-12): confirming a tenant's Bintracker match used to just sit there until
+// the next nightly sync before its recyclingLevelPct got computed - everything needed is already
+// in bintrackerRows, so this triggers the real recompute immediately instead. Deliberately a
+// separate, lighter call than syncOneBuildingNow (no live Bintracker API call at all, pure
+// Firestore read+write) - same soft, non-blocking failure handling as every other automatic
+// background trigger in this file: a failure here is never treated as a failure of the
+// confirmation action itself, which has already succeeded by the time this runs.
+async function triggerRecyclingLevelRecompute(buildingId){
+  try {
+    const recomputeRecyclingLevelNow = httpsCallable(functions, 'recomputeRecyclingLevelNow', { timeout: 60000 });
+    await recomputeRecyclingLevelNow({ buildingId });
+  } catch (err){
+    console.error('Automatic recycling-level recompute failed:', err);
+  }
+}
+
 async function confirmBintrackerMatch(building, tenant, bintrackerTenantRaw){
   const matchId = `${building.id}__${tenant.id}`;
   const bintrackerLocationRaw = mostCommonLocationForTenant(building.id, bintrackerTenantRaw);
@@ -913,6 +929,7 @@ async function confirmBintrackerMatch(building, tenant, bintrackerTenantRaw){
     bintrackerMatchesByBuildingId.set(building.id, matches);
     bintrackerChangeOpenKey = null;
     refreshBuildingsView();
+    await triggerRecyclingLevelRecompute(building.id);
   } catch (err){
     console.error('Failed to save Bintracker tenant match:', err);
     await showAlert('Failed to save match - check the console for details.');
@@ -1690,6 +1707,7 @@ document.getElementById('bintrackerSyncBuildingsList').addEventListener('click',
       bintrackerMatchesByBuildingId.set(buildingId, matches);
       await refreshOneBuildingInCache(buildingId);
       renderBintrackerSyncBuildingsList();
+      await triggerRecyclingLevelRecompute(buildingId);
     } catch (err){
       console.error('Failed to import new tenants:', err);
       await showAlert('Failed to import - check the console for details.');
@@ -2117,6 +2135,7 @@ document.getElementById('buildingsList').addEventListener('click', async (e) => 
       newMatches.forEach(({ tenantId, data }) => matches.set(tenantId, data));
       bintrackerMatchesByBuildingId.set(buildingId, matches);
       refreshBuildingsView();
+      await triggerRecyclingLevelRecompute(buildingId);
     } catch (err){
       console.error('Failed to bulk-confirm Bintracker matches:', err);
       await showAlert('Failed to confirm the exact matches - check the console for details.');

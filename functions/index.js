@@ -1176,6 +1176,34 @@ exports.syncOneBuildingNow = onCall(
   }
 );
 
+// recomputeRecyclingLevelNow — Workstream 26 (2026-10-12): confirming a tenant's Bintracker match
+// (the single "Confirm" button, "Confirm all exact matches", or the Synchronize tab's "Import
+// selected") used to write the confirmed match doc and stop there - nothing ever re-ran
+// writeRecyclingLevelAggregates() against it, so a freshly-confirmed tenant's recyclingLevelPct
+// stayed unset until the NEXT nightly scheduled run (up to ~24h later), even though all the real
+// data needed to compute it was already sitting in bintrackerRows the whole time. Unlike
+// syncOneBuildingNow above, this is a PURE Firestore read+write - no Bintracker secrets, no live
+// API call at all - so it's safe to call every time a match is confirmed without going anywhere
+// near Bintracker's own "please don't hit us on every click" preference.
+exports.recomputeRecyclingLevelNow = onCall(
+  { timeoutSeconds: 60, maxInstances: 5, concurrency: 5 },
+  async (request) => {
+    await assertIsAdmin(request.auth);
+
+    const { buildingId } = request.data || {};
+    if (typeof buildingId !== 'string' || !BUILDING_ID_PATTERN.test(buildingId)) {
+      throw new HttpsError('invalid-argument', 'A valid building id is required.');
+    }
+
+    const db = admin.firestore();
+    const buildingSnap = await db.doc(`buildings/${buildingId}`).get();
+    if (!buildingSnap.exists) throw new HttpsError('not-found', 'No building found for that id.');
+
+    await writeRecyclingLevelAggregates(db, buildingId);
+    return { ok: true };
+  }
+);
+
 // Same chunked delete-in-batches idiom as deleteAllMatchingBuildingId above, scoped by tenantId
 // instead of buildingId. tenantIds are always crypto.randomUUID() values (see
 // admin-buildings.html's add-tenant/import-from-Excel handlers), so a single-field equality query
