@@ -103,9 +103,9 @@ async function main() {
   check('all 5 of building A\'s rows were stored', rowsASnap.size === 5, String(rowsASnap.size));
 
   const buildingASnap = await db.doc(`buildings/${buildingAId}`).get();
-  // gw 10 + mr 20 + pc 15 + og 5 + ew 5 = generated 55; recovered (mr+pc+og) = 40 -> 40/55 = 72.7% -> rounds to 73.
+  // gw 10 + mr 20 + pc 15 + og 5 + ew 5 = generated 55; recovered (everything except gw) = 45 -> 45/55 = 81.8% -> rounds to 82.
   check('building A\'s recyclingLevelPct was computed from its real rows (5 rows clears the sample-size floor)',
-    buildingASnap.data().recyclingLevelPct === 73, JSON.stringify(buildingASnap.data()));
+    buildingASnap.data().recyclingLevelPct === 82, JSON.stringify(buildingASnap.data()));
   check('building A got a lastAutoRefreshAt timestamp (successful path)',
     Boolean(buildingASnap.data().lastAutoRefreshAt), JSON.stringify(buildingASnap.data()));
 

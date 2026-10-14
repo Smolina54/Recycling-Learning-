@@ -244,12 +244,12 @@
   .detail-icon svg{width:26px; height:26px;}
   .detail-title-group .stream-code{font-family:var(--mono); font-size:12px; letter-spacing:0.1em; color:var(--ink-soft); text-transform:uppercase;}
   .detail-title-group h2{font-family:var(--display); text-transform:uppercase; font-size:28px; margin:2px 0 6px;}
-  .detail-desc{color:var(--ink-soft); font-size:15px; max-width:600px;}
+  .detail-desc{color:var(--ink-soft); font-size:15px;}
 
   /* Empty by default for every building with no custom item-stream config — populated by
      applyBuildingNotes() only when this building's setup differs from the standard 5 streams. */
   .building-note{
-    margin-top:12px; padding:10px 14px; max-width:600px;
+    margin-top:12px; padding:10px 14px;
     border-left:3px solid var(--ink-soft); font-size:13.5px; color:var(--ink-soft);
   }
   .building-note:empty{display:none;}
@@ -659,9 +659,12 @@
         <div class="rule-card no">
           <h3>✕ Never goes in</h3>
           <ul>
-            <li>Plastic/glass bottles, aluminium/steel cans, paper, or cardboard</li>
-            <li>Food scraps or liquids</li>
-            <li>Batteries or e-waste</li>
+            <li>Plastic/glass bottles, aluminium/steel cans → <strong style="color:var(--mr);">Mixed Recycling</strong></li>
+            <li>Paper or cardboard → <strong style="color:var(--pc);">Paper &amp; Cardboard</strong></li>
+            <li>Food scraps → <strong style="color:var(--og);">Organics</strong></li>
+            <li>Liquids - don't belong in any bin, empty them in an appropriate place first</li>
+            <li>Batteries - need their own dedicated battery bin</li>
+            <li>E-waste → <strong style="color:var(--ew);">E-Waste</strong></li>
           </ul>
         </div>
       </div>
@@ -694,10 +697,9 @@
         <div class="rule-card no">
           <h3>✕ Never goes in</h3>
           <ul>
-            <li>Soft plastics - bags, cling wrap, bubble wrap</li>
-            <li>Paper or cardboard (own stream)</li>
-            <li>Long-life milk and juice cartons</li>
-            <li>Coffee cups (plastic-lined, not recyclable here)</li>
+            <li>Soft plastics - bags, cling wrap, bubble wrap → <strong style="color:var(--gw);">General Waste</strong> (unless your floor has a dedicated soft-plastics stream)</li>
+            <li>Paper or cardboard → <strong style="color:var(--pc);">Paper &amp; Cardboard</strong></li>
+            <li>Coffee cups (plastic-lined) → <strong style="color:var(--gw);">General Waste</strong></li>
             <li>Anything still holding food or liquid</li>
           </ul>
         </div>
@@ -731,10 +733,10 @@
         <div class="rule-card no">
           <h3>✕ Never goes in</h3>
           <ul>
-            <li>Greasy or food-stained cardboard (e.g. pizza box → General Waste)</li>
-            <li>Paper towel</li>
-            <li>Glossy, laminated, or plastic-coated paper</li>
-            <li>Coffee cups (plastic-lined, not recyclable here)</li>
+            <li>Greasy or food-stained cardboard (e.g. pizza box) → <strong style="color:var(--gw);">General Waste</strong></li>
+            <li>Paper towel → <strong style="color:var(--gw);">General Waste</strong></li>
+            <li>Glossy, laminated, or plastic-coated paper → <strong style="color:var(--gw);">General Waste</strong></li>
+            <li>Coffee cups (plastic-lined) → <strong style="color:var(--gw);">General Waste</strong></li>
           </ul>
         </div>
       </div>
@@ -767,11 +769,11 @@
         <div class="rule-card no">
           <h3>✕ Never goes in</h3>
           <ul>
-            <li>Liquids - tip these down a sink first</li>
-            <li>Tea bags</li>
-            <li>Soft plastic packaging</li>
-            <li>Biodegradable or compostable bags and takeaway containers</li>
-            <li>Cutlery, straws, or plastic-lined cups</li>
+            <li>Liquids - don't belong in any bin, empty them in an appropriate place first</li>
+            <li>Tea bags → <strong style="color:var(--gw);">General Waste</strong></li>
+            <li>Soft plastic packaging → <strong style="color:var(--gw);">General Waste</strong> (unless your floor has a dedicated soft-plastics stream)</li>
+            <li>Biodegradable or compostable bags and takeaway containers → <strong style="color:var(--gw);">General Waste</strong></li>
+            <li>Cutlery, straws, or plastic-lined cups → <strong style="color:var(--gw);">General Waste</strong></li>
           </ul>
         </div>
       </div>

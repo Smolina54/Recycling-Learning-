@@ -113,23 +113,28 @@ const atFloorMixed = [
 check('at exactly 5 rows, computes real weight-based recovered/generated (60/100 = 60%)',
   computeRecyclingLevelPct(atFloorMixed) === 60, computeRecyclingLevelPct(atFloorMixed));
 
-// gw/ew rows must count toward GENERATED (the denominator) but never toward RECOVERED (the
-// numerator) - this is the actual 2026-10-05 behavior change from the pre-fix formula, which used
-// to exclude them from both. Adding more gw/ew weight on top of atFloorMixed must LOWER the
-// percentage (more generated, same recovered), not leave it unchanged.
+// gw rows must count toward GENERATED (the denominator) but never toward RECOVERED (the
+// numerator). ew rows, however, now count as RECOVERED too - this is the 2026-10-15 "everything
+// except General Waste" formula change (matching Bintracker's own real methodology), which
+// superseded the narrower 2026-10-05 "mr/pc/og only" formula. Adding more gw weight on top of
+// atFloorMixed dilutes the percentage (more generated, same recovered); adding ew weight instead
+// raises both generated AND recovered, so it does not dilute the same way.
 const moreGwEw = [
   ...atFloorMixed,
   row('gw', 40), row('ew', 20),
 ];
-check('additional gw/ew weight dilutes the percentage (still counts as generated, never recovered)',
-  computeRecyclingLevelPct(moreGwEw) === 38, computeRecyclingLevelPct(moreGwEw)); // 60/(100+60) = 37.5 -> rounds to 38
+check('additional gw weight dilutes the percentage, but additional ew weight now counts as recovered too',
+  computeRecyclingLevelPct(moreGwEw) === 50, computeRecyclingLevelPct(moreGwEw)); // generated=160, gw=80, recovered=160-80=80 -> 80/160=50%
 
-// All-recyclable-streams and all-non-recyclable-streams boundary cases (weight-based, not
-// wasteOutcome-based - that field is no longer read by this function at all).
+// All-recovered and all-non-recovered boundary cases (weight-based, not wasteOutcome-based -
+// that field is no longer read by this function at all). "Recovered" is everything except
+// General Waste, so an ew-only/mixed-with-gw array still counts its ew weight as recovered.
 const allRecyclable = [row('mr', 10), row('mr', 20), row('pc', 30), row('pc', 10), row('og', 30)];
 check('all rows in recyclable streams computes 100%', computeRecyclingLevelPct(allRecyclable) === 100, computeRecyclingLevelPct(allRecyclable));
-const allNonRecyclable = [row('gw', 10), row('gw', 20), row('ew', 30), row('gw', 10), row('ew', 30)];
-check('all rows in non-recyclable streams computes 0%', computeRecyclingLevelPct(allNonRecyclable) === 0, computeRecyclingLevelPct(allNonRecyclable));
+const allGeneralWaste = [row('gw', 10), row('gw', 20), row('gw', 30), row('gw', 10), row('gw', 30)];
+check('all rows are General Waste computes 0% (the only stream that never counts as recovered)', computeRecyclingLevelPct(allGeneralWaste) === 0, computeRecyclingLevelPct(allGeneralWaste));
+const gwAndEwMix = [row('gw', 10), row('gw', 20), row('ew', 30), row('gw', 10), row('ew', 30)];
+check('a gw+ew mix counts the ew weight as recovered (everything except gw), not 0%', computeRecyclingLevelPct(gwAndEwMix) === 60, computeRecyclingLevelPct(gwAndEwMix));
 
 // A row with no usable weight (missing/non-numeric) contributes 0kg to both sides, not NaN/crash.
 const missingWeight = [row('mr', 10), row('mr', 20), { ourStream: 'pc' }, row('og', 20), row('og', 10)];

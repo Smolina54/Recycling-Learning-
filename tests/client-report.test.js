@@ -106,38 +106,57 @@ async function seedTestData(){
       buildingId: b1, programId: 'recycling-sorting', email: 'a3@example.com', startedAt: now,
     });
 
-    // --- Point 1, Phase C (revised 2026-09-24): Real-world data seed data for b3 ---
-    // Induction accuracy is SUM(avoided)/SUM(total) across a tenant's submissions, not a doc count —
-    // so an exact percentage is free to set via one "real weight" doc, padded to `subCount` total
-    // contributing docs with 0/0 entries so the >=3-submissions floor is exercised on its own.
-    async function seedInductionSubs({ tenantId, tenantName, level, stream, pct, subCount, timestamp }){
+    // --- Point 1, Phase C (revised 2026-10-12): Real-world data seed data for b3, weight-based ---
+    // Induction accuracy is SUM(avoided)/SUM(total) COMBINED across the 3 recyclable streams per
+    // tenant, not a per-stream figure anymore — a single breakdown entry on one recyclable stream
+    // still fully controls the combined percentage, padded to `subCount` total contributing docs
+    // with 0/0 entries so the >=3-submissions floor is exercised on its own. `extraBreakdown` lets
+    // a case add gw/ew-only entries (the combined sum ignores them entirely) to prove those streams
+    // never contribute.
+    async function seedInductionSubs({ tenantId, tenantName, level, stream, pct, subCount, extraBreakdown, timestamp }){
       for (let i = 0; i < subCount; i++){
-        const breakdown = { [stream]: i === 0 ? { avoided: pct, total: 100 } : { avoided: 0, total: 0 } };
+        const breakdown = stream ? { [stream]: i === 0 ? { avoided: pct, total: 100 } : { avoided: 0, total: 0 } } : {};
+        if (extraBreakdown) Object.assign(breakdown, extraBreakdown);
         await setDoc(doc(db, 'submissions', `client-report-test-${tenantId}-${i}`), {
           buildingId: b3, buildingName: 'Bintracker Test Tower', tenantId, tenantName, level,
           email: `${tenantId}-${i}@example.com`, name: 'Test Person', programId: 'recycling-sorting',
-          score: pct, avoided: pct, total: 100, breakdown,
+          score: pct || 0, avoided: pct || 0, total: 100, breakdown,
           timestamp: timestamp || now, device_type: 'desktop', duration_seconds: 120,
         });
       }
     }
-    // Real Bintracker rows ARE individually-counted documents, so the exact "real" share is limited
-    // by `count` — `recycledCount` of the first `count` rows are contaminated:false (the actual
-    // "good"/recovered signal the comparison logic reads, since the 2026-10-05 fix moved off the
-    // unreliable `wasteOutcome` field). `wasteOutcome` is still stored (matches the real doc shape)
-    // but deliberately uncorrelated with `recycledCount` — it's no longer read, so it must not
-    // accidentally make a wrong test pass. Defaults to `externalOnly: false` (internal rows) — per
-    // that same fix, per-tenant comparisons can only ever be computed from internal data; pass
-    // `externalOnly: true` explicitly only for the one case proving external-only data is excluded.
-    async function seedBintrackerRows({ tenantRaw, level, stream, count, recycledCount, externalOnly, collectDate }){
+    // Real Bintracker rows, weight-based: `recyclableWeights` go on a recyclable stream (counted in
+    // BOTH recovered and generated kg), `otherWeights` go on General Waste (generated kg only).
+    // `contaminated` is deliberately set to `true` on every row — the opposite of what the old,
+    // now-abandoned per-row logic would have needed for these percentages to come out right — so if
+    // the comparison ever silently reverted to reading `contaminated`, every tenant below would read
+    // as 0% real recycling instead of the real percentages asserted further down, making this a live
+    // regression guard rather than inert data. Defaults to `externalOnly: false` (internal rows) —
+    // confirmed against real production data: a per-tenant comparison can only ever be computed from
+    // internal data, external rows carry no per-tenant granularity at all.
+    async function seedRealRows({ tenantRaw, level, recyclableStream, recyclableWeights, otherWeights, collectDate }){
+      for (const w of (recyclableWeights || [])){
+        await setDoc(doc(collection(db, 'bintrackerRows')), {
+          buildingId: b3, bintrackerTenantRaw: tenantRaw, bintrackerLocationRaw: level,
+          ourStream: recyclableStream || 'mr', wasteTypeRaw: 'test', contaminated: true, externalOnly: false,
+          wasteOutcome: 'Recycled', collectDate: collectDate || todayStr, weight: w, fetchedAt: now,
+        });
+      }
+      for (const w of (otherWeights || [])){
+        await setDoc(doc(collection(db, 'bintrackerRows')), {
+          buildingId: b3, bintrackerTenantRaw: tenantRaw, bintrackerLocationRaw: level,
+          ourStream: 'gw', wasteTypeRaw: 'test', contaminated: true, externalOnly: false,
+          wasteOutcome: 'Recycled', collectDate: collectDate || todayStr, weight: w, fetchedAt: now,
+        });
+      }
+    }
+    // `externalOnly:true` rows for the one case proving they're correctly excluded.
+    async function seedExternalOnlyRows({ tenantRaw, level, count, collectDate }){
       for (let i = 0; i < count; i++){
         await setDoc(doc(collection(db, 'bintrackerRows')), {
           buildingId: b3, bintrackerTenantRaw: tenantRaw, bintrackerLocationRaw: level,
-          ourStream: stream, wasteTypeRaw: 'test',
-          contaminated: i >= recycledCount,
-          externalOnly: externalOnly === true,
-          wasteOutcome: 'Recycled',
-          collectDate: collectDate || todayStr, weight: 10, fetchedAt: now,
+          ourStream: 'og', wasteTypeRaw: 'test', contaminated: true, externalOnly: true,
+          wasteOutcome: 'Recycled', collectDate: collectDate || todayStr, weight: 10, fetchedAt: now,
         });
       }
     }
@@ -148,45 +167,43 @@ async function seedTestData(){
       });
     }
 
-    // Tenant Agree: induction 30% on Mixed Recycling (low, <75%), real Bintracker data shows 40%
-    // successfully recycled (also low, internal rows) -> AGREE (low+low).
+    // Tenant Agree: induction 30% (low, <75%), real recycling rate 40% (also low, internal rows,
+    // by weight: 4 recyclable + 6 general-waste rows at 10kg each) -> AGREE (low+low).
     await seedInductionSubs({ tenantId: tenantAgreeId, tenantName: 'Tenant Agree', level: 'Level 5', stream: 'mr', pct: 30, subCount: 3 });
-    await seedBintrackerRows({ tenantRaw: 'BT Acme Agree', level: 'Level 5', stream: 'mr', count: 5, recycledCount: 2 });
+    await seedRealRows({ tenantRaw: 'BT Acme Agree', level: 'Level 5', recyclableStream: 'mr', recyclableWeights: Array(4).fill(10), otherWeights: Array(6).fill(10) });
     await seedMatch({ tenantId: tenantAgreeId, tenantName: 'Tenant Agree', tenantRaw: 'BT Acme Agree', level: 'Level 5' });
 
-    // Tenant Disagree: induction 30% on Paper & Cardboard (low), but real data is 100% recycled
-    // (good) -> DISAGREE, a 70-point gap (large, "real recycling is notably better...").
+    // Tenant Disagree: induction 30% (low), but real recycling rate is 100% (good, 5 recyclable + 0
+    // other rows) -> DISAGREE, a 70-point gap (large, "real recycling is notably better...").
     await seedInductionSubs({ tenantId: tenantDisagreeId, tenantName: 'Tenant Disagree', level: 'Level 6', stream: 'pc', pct: 30, subCount: 3 });
-    await seedBintrackerRows({ tenantRaw: 'BT Acme Disagree', level: 'Level 6', stream: 'pc', count: 5, recycledCount: 5 });
+    await seedRealRows({ tenantRaw: 'BT Acme Disagree', level: 'Level 6', recyclableStream: 'pc', recyclableWeights: Array(5).fill(10), otherWeights: [] });
     await seedMatch({ tenantId: tenantDisagreeId, tenantName: 'Tenant Disagree', tenantRaw: 'BT Acme Disagree', level: 'Level 6' });
 
-    // Tenant BelowFloor: 3 induction submissions (clears that floor) on Organics, but only 4
-    // matching internal Bintracker rows (below the >=5 floor) -> must produce NO finding at all.
+    // Tenant BelowFloor: 3 induction submissions (clears that floor), but only 4 matching internal
+    // Bintracker rows (below the >=5 floor) -> must produce NO finding at all.
     await seedInductionSubs({ tenantId: tenantFloorId, tenantName: 'Tenant BelowFloor', level: 'Level 7', stream: 'og', pct: 30, subCount: 3 });
-    await seedBintrackerRows({ tenantRaw: 'BT Acme Floor', level: 'Level 7', stream: 'og', count: 4, recycledCount: 1 });
+    await seedRealRows({ tenantRaw: 'BT Acme Floor', level: 'Level 7', recyclableStream: 'og', recyclableWeights: [10], otherWeights: [10,10,10] });
     await seedMatch({ tenantId: tenantFloorId, tenantName: 'Tenant BelowFloor', tenantRaw: 'BT Acme Floor', level: 'Level 7' });
 
     // Tenant AtFloor: exactly at BOTH floors (3 submissions, 5 real rows) -> must still produce a
     // finding — proves the floors are inclusive, not exclusive.
     await seedInductionSubs({ tenantId: tenantAtFloorId, tenantName: 'Tenant AtFloor', level: 'Level 8', stream: 'mr', pct: 100, subCount: 3 });
-    await seedBintrackerRows({ tenantRaw: 'BT Acme AtFloor', level: 'Level 8', stream: 'mr', count: 5, recycledCount: 5 });
+    await seedRealRows({ tenantRaw: 'BT Acme AtFloor', level: 'Level 8', recyclableStream: 'mr', recyclableWeights: Array(5).fill(10), otherWeights: [] });
     await seedMatch({ tenantId: tenantAtFloorId, tenantName: 'Tenant AtFloor', tenantRaw: 'BT Acme AtFloor', level: 'Level 8' });
 
-    // Tenant GwEw: abundant, "obviously findable" data (30% induction / 30% real, low+low, well over
-    // both floors) on General Waste AND E-Waste — the two streams that must NEVER produce a finding
-    // on either comparison, a hard scope filter rather than a low-probability outcome.
-    await seedInductionSubs({ tenantId: tenantGwEwId, tenantName: 'Tenant GwEw', level: 'Level 9', stream: 'gw', pct: 30, subCount: 5 });
-    await seedBintrackerRows({ tenantRaw: 'BT Acme GwEw', level: 'Level 9', stream: 'gw', count: 10, recycledCount: 3 });
-    await seedInductionSubs({ tenantId: tenantGwEwId, tenantName: 'Tenant GwEw', level: 'Level 9', stream: 'ew', pct: 30, subCount: 5 });
-    await seedBintrackerRows({ tenantRaw: 'BT Acme GwEw', level: 'Level 9', stream: 'ew', count: 10, recycledCount: 3 });
+    // Tenant GwEw: induction breakdown ONLY ever covers General Waste and E-Waste (never Mixed
+    // Recycling/Paper & Cardboard/Organics) -> the combined induction total is 0 -> no finding,
+    // regardless of how much real recyclable data exists for them. Confirms the GW/EW exclusion
+    // happens on the INDUCTION side (the only side that still has a per-stream concept at all).
+    await seedInductionSubs({ tenantId: tenantGwEwId, tenantName: 'Tenant GwEw', level: 'Level 9', stream: null, pct: 0, subCount: 5, extraBreakdown: { gw: { avoided: 3, total: 10 }, ew: { avoided: 3, total: 10 } } });
+    await seedRealRows({ tenantRaw: 'BT Acme GwEw', level: 'Level 9', recyclableStream: 'mr', recyclableWeights: Array(6).fill(10), otherWeights: Array(4).fill(10) });
     await seedMatch({ tenantId: tenantGwEwId, tenantName: 'Tenant GwEw', tenantRaw: 'BT Acme GwEw', level: 'Level 9' });
 
-    // Tenant ExternalOnlyOrganics: Organics data recorded ONLY via external/contractor hauling
-    // (externalOnly:true), zero internal rows -> no Organics finding, with no special-case code
-    // (falls out of the internal-only >=5 floor) — proves the 2026-10-05 fix's real population
-    // requirement (internal rows only) correctly excludes external-only data.
+    // Tenant ExternalOnlyOrganics: real data recorded ONLY via external/contractor hauling
+    // (externalOnly:true), zero internal rows -> no finding — a per-tenant comparison can only ever
+    // be computed from internal data (confirmed against real production data).
     await seedInductionSubs({ tenantId: tenantExternalOnlyOrganicsId, tenantName: 'Tenant ExternalOnlyOrganics', level: 'Level 10', stream: 'og', pct: 20, subCount: 3 });
-    await seedBintrackerRows({ tenantRaw: 'BT Acme ExternalOnlyOrganics', level: 'Level 10', stream: 'og', count: 10, recycledCount: 8, externalOnly: true });
+    await seedExternalOnlyRows({ tenantRaw: 'BT Acme ExternalOnlyOrganics', level: 'Level 10', count: 10 });
     await seedMatch({ tenantId: tenantExternalOnlyOrganicsId, tenantName: 'Tenant ExternalOnlyOrganics', tenantRaw: 'BT Acme ExternalOnlyOrganics', level: 'Level 10' });
 
     // --- Comparison #2 ("Induction impact") ---
@@ -197,9 +214,10 @@ async function seedTestData(){
       level: 'Level 11', email: `${tenantImpactImprovedId}@example.com`, name: 'Test Person', programId: 'recycling-sorting',
       score: 80, avoided: 8, total: 10, timestamp: now, device_type: 'desktop', duration_seconds: 120,
     });
-    // Before: 2/5 = 40% recycled. After: 4/5 = 80% recycled. Gap 40pts (large, at exactly the 5/5 floor).
-    await seedBintrackerRows({ tenantRaw: 'BT Acme ImpactImproved', level: 'Level 11', stream: 'mr', count: 5, recycledCount: 2, collectDate: yesterdayUTCStr });
-    await seedBintrackerRows({ tenantRaw: 'BT Acme ImpactImproved', level: 'Level 11', stream: 'mr', count: 5, recycledCount: 4, collectDate: todayUTCStr });
+    // Before: 2 recyclable + 3 other = 5 rows -> 40%. After: 4 recyclable + 1 other = 5 rows -> 80%.
+    // Gap 40pts (large, at exactly the 5/5 floor on each side).
+    await seedRealRows({ tenantRaw: 'BT Acme ImpactImproved', level: 'Level 11', recyclableStream: 'mr', recyclableWeights: Array(2).fill(10), otherWeights: Array(3).fill(10), collectDate: yesterdayUTCStr });
+    await seedRealRows({ tenantRaw: 'BT Acme ImpactImproved', level: 'Level 11', recyclableStream: 'mr', recyclableWeights: Array(4).fill(10), otherWeights: Array(1).fill(10), collectDate: todayUTCStr });
     await seedMatch({ tenantId: tenantImpactImprovedId, tenantName: 'Tenant ImpactImproved', tenantRaw: 'BT Acme ImpactImproved', level: 'Level 11' });
 
     await setDoc(doc(db, 'submissions', `client-report-test-${tenantImpactDeclinedId}`), {
@@ -207,9 +225,10 @@ async function seedTestData(){
       level: 'Level 12', email: `${tenantImpactDeclinedId}@example.com`, name: 'Test Person', programId: 'recycling-sorting',
       score: 80, avoided: 8, total: 10, timestamp: now, device_type: 'desktop', duration_seconds: 120,
     });
-    // Before: 8/10 = 80% recycled. After: 5/10 = 50% recycled. Gap 30pts, declined.
-    await seedBintrackerRows({ tenantRaw: 'BT Acme ImpactDeclined', level: 'Level 12', stream: 'pc', count: 10, recycledCount: 8, collectDate: yesterdayUTCStr });
-    await seedBintrackerRows({ tenantRaw: 'BT Acme ImpactDeclined', level: 'Level 12', stream: 'pc', count: 10, recycledCount: 5, collectDate: todayUTCStr });
+    // Before: 8 recyclable + 2 other = 10 rows -> 80%. After: 5 recyclable + 5 other = 10 rows -> 50%.
+    // Gap 30pts, declined.
+    await seedRealRows({ tenantRaw: 'BT Acme ImpactDeclined', level: 'Level 12', recyclableStream: 'pc', recyclableWeights: Array(8).fill(10), otherWeights: Array(2).fill(10), collectDate: yesterdayUTCStr });
+    await seedRealRows({ tenantRaw: 'BT Acme ImpactDeclined', level: 'Level 12', recyclableStream: 'pc', recyclableWeights: Array(5).fill(10), otherWeights: Array(5).fill(10), collectDate: todayUTCStr });
     await seedMatch({ tenantId: tenantImpactDeclinedId, tenantName: 'Tenant ImpactDeclined', tenantRaw: 'BT Acme ImpactDeclined', level: 'Level 12' });
   });
   return { b1, b2, b3 };
@@ -464,14 +483,14 @@ async function runFlow(page, consoleErrors){
 
   check('Bintracker Test Tower block shows the current-state sub-block', pass1.btBlock.includes('Real-world data: current state'), pass1.btBlock.slice(0, 200));
   check('Bintracker Test Tower block shows the induction-impact sub-block', pass1.btBlock.includes('Real-world data: induction impact'), pass1.btBlock.slice(0, 200));
-  check('reports the low+low agreeing tenant+stream correctly',
-    pass1.btBlock.includes('Tenant Agree') && pass1.btBlock.includes('low induction result matches low real recycling') && pass1.btBlock.includes('30%') && pass1.btBlock.includes('40%'),
+  check('reports the low+low agreeing tenant correctly',
+    pass1.btBlock.includes('Tenant Agree') && pass1.btBlock.includes('Low induction result matches low real recycling') && pass1.btBlock.includes('30%') && pass1.btBlock.includes('40%'),
     pass1.btBlock.slice(0, 800));
-  check('reports the disagreeing tenant+stream correctly (induction low, real high, large gap)',
-    pass1.btBlock.includes('Tenant Disagree') && pass1.btBlock.includes('real recycling is notably better than the induction result suggests') && pass1.btBlock.includes('30%') && pass1.btBlock.includes('100%'),
+  check('reports the disagreeing tenant correctly (induction low, real high, large gap)',
+    pass1.btBlock.includes('Tenant Disagree') && pass1.btBlock.includes('Real recycling is notably better than the induction result suggests') && pass1.btBlock.includes('30%') && pass1.btBlock.includes('100%'),
     pass1.btBlock.slice(0, 800));
-  check('current-state sub-block includes the count-not-weight honesty note',
-    pass1.btBlock.includes('collection count') && pass1.btBlock.includes('not weight'), pass1.btBlock.slice(0, 400));
+  check('current-state sub-block describes the weight-based combined formula',
+    pass1.btBlock.includes('combined induction result') && pass1.btBlock.includes('real recycling rate') && pass1.btBlock.includes('weight-based formula'), pass1.btBlock.slice(0, 400));
   check('current-state sub-block includes the representativeness + snapshot honesty notes',
     pass1.btBlock.includes('reflect only the people who completed the induction') && pass1.btBlock.includes('snapshot of current data'),
     pass1.btBlock.slice(0, 600));
@@ -488,10 +507,10 @@ async function runFlow(page, consoleErrors){
   check('external-only Organics rows (no internal data for that tenant) produce no Organics finding',
     !pass1.btBlock.includes('Tenant ExternalOnlyOrganics'), pass1.btBlock.slice(0, 300));
   check('induction-impact sub-block reports the improved tenant (large gap, at exactly the 5/5 floor)',
-    pass1.btBlock.includes('Tenant ImpactImproved') && pass1.btBlock.includes('real recycling improved significantly after the induction') && pass1.btBlock.includes('40%') && pass1.btBlock.includes('80%'),
+    pass1.btBlock.includes('Tenant ImpactImproved') && pass1.btBlock.includes('Real recycling improved significantly after the induction') && pass1.btBlock.includes('40%') && pass1.btBlock.includes('80%'),
     pass1.btBlock.slice(0, 900));
   check('induction-impact sub-block reports the declined tenant, with its recommendation',
-    pass1.btBlock.includes('Tenant ImpactDeclined') && pass1.btBlock.includes('real recycling dropped after the induction') && pass1.btBlock.includes('80%') && pass1.btBlock.includes('50%') && pass1.btBlock.includes("Worth checking whether something changed in this tenant's space"),
+    pass1.btBlock.includes('Tenant ImpactDeclined') && pass1.btBlock.includes('Real recycling dropped after the induction') && pass1.btBlock.includes('80%') && pass1.btBlock.includes('50%') && pass1.btBlock.includes("Worth checking whether something changed in this tenant's space"),
     pass1.btBlock.slice(0, 900));
 
   check('Collins Tower (no bintrackerBuildingName set) shows no Real-world data sub-block at all - graceful absence',

@@ -32,9 +32,11 @@ function fmt(daysAgo) {
 // functions/index.js's own `_admin` export rather than requiring firebase-admin directly here.
 //
 // `wasteOutcome` is stored (matches the real doc shape) but deliberately uncorrelated with the
-// expected result — it's no longer read by the formula, only `ourStream` (recovered = mr/pc/og
-// weight) and `weight` (generated = ALL streams' weight) matter now, which is why every row below
-// uses a DISTINCT, deliberately non-uniform weight — proves the math is really weight-based, not
+// expected result — it's no longer read by the formula, only `ourStream` (recovered = generated -
+// General Waste weight, revised 2026-10-15 to match Bintracker's own real dashboard methodology,
+// confirmed against a real screenshot - see functions/bintracker.js's own comment on this) and
+// `weight` (generated = ALL streams' weight) matter now, which is why every row below uses a
+// DISTINCT, deliberately non-uniform weight — proves the math is really weight-based, not
 // accidentally passing because every row happened to weigh the same.
 async function testRecyclingLevelAggregation() {
   const { _writeRecyclingLevelAggregates, _getAdminFirestoreForTests } = require('../functions/index.js');
@@ -50,9 +52,10 @@ async function testRecyclingLevelAggregation() {
   await db.doc(`buildings/${buildingId}/tenants/${tenantUnconfirmedId}`).set({ name: 'Unconfirmed Co', levels: ['L1'] });
 
   // Building-level population = EXTERNAL (externalOnly:true) rows only, regardless of tenant.
-  // mr 40 + pc 30 + og 20 + gw 5 + ew 5 = generated 100; recovered (mr+pc+og) = 90 -> 90%.
-  // gw/ew legitimately count toward "generated" now (real NABERS denominator = ALL waste), but
-  // never toward "recovered" — this is the actual behavior change from the pre-2026-10-05 formula.
+  // mr 40 + pc 30 + og 20 + gw 5 + ew 5 = generated 100; recovered (everything except gw) = 95 -> 95%.
+  // gw is the ONLY stream excluded from "recovered" (ew now counts, revised 2026-10-15 to match
+  // Bintracker's own real dashboard methodology) — it still counts toward "generated" (real NABERS
+  // denominator = ALL waste).
   const buildingExternalRows = [
     { ourStream: 'mr', weight: 40, bintrackerTenantRaw: 'Confirmed Raw Co' },
     { ourStream: 'pc', weight: 30, bintrackerTenantRaw: 'Confirmed Raw Co' },
@@ -68,7 +71,7 @@ async function testRecyclingLevelAggregation() {
   const buildingExcludedInternalRow = { ourStream: 'mr', weight: 999, externalOnly: false, bintrackerTenantRaw: 'Unrelated Internal Co' };
 
   // Confirmed Co's own tenant-level population = INTERNAL rows for 'Confirmed Raw Co' exactly.
-  // mr 40 + pc 20 + og 10 + gw 20 + ew 10 = generated 100; recovered = 70 -> 70%.
+  // mr 40 + pc 20 + og 10 + gw 20 + ew 10 = generated 100; recovered (everything except gw) = 80 -> 80%.
   const confirmedTenantInternalRows = [
     { ourStream: 'mr', weight: 40, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
     { ourStream: 'pc', weight: 20, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
@@ -82,7 +85,7 @@ async function testRecyclingLevelAggregation() {
   // included, a real discriminating check, not just "happens to still pass").
   const caseVariantInternalRow = { ourStream: 'mr', weight: 500, externalOnly: false, bintrackerTenantRaw: 'confirmed raw co' };
 
-  // "Other Co" — 5 internal rows, would be 30/50=60% IF its match were confirmed; its match doc
+  // "Other Co" — 5 internal rows, would be 40/50=80% IF its match were confirmed; its match doc
   // below is deliberately left as status:'pending' to prove an unconfirmed match never feeds the
   // tenant-level field, same "admin reviews, never fully automatic" principle established for the
   // rest of this workstream.
@@ -127,12 +130,12 @@ async function testRecyclingLevelAggregation() {
   await _writeRecyclingLevelAggregates(db, buildingId);
 
   const buildingSnap = await db.doc(`buildings/${buildingId}`).get();
-  check('building-wide recyclingLevelPct computed from EXTERNAL rows only, kg recovered/generated (90/100 -> 90%)',
-    buildingSnap.data().recyclingLevelPct === 90, JSON.stringify(buildingSnap.data()));
+  check('building-wide recyclingLevelPct computed from EXTERNAL rows only, kg recovered(everything but gw)/generated (95/100 -> 95%)',
+    buildingSnap.data().recyclingLevelPct === 95, JSON.stringify(buildingSnap.data()));
 
   const confirmedTenantSnap = await db.doc(`buildings/${buildingId}/tenants/${tenantConfirmedId}`).get();
-  check('confirmed tenant recyclingLevelPct computed from only its own exact-case INTERNAL rows (70/100 -> 70%)',
-    confirmedTenantSnap.data().recyclingLevelPct === 70, JSON.stringify(confirmedTenantSnap.data()));
+  check('confirmed tenant recyclingLevelPct computed from only its own exact-case INTERNAL rows (80/100 -> 80%)',
+    confirmedTenantSnap.data().recyclingLevelPct === 80, JSON.stringify(confirmedTenantSnap.data()));
 
   const unconfirmedTenantSnap = await db.doc(`buildings/${buildingId}/tenants/${tenantUnconfirmedId}`).get();
   check('a tenant whose match is only "pending" (not confirmed) gets no recyclingLevelPct field at all',

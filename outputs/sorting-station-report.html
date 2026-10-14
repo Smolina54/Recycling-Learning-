@@ -3997,90 +3997,116 @@ function showConfirm(message){
     return `${esc(tenantName || 'This tenant')}${levels.size === 1 ? ' on ' + esc([...levels][0]) : ''}`;
   }
 
-  // ---- Comparison #1 — "Current state": does what a tenant knows match what their bin shows now ----
-  // Per tenant + one of the 3 recyclable streams, within the report's current date range:
-  // induction accuracy = sum(breakdown[stream].avoided)/sum(...total) across that tenant's
-  // submissions in range; real cleanliness = share of that tenant+stream's INTERNAL
-  // (externalOnly===false) Bintracker rows with contaminated===false. Both sides classified
-  // against the same 75% pass-mark bar used everywhere else in this app. Skips a tenant+stream pair
-  // entirely (no finding) below the sample-size floor (<3 induction submissions contributing, or <5
-  // matching internal Bintracker rows) — too little data to say anything meaningful.
+  // Shared "real recycling rate" calculation for both comparisons below — the EXACT same
+  // weight-based formula already proven and deployed for the id-gate's recyclingLevelPct banner
+  // (functions/bintracker.js's computeRecyclingLevelPct): recovered kg divided by generated kg
+  // (weight across ALL of the rows passed in, every stream included) — never `contaminated`. The
+  // caller decides which population to pass in (one tenant's internal rows, optionally pre-split
+  // by date).
   //
-  // Revised 2026-10-05, two real findings from production data (Tower 2 - Collins Square,
-  // Docklands): (1) `wasteOutcome` — originally used here as "the more reliable, 100%-populated
-  // proxy" for `contaminated` — turned out to be a hardcoded constant ("Recycled" on every single
-  // one of 15,612 real rows), carrying zero signal; `contaminated` is in fact the one that varies in
-  // real data (2.6% true), so it's used here instead. (2) EXTERNAL (externalOnly===true) rows turned
-  // out to have no per-tenant granularity at all in real Bintracker data — in that same building,
-  // only a single building-wide waste-consolidation entry had any external rows; all 13 real
-  // tenants' own activity is recorded internally. A per-tenant comparison can therefore only ever be
-  // computed from internal rows — confirmed directly with the user. A building that composts a
-  // stream on-site simply has too few internal rows recorded that way for it, so the floor still
-  // naturally excludes it — no special-case code needed.
+  // Revised 2026-10-12 — real bug found by the user, confirmed against real production data
+  // (101/171/360/80 Collins St, 5 Martin Place): `contaminated` carries almost no real signal in
+  // practice — near-0% across EVERY stream at 4 of the 5 real mapped buildings, including General
+  // Waste (where "contamination" isn't even a meaningful concept), strongly suggesting it's rarely
+  // populated with real operational judgement rather than genuinely excellent sorting everywhere
+  // (the same class of problem already found once before with `wasteOutcome`, which turned out to
+  // be a hardcoded constant). Both comparisons below switched from per-stream/`contaminated`-based
+  // to this per-tenant, weight-based formula instead — trading per-stream granularity (no longer
+  // "is Mixed Recycling itself contaminated") for a number built only from fields already confirmed
+  // trustworthy (weight, ourStream, externalOnly).
+  //
+  // "Recovered" revised again 2026-10-15 to match functions/bintracker.js's own identical revision:
+  // originally only mr/pc/og counted (a scope choice limiting "recovered" to the streams this
+  // induction teaches), but the user shared a real screenshot of Bintracker's own dashboard for 80
+  // Collins St South Tower reporting a 49.2% "Recycling Rate" that only reconciles as
+  // (Total - General Waste) / Total - confirmed by hand from Bintracker's own per-waste-type
+  // weights. Switched to the same definition here so this comparison's "real recycling rate" always
+  // matches recyclingLevelPct's own number for the same tenant/building (and what a client would
+  // see on Bintracker's own platform), instead of silently using a narrower, inconsistent one.
+  const MIN_REAL_ROWS_FOR_COMPARISON = 5;
+  const NON_RECOVERED_STREAM_FOR_COMPARISON = 'gw';
+  function computeRealRecyclingPctByWeight(rows){
+    if (rows.length < MIN_REAL_ROWS_FOR_COMPARISON) return null;
+    const weightOf = r => typeof r.weight === 'number' ? r.weight : 0;
+    const generatedKg = rows.reduce((sum, r) => sum + weightOf(r), 0);
+    if (generatedKg <= 0) return null;
+    const nonRecoveredKg = rows.filter(r => r.ourStream === NON_RECOVERED_STREAM_FOR_COMPARISON).reduce((sum, r) => sum + weightOf(r), 0);
+    return Math.round(((generatedKg - nonRecoveredKg) / generatedKg) * 100);
+  }
+
+  // ---- Comparison #1 — "Current state": does what a tenant knows match what their bin shows now ----
+  // Per tenant, COMBINED across the 3 recyclable streams, within the report's current date range:
+  // induction accuracy = sum(breakdown[stream].avoided)/sum(...total) across Mixed Recycling, Paper
+  // & Cardboard, and Organics together, across that tenant's submissions in range; real recycling
+  // rate = computeRealRecyclingPctByWeight() over that tenant's INTERNAL (externalOnly===false)
+  // Bintracker rows (every stream — the function itself restricts the RECOVERED side to the 3
+  // recyclable streams, same as recyclingLevelPct). Both sides classified against the same 75%
+  // pass-mark bar used everywhere else in this app. Skips a tenant entirely (no finding) below the
+  // sample-size floor (<3 induction submissions contributing, or <5 matching internal Bintracker
+  // rows, or zero real weight) — too little data to say anything meaningful.
   function computeCurrentStateFindings(tenantRows, matches, bintrackerRows){
     const findings = [];
     matches.forEach(match => {
       const subsForTenant = tenantRows.filter(r => r.tenantId === match.tenantId);
-      BINTRACKER_STREAMS.forEach(stream => {
-        let avoided = 0, total = 0, subCount = 0;
-        subsForTenant.forEach(r => {
+      if (subsForTenant.length < 3) return;
+      let avoided = 0, total = 0;
+      subsForTenant.forEach(r => {
+        BINTRACKER_STREAMS.forEach(stream => {
           const a = r[stream + '_avoided'], t = r[stream + '_total'];
-          if (typeof a === 'number' && typeof t === 'number'){ avoided += a; total += t; subCount++; }
+          if (typeof a === 'number' && typeof t === 'number'){ avoided += a; total += t; }
         });
-        if (subCount < 3 || total === 0) return;
-        const inductionPct = Math.round((avoided / total) * 100);
+      });
+      if (total === 0) return;
+      const inductionPct = Math.round((avoided / total) * 100);
 
-        const realRows = bintrackerRows.filter(r =>
-          r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.ourStream === stream && r.externalOnly === false);
-        if (realRows.length < 5) return;
-        const realPct = Math.round((realRows.filter(r => r.contaminated === false).length / realRows.length) * 100);
+      const realRows = bintrackerRows.filter(r => r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.externalOnly === false);
+      const realPct = computeRealRecyclingPctByWeight(realRows);
+      if (realPct === null) return;
 
-        const inductionLow = inductionPct < 75;
-        const realLow = realPct < 75;
-        const streamLabel = streamNames[stream];
-        const who = bintrackerWho(match.tenantName, subsForTenant);
-        const gap = Math.abs(inductionPct - realPct);
-        const large = gap >= 30;
-        const N = subCount, M = realRows.length;
+      const inductionLow = inductionPct < 75;
+      const realLow = realPct < 75;
+      const who = bintrackerWho(match.tenantName, subsForTenant);
+      const gap = Math.abs(inductionPct - realPct);
+      const large = gap >= 30;
+      const N = subsForTenant.length, M = realRows.length;
 
-        if (inductionLow && realLow){
+      if (inductionLow && realLow){
+        findings.push({
+          text: `<b>Low induction result matches low real recycling</b> - ${who} scored ${inductionPct}% across Mixed Recycling, Paper & Cardboard, and Organics in the induction (based on ${N} completions), and only ${realPct}% of their real waste (by weight, across ${M} collections) was successfully recycled - consistent with the induction result. Both point to the same gap worth addressing.`,
+          concern: true,
+        });
+      } else if (!inductionLow && !realLow){
+        findings.push({
+          text: `<b>Strong induction result matches strong real recycling</b> - ${who} scored ${inductionPct}% across Mixed Recycling, Paper & Cardboard, and Organics in the induction (based on ${N} completions), and ${realPct}% of their real waste (by weight, across ${M} collections) was successfully recycled - consistent with the induction result.`,
+          concern: false,
+        });
+      } else if (!inductionLow && realLow){
+        // Good induction result, low real recycling.
+        if (large){
           findings.push({
-            text: `<b>${streamLabel}: low induction result matches low real recycling</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), and only ${realPct}% of their real ${streamLabel} collections (${M} loads) were successfully recycled - consistent with the induction result. Both point to the same gap worth addressing.`,
+            text: `<b>Strong induction result, but a significant gap in real recycling</b> - ${who} scored ${inductionPct}% across Mixed Recycling, Paper & Cardboard, and Organics in the induction (based on ${N} completions), but only ${realPct}% of their real waste (by weight, across ${M} collections) was successfully recycled - a ${gap}-point gap. Consider checking bin signage, and whether everyone using this space - not just those who completed the induction - has seen this information.`,
             concern: true,
           });
-        } else if (!inductionLow && !realLow){
+        } else {
           findings.push({
-            text: `<b>${streamLabel}: strong induction result matches strong real recycling</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), and ${realPct}% of their real ${streamLabel} collections (${M} loads) were successfully recycled - consistent with the induction result.`,
+            text: `<b>Good induction result, with a modest gap in real recycling</b> - ${who} scored ${inductionPct}% across Mixed Recycling, Paper & Cardboard, and Organics in the induction (based on ${N} completions), but only ${realPct}% of their real waste (by weight, across ${M} collections) was successfully recycled - a ${gap}-point gap, worth keeping an eye on.`,
+            concern: true,
+          });
+        }
+      } else {
+        // Low induction result, good real recycling - real behavior better than the induction result suggests.
+        if (large){
+          findings.push({
+            text: `<b>Real recycling is notably better than the induction result suggests</b> - ${who} scored ${inductionPct}% across Mixed Recycling, Paper & Cardboard, and Organics in the induction (based on ${N} completions), but ${realPct}% of their real waste (by weight, across ${M} collections) was successfully recycled - a ${gap}-point gap. Worth understanding who is actually responsible for sorting decisions in this space - real behaviour looks stronger than the induction results alone would suggest, which may mean other staff are already sorting well, or that those who completed the induction aren't representative of everyone using the space.`,
             concern: false,
           });
-        } else if (!inductionLow && realLow){
-          // Good induction result, low real recycling.
-          if (large){
-            findings.push({
-              text: `<b>${streamLabel}: strong induction result, but a significant gap in real recycling</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but only ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap. Consider checking bin signage, and whether everyone using this space - not just those who completed the induction - has seen this information.`,
-              concern: true,
-            });
-          } else {
-            findings.push({
-              text: `<b>${streamLabel}: good induction result, with a modest gap in real recycling</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but only ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap, worth keeping an eye on.`,
-              concern: true,
-            });
-          }
         } else {
-          // Low induction result, good real recycling - real behavior better than the induction result suggests.
-          if (large){
-            findings.push({
-              text: `<b>${streamLabel}: real recycling is notably better than the induction result suggests</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap. Worth understanding who is actually responsible for sorting decisions in this space - real behaviour looks stronger than the induction results alone would suggest, which may mean other staff are already sorting well, or that those who completed the induction aren't representative of everyone using the space.`,
-              concern: false,
-            });
-          } else {
-            findings.push({
-              text: `<b>${streamLabel}: real recycling is somewhat better than the induction result suggests</b> - ${who} scored ${inductionPct}% on ${streamLabel} in the induction (based on ${N} completions), but ${realPct}% of their real collections (${M} loads) were successfully recycled - a ${gap}-point gap, worth keeping an eye on.`,
-              concern: false,
-            });
-          }
+          findings.push({
+            text: `<b>Real recycling is somewhat better than the induction result suggests</b> - ${who} scored ${inductionPct}% across Mixed Recycling, Paper & Cardboard, and Organics in the induction (based on ${N} completions), but ${realPct}% of their real waste (by weight, across ${M} collections) was successfully recycled - a ${gap}-point gap, worth keeping an eye on.`,
+            concern: false,
+          });
         }
-      });
+      }
     });
     return findings;
   }
@@ -4089,12 +4115,11 @@ function showConfirm(message){
   // Cutoff, per tenant: the latest timestamp among that tenant's OWN submissions docs — not the
   // report's date-range filter (allSubs, below, is the unfiltered `allRows` set, not the
   // date-filtered `rows`), and explicitly not a link's expiresAt (unreliable — expiresAt is
-  // optional and a tenant can have multiple links over time). Before/after = share of that
-  // tenant+stream's INTERNAL (externalOnly===false) Bintracker rows with contaminated===false,
-  // split on collectDate vs the cutoff — same 2026-10-05 revision as Comparison #1 above
-  // (wasteOutcome is a hardcoded constant in real data; per-tenant granularity only exists
-  // internally). Needs >=5 rows on EACH side independently, and only surfaces a finding when the
-  // two sides differ by >=10 points (avoids over-interpreting noise from small samples).
+  // optional and a tenant can have multiple links over time). Before/after = computeRealRecyclingPctByWeight()
+  // over that tenant's INTERNAL rows, split on collectDate vs the cutoff — same 2026-10-12 move to
+  // a weight-based formula as Comparison #1 above. Each side independently needs enough rows AND
+  // real weight to compute (the function returns null otherwise), and only surfaces a finding when
+  // the two sides differ by >=10 points (avoids over-interpreting noise from small samples).
   function computeInductionImpactFindings(allSubs, matches, bintrackerRows){
     const findings = [];
     matches.forEach(match => {
@@ -4104,45 +4129,40 @@ function showConfirm(message){
       const cutoffDateStr = cutoff.slice(0, 10);
       const who = bintrackerWho(match.tenantName, subsForTenant);
 
-      BINTRACKER_STREAMS.forEach(stream => {
-        const realRows = bintrackerRows.filter(r =>
-          r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.ourStream === stream && r.externalOnly === false);
-        const beforeRows = realRows.filter(r => r.collectDate < cutoffDateStr);
-        const afterRows = realRows.filter(r => r.collectDate >= cutoffDateStr);
-        if (beforeRows.length < 5 || afterRows.length < 5) return;
+      const realRows = bintrackerRows.filter(r => r.bintrackerTenantRaw === match.bintrackerTenantRaw && r.externalOnly === false);
+      const beforeRows = realRows.filter(r => r.collectDate < cutoffDateStr);
+      const afterRows = realRows.filter(r => r.collectDate >= cutoffDateStr);
+      const beforePct = computeRealRecyclingPctByWeight(beforeRows);
+      const afterPct = computeRealRecyclingPctByWeight(afterRows);
+      if (beforePct === null || afterPct === null) return;
+      const gap = Math.abs(afterPct - beforePct);
+      if (gap < 10) return;
 
-        const beforePct = Math.round((beforeRows.filter(r => r.contaminated === false).length / beforeRows.length) * 100);
-        const afterPct = Math.round((afterRows.filter(r => r.contaminated === false).length / afterRows.length) * 100);
-        const gap = Math.abs(afterPct - beforePct);
-        if (gap < 10) return;
+      const M1 = beforeRows.length, M2 = afterRows.length;
+      const improved = afterPct > beforePct;
+      const large = gap >= 20;
 
-        const streamLabel = streamNames[stream];
-        const M1 = beforeRows.length, M2 = afterRows.length;
-        const improved = afterPct > beforePct;
-        const large = gap >= 20;
-
-        if (improved){
-          const headline = large
-            ? `${streamLabel}: real recycling improved significantly after the induction`
-            : `${streamLabel}: real recycling improved after the induction`;
-          findings.push({
-            text: `<b>${headline}</b> - ${who}'s real ${streamLabel} collections were ${beforePct}% successfully recycled before their induction (${M1} loads), and ${afterPct}% after (${M2} loads) - a ${gap}-point improvement.`,
-            concern: false,
-          });
-        } else {
-          findings.push({
-            text: `<b>${streamLabel}: real recycling dropped after the induction</b> - ${who}'s real ${streamLabel} collections were ${beforePct}% successfully recycled before their induction (${M1} loads), and ${afterPct}% after (${M2} loads) - a ${gap}-point drop. Worth checking whether something changed in this tenant's space (turnover, new bin setup, etc.) around this time.`,
-            concern: true,
-          });
-        }
-      });
+      if (improved){
+        const headline = large
+          ? 'Real recycling improved significantly after the induction'
+          : 'Real recycling improved after the induction';
+        findings.push({
+          text: `<b>${headline}</b> - ${who}'s real recycling rate (by weight, across Mixed Recycling, Paper & Cardboard, and Organics) was ${beforePct}% before their induction (${M1} collections), and ${afterPct}% after (${M2} collections) - a ${gap}-point improvement.`,
+          concern: false,
+        });
+      } else {
+        findings.push({
+          text: `<b>Real recycling dropped after the induction</b> - ${who}'s real recycling rate (by weight, across Mixed Recycling, Paper & Cardboard, and Organics) was ${beforePct}% before their induction (${M1} collections), and ${afterPct}% after (${M2} collections) - a ${gap}-point drop. Worth checking whether something changed in this tenant's space (turnover, new bin setup, etc.) around this time.`,
+          concern: true,
+        });
+      }
     });
     return findings;
   }
 
   const BINTRACKER_INTRO = {
-    current: 'Compares induction results against real Bintracker collection data, for tenants with a confirmed Bintracker match, over the current filter. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Induction scores reflect only the people who completed the induction, not everyone who uses this tenant\'s waste streams - a mismatch may reflect limited induction participation as much as a real behaviour gap. This reflects a snapshot of current data, not before/after impact - see the induction impact comparison for whether real behaviour changed after training.',
-    impact: 'Compares each tenant\'s real Bintracker collection data before and after their most recent induction completion, for tenants with a confirmed Bintracker match. Scoped to Mixed Recycling, Paper &amp; Cardboard, and Organics - comparison is by collection count, not weight. Not limited to the current date filter - the before/after split is anchored to each tenant\'s own most recent induction date, not the viewing window.',
+    current: 'Compares each tenant\'s combined induction result (across Mixed Recycling, Paper &amp; Cardboard, and Organics) against their real recycling rate - the same weight-based formula used for the recycling-rate shown to trainees - for tenants with a confirmed Bintracker match, over the current filter. Induction scores reflect only the people who completed the induction, not everyone who uses this tenant\'s waste streams - a mismatch may reflect limited induction participation as much as a real behaviour gap. This reflects a snapshot of current data, not before/after impact - see the induction impact comparison for whether real behaviour changed after training.',
+    impact: 'Compares each tenant\'s real recycling rate (by weight, across Mixed Recycling, Paper &amp; Cardboard, and Organics) before and after their most recent induction completion, for tenants with a confirmed Bintracker match. Not limited to the current date filter - the before/after split is anchored to each tenant\'s own most recent induction date, not the viewing window.',
   };
 
   // Fire-and-forget from renderReport (which stays synchronous) — fetches per-building Bintracker

@@ -197,7 +197,22 @@ function mapWasteTypeToStream(wasteType) {
 // already encodes what counts as "recovered" for this aggregate figure - no extra per-row quality
 // field is needed here (contrast with Point 1's own per-stream comparison, which DOES still need a
 // quality signal within one already-identified stream, and uses `contaminated` for that instead).
-const RECYCLABLE_STREAMS = new Set(['mr', 'pc', 'og']);
+//
+// "Recovered" streams revised 2026-10-15 — originally only Mixed Recycling/Paper & Cardboard/
+// Organics counted (a scope decision this project made, limiting "recovered" to the 3 streams the
+// induction itself teaches), not something NABERS or Bintracker's own methodology actually does.
+// The user shared a real screenshot of Bintracker's own dashboard for 80 Collins St South Tower
+// reporting a "Recycling Rate" of 49.2% — independently verified by hand from Bintracker's own
+// displayed per-waste-type weights (General waste 21,255.1kg, everything else combined 20,598.9kg,
+// total 41,854.0kg): (41854.0 - 21255.1) / 41854.0 = 49.21% ≈ 49.2%, an exact match. This proves
+// Bintracker's own "recovered" definition is simply EVERYTHING EXCEPT GENERAL WASTE (Batteries,
+// Coffee Grounds, Soft plastic, Coffee cups, e-waste all counted as recovered, not just mr/pc/og) -
+// also the more defensible reading of NABERS' own "recovered = diverted from landfill" definition,
+// since General Waste is the only stream that's landfill-bound by definition. Switched to match
+// this exactly, so the id-gate banner and both Bintracker comparisons report the SAME number a
+// client would see on Bintracker's own platform for the same building/tenant/period (modulo the
+// different time window - see this file's own window-related comments elsewhere, left unchanged).
+const NON_RECOVERED_STREAM = 'gw';
 const MIN_ROWS_FOR_RECYCLING_LEVEL = 5; // same floor as Point 1's own comparison guard
 
 // Returns a rounded 0-100 percentage, or null if there aren't at least MIN_ROWS_FOR_RECYCLING_LEVEL
@@ -211,7 +226,8 @@ function computeRecyclingLevelPct(rows) {
   const weightOf = (r) => (typeof r.weight === 'number' ? r.weight : 0);
   const generatedKg = scoped.reduce((sum, r) => sum + weightOf(r), 0);
   if (generatedKg <= 0) return null;
-  const recoveredKg = scoped.filter((r) => RECYCLABLE_STREAMS.has(r.ourStream)).reduce((sum, r) => sum + weightOf(r), 0);
+  const nonRecoveredKg = scoped.filter((r) => r.ourStream === NON_RECOVERED_STREAM).reduce((sum, r) => sum + weightOf(r), 0);
+  const recoveredKg = generatedKg - nonRecoveredKg;
   return Math.round((recoveredKg / generatedKg) * 100);
 }
 
@@ -385,7 +401,7 @@ module.exports = {
   WASTE_TYPE_TO_STREAM,
   normalizeForMatching,
   findBestMatch,
-  RECYCLABLE_STREAMS,
+  NON_RECOVERED_STREAM,
   MIN_ROWS_FOR_RECYCLING_LEVEL,
   computeRecyclingLevelPct,
   diffDiscoveredBuildingNames,
