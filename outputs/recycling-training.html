@@ -1937,6 +1937,13 @@ try {
     itemBoard.querySelectorAll('.board-item').forEach(card => card.classList.add('locked'));
     nextPhaseBtn.style.display = 'inline-flex';
     nextPhaseBtn.textContent = phaseIndex === streams.length - 1 ? 'See results' : 'Next phase';
+    // Same failure mode as showFeedback()'s own scroll fix above: the last drop's feedback
+    // scrolls itself into view, but this button sits further down in .quiz-controls and can
+    // still land just past the bottom edge of the viewport - a trainee who doesn't know to
+    // scroll further would never see it appear. block:'nearest' is a no-op when it's already
+    // visible (e.g. on desktop, where the whole phase usually fits on screen).
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    nextPhaseBtn.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'nearest' });
   }
 
   function handleDrop(card, item){
