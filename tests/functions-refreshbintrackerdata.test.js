@@ -51,11 +51,12 @@ async function testRecyclingLevelAggregation() {
   await db.doc(`buildings/${buildingId}/tenants/${tenantConfirmedId}`).set({ name: 'Confirmed Co', levels: ['L1'] });
   await db.doc(`buildings/${buildingId}/tenants/${tenantUnconfirmedId}`).set({ name: 'Unconfirmed Co', levels: ['L1'] });
 
-  // Building-level population = EXTERNAL (externalOnly:true) rows only, regardless of tenant.
-  // mr 40 + pc 30 + og 20 + gw 5 + ew 5 = generated 100; recovered (everything except gw) = 95 -> 95%.
-  // gw is the ONLY stream excluded from "recovered" (ew now counts, revised 2026-10-15 to match
-  // Bintracker's own real dashboard methodology) — it still counts toward "generated" (real NABERS
-  // denominator = ALL waste).
+  // Building-level population = every row that isn't EXCLUSIVELY internal (internalOnly !== true),
+  // regardless of tenant. mr 40 + pc 30 + og 20 + gw 5 + ew 5 = generated 100; recovered (everything
+  // except gw) = 95 -> 95%. gw is the ONLY stream excluded from "recovered" (ew now counts, revised
+  // 2026-10-15 to match Bintracker's own real dashboard methodology) — it still counts toward
+  // "generated" (real NABERS denominator = ALL waste). This base case is then extended below by a
+  // "Both Internal/External" row that also must count, and an "Internal Only" row that must not.
   const buildingExternalRows = [
     { ourStream: 'mr', weight: 40, bintrackerTenantRaw: 'Confirmed Raw Co' },
     { ourStream: 'pc', weight: 30, bintrackerTenantRaw: 'Confirmed Raw Co' },
@@ -63,43 +64,55 @@ async function testRecyclingLevelAggregation() {
     { ourStream: 'gw', weight: 5, bintrackerTenantRaw: 'Confirmed Raw Co' },
     { ourStream: 'ew', weight: 5, bintrackerTenantRaw: 'Other Co' },
   ];
-  // An INTERNAL row, huge distinctive weight (999) — must NEVER count toward the building total
-  // (building reads external rows only); if wrongly included, generated would balloon to 1099 and
-  // the building percentage below would be very different, making this a real discriminating check.
-  // Tagged with a raw string that has NO confirmed match doc at all, so it also can't accidentally
-  // feed any tenant-level number either — isolates this to testing the building-level exclusion only.
-  const buildingExcludedInternalRow = { ourStream: 'mr', weight: 999, externalOnly: false, bintrackerTenantRaw: 'Unrelated Internal Co' };
+  // A true INTERNAL-ONLY row (externalOnly:false AND internalOnly:true), huge distinctive weight
+  // (999) — must NEVER count toward the building total; if wrongly included, generated would
+  // balloon to 1099+ and the building percentage below would be very different, making this a real
+  // discriminating check. Tagged with a raw string that has NO confirmed match doc at all, so it
+  // also can't accidentally feed any tenant-level number either — isolates this to testing the
+  // building-level exclusion only.
+  const buildingExcludedInternalRow = { ourStream: 'mr', weight: 999, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Unrelated Internal Co' };
+  // A "Both Internal/External" row (externalOnly:false AND internalOnly:false) - confirmed
+  // 2026-10-15 against real production data that Bintracker's API exposes these as two INDEPENDENT
+  // booleans, and a row with both false is a real, distinct third category ("Both Internal/External"
+  // in Bintracker's own export) that DOES count toward the building's real total, unlike a true
+  // Internal-Only row. Weight 100 (recoverable stream) is distinctive enough that wrongly excluding
+  // it would leave the building percentage at the old 95% instead of the new, correct value below.
+  const buildingIncludedBothRow = { ourStream: 'mr', weight: 100, externalOnly: false, internalOnly: false, bintrackerTenantRaw: 'Both Co' };
 
   // Confirmed Co's own tenant-level population = INTERNAL rows for 'Confirmed Raw Co' exactly.
   // mr 40 + pc 20 + og 10 + gw 20 + ew 10 = generated 100; recovered (everything except gw) = 80 -> 80%.
+  // Every row here is explicitly internalOnly:true - matching real Bintracker data, where the API
+  // always returns both booleans (never leaves internalOnly ambiguous) - required since 2026-10-15
+  // so these don't accidentally also pass the building-level "not internalOnly:true" filter above.
   const confirmedTenantInternalRows = [
-    { ourStream: 'mr', weight: 40, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
-    { ourStream: 'pc', weight: 20, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
-    { ourStream: 'og', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
-    { ourStream: 'gw', weight: 20, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
-    { ourStream: 'ew', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'mr', weight: 40, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'pc', weight: 20, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'og', weight: 10, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'gw', weight: 20, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Confirmed Raw Co' },
+    { ourStream: 'ew', weight: 10, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Confirmed Raw Co' },
   ];
   // A different-case variant of the confirmed raw string, INTERNAL, huge distinctive weight (500) —
   // bintrackerTenantRaw matching is documented as case-sensitive exact match; this row must NOT
   // count toward Confirmed Co's own tenant-level number (would balloon generated to 600 if wrongly
   // included, a real discriminating check, not just "happens to still pass").
-  const caseVariantInternalRow = { ourStream: 'mr', weight: 500, externalOnly: false, bintrackerTenantRaw: 'confirmed raw co' };
+  const caseVariantInternalRow = { ourStream: 'mr', weight: 500, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'confirmed raw co' };
 
   // "Other Co" — 5 internal rows, would be 40/50=80% IF its match were confirmed; its match doc
   // below is deliberately left as status:'pending' to prove an unconfirmed match never feeds the
   // tenant-level field, same "admin reviews, never fully automatic" principle established for the
   // rest of this workstream.
   const otherTenantInternalRows = [
-    { ourStream: 'mr', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Other Co' },
-    { ourStream: 'pc', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Other Co' },
-    { ourStream: 'og', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Other Co' },
-    { ourStream: 'gw', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Other Co' },
-    { ourStream: 'ew', weight: 10, externalOnly: false, bintrackerTenantRaw: 'Other Co' },
+    { ourStream: 'mr', weight: 10, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Other Co' },
+    { ourStream: 'pc', weight: 10, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Other Co' },
+    { ourStream: 'og', weight: 10, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Other Co' },
+    { ourStream: 'gw', weight: 10, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Other Co' },
+    { ourStream: 'ew', weight: 10, externalOnly: false, internalOnly: true, bintrackerTenantRaw: 'Other Co' },
   ];
 
   const allRows = [
-    ...buildingExternalRows.map((r) => ({ externalOnly: true, ...r })),
+    ...buildingExternalRows.map((r) => ({ externalOnly: true, internalOnly: false, ...r })),
     buildingExcludedInternalRow,
+    buildingIncludedBothRow,
     ...confirmedTenantInternalRows,
     caseVariantInternalRow,
     ...otherTenantInternalRows,
@@ -130,8 +143,11 @@ async function testRecyclingLevelAggregation() {
   await _writeRecyclingLevelAggregates(db, buildingId);
 
   const buildingSnap = await db.doc(`buildings/${buildingId}`).get();
-  check('building-wide recyclingLevelPct computed from EXTERNAL rows only, kg recovered(everything but gw)/generated (95/100 -> 95%)',
-    buildingSnap.data().recyclingLevelPct === 95, JSON.stringify(buildingSnap.data()));
+  // mr 40+100(Both) + pc 30 + og 20 + gw 5 + ew 5 = generated 200; recovered (everything but gw) =
+  // 195 -> 97.5% -> rounds to 98. The Both row's inclusion (and the Internal-Only row's exclusion)
+  // is what proves the new internalOnly-aware filter, not just the old externalOnly===true filter.
+  check('building-wide recyclingLevelPct includes External AND Both rows, excludes true Internal-Only rows (195/200 -> 98%)',
+    buildingSnap.data().recyclingLevelPct === 98, JSON.stringify(buildingSnap.data()));
 
   const confirmedTenantSnap = await db.doc(`buildings/${buildingId}/tenants/${tenantConfirmedId}`).get();
   check('confirmed tenant recyclingLevelPct computed from only its own exact-case INTERNAL rows (80/100 -> 80%)',

@@ -96,7 +96,9 @@ async function main() {
       });
     }
 
-    // Tenant-level (externalOnly:false, matching the confirmed raw name): 4 recyclable + 1
+    // Tenant-level (externalOnly:false, internalOnly:true - a true Internal-Only row, matching real
+    // Bintracker data where the API always returns both booleans - needed since 2026-10-15 so these
+    // don't also pass the building-level "not internalOnly:true" filter): 4 recyclable + 1
     // non-recyclable, weight 10 each -> recovered 40 / generated 50 = 80%.
     const tenantRows = [
       { ourStream: 'mr', weight: 10 }, { ourStream: 'pc', weight: 10 }, { ourStream: 'og', weight: 10 }, { ourStream: 'mr', weight: 10 },
@@ -104,7 +106,7 @@ async function main() {
     ];
     for (let i = 0; i < tenantRows.length; i++) {
       await setDoc(doc(db, 'bintrackerRows', `${BUILDING_ID}-tenant-row-${i}`), {
-        buildingId: BUILDING_ID, collectDate: todayStr, externalOnly: false,
+        buildingId: BUILDING_ID, collectDate: todayStr, externalOnly: false, internalOnly: true,
         bintrackerTenantRaw: 'Acme Raw', ...tenantRows[i],
       });
     }

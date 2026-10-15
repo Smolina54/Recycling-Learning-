@@ -765,11 +765,17 @@ function bintrackerRowDocId(buildingId, rowId) {
 // exercised directly by tests/functions-refreshbintrackerdata.test.js against the Firestore
 // emulator, exported below.
 //
-// Building-level uses EXTERNAL rows (externalOnly:true) - the official, contractor-weighed export.
-// Tenant-level uses INTERNAL rows (externalOnly:false) for that tenant - confirmed directly with
-// the user 2026-10-05 that Bintracker has no per-tenant external weighing at all (a real check
-// against Tower 2 - Collins Square's production data found literally zero of its 13 real tenants
-// had any externalOnly:true rows - only a single building-wide waste-consolidation entry did), so
+// Building-level counts every row that isn't EXCLUSIVELY internal (internalOnly !== true) - the
+// official, contractor-weighed export, PLUS any row flagged "Both Internal/External" (confirmed
+// 2026-10-15: externalOnly and internalOnly are two INDEPENDENT real API booleans, not one binary
+// flag - a row with both false is Bintracker's own "Both Internal/External" category, which does
+// count toward the building's real total and was wrongly excluded by the original externalOnly
+// === true-only filter). Tenant-level uses every row that isn't EXCLUSIVELY external
+// (externalOnly !== true) for that tenant - i.e. "Internal Only" plus "Both" rows, both of which
+// carry real tenant/location attribution - confirmed directly with the user 2026-10-05 that
+// Bintracker has no per-tenant EXCLUSIVELY-external weighing at all (a real check against Tower 2
+// - Collins Square's production data found literally zero of its 13 real tenants had any
+// externalOnly:true rows - only a single building-wide waste-consolidation entry did), so
 // internal/per-floor data is the only population a tenant-level figure can ever be computed from.
 //
 // Bounded to the trailing 90 days. NABERS' own definition says the recycling rate is "based on
@@ -798,7 +804,7 @@ async function writeRecyclingLevelAggregates(db, buildingId) {
     .where('collectDate', '>=', cutoffDateStr)
     .get();
   const allRows = allRowsSnap.docs.map((d) => d.data());
-  const buildingPct = computeRecyclingLevelPct(allRows.filter((r) => r.externalOnly === true));
+  const buildingPct = computeRecyclingLevelPct(allRows.filter((r) => r.internalOnly !== true));
   // FieldValue.delete() when the current data no longer qualifies (e.g. a stale number from an
   // earlier, richer date range) - graceful absence beats a stale/misleading number left behind.
   await buildingRef.update({
@@ -1004,6 +1010,13 @@ async function processOneBuildingRows(db, buildingId, rawRows, fromDate, toDate)
       wasteTypeRaw: row.wasteType,
       contaminated: Boolean(row.contaminated),
       externalOnly: Boolean(row.externalOnly),
+      // Bintracker's real API exposes externalOnly/internalOnly as two INDEPENDENT booleans, not
+      // one binary flag - confirmed 2026-10-15 against real production data: a row can have BOTH
+      // false at once (externalOnly:false, internalOnly:false), which Bintracker's own export
+      // labels "Both Internal/External" - distinct from a true "Internal Only" row
+      // (externalOnly:false, internalOnly:true). Stored so building/tenant-level aggregates can
+      // tell the three cases apart (see writeRecyclingLevelAggregates's own comment).
+      internalOnly: Boolean(row.internalOnly),
       wasteOutcome: typeof row.wasteOutcome === 'string' ? row.wasteOutcome : null,
       collectDate,
       // actualWeight is the NET weight of the bin's contents; weight is GROSS (contents + bin) -
