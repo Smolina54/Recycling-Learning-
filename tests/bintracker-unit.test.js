@@ -57,6 +57,27 @@ check('"General waste" (lowercase w, real production value) still maps to "gw"',
 check('"  mixed recycling  " (stray whitespace + lowercase) still maps to "mr"', mapWasteTypeToStream('  mixed recycling  ') === 'mr', mapWasteTypeToStream('  mixed recycling  '));
 check('a non-string wasteType (e.g. null) is NOT mapped, not a crash', mapWasteTypeToStream(null) === null, mapWasteTypeToStream(null));
 
+// Regression check for a real production finding (2026-10-15, Tower 4 - Collins Square): the raw
+// API never updates wasteType when a collection gets corrected - a row can have
+// wasteType:"Organics" and collectionCorrected:"Convert to non-recyclable" simultaneously, and
+// Bintracker's own export reports that exact row as "General waste", confirmed by matching its
+// real id between a live API call and the real export. 62 of one building's 1,940 real rows were
+// silently misclassified this way before this fix.
+check('wasteType "Organics" + collectionCorrected "Convert to non-recyclable" maps to "gw", overriding the raw wasteType',
+  mapWasteTypeToStream('Organics', 'Convert to non-recyclable') === 'gw', mapWasteTypeToStream('Organics', 'Convert to non-recyclable'));
+check('the same override applies regardless of which original wasteType it overrides (Mixed recycling case, also seen in real API data)',
+  mapWasteTypeToStream('Mixed recycling', 'Convert to non-recyclable') === 'gw', mapWasteTypeToStream('Mixed recycling', 'Convert to non-recyclable'));
+check('collectionCorrected "Remain on recyclable stream" (the only other real value seen) does NOT override - falls back to the plain wasteType mapping',
+  mapWasteTypeToStream('Organics', 'Remain on recyclable stream') === 'og', mapWasteTypeToStream('Organics', 'Remain on recyclable stream'));
+check('a blank collectionCorrected (the common case, no correction) does NOT override - falls back to the plain wasteType mapping',
+  mapWasteTypeToStream('Organics', '') === 'og', mapWasteTypeToStream('Organics', ''));
+check('omitting collectionCorrected entirely (2nd arg undefined) still works exactly as before - backward compatible',
+  mapWasteTypeToStream('Organics') === 'og', mapWasteTypeToStream('Organics'));
+check('an unmapped wasteType (e.g. "Pallets") that WAS corrected to non-recyclable is now rescued as "gw" instead of silently dropped',
+  mapWasteTypeToStream('Pallets', 'Convert to non-recyclable') === 'gw', mapWasteTypeToStream('Pallets', 'Convert to non-recyclable'));
+check('an unmapped wasteType with no correction is still correctly dropped (null), unchanged behavior',
+  mapWasteTypeToStream('Pallets', '') === null, mapWasteTypeToStream('Pallets', ''));
+
 // --- Fuzzy matching ---
 check('normalizeForMatching lowercases, strips punctuation, collapses whitespace',
   normalizeForMatching('  Acme Legal, Pty. Ltd!  ') === 'acme legal pty ltd',

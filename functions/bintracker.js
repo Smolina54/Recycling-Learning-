@@ -170,7 +170,24 @@ const WASTE_TYPE_TO_STREAM_LOWER = Object.fromEntries(
   Object.entries(WASTE_TYPE_TO_STREAM).map(([k, v]) => [k.toLowerCase(), v])
 );
 
-function mapWasteTypeToStream(wasteType) {
+// Bintracker's raw API never updates `wasteType` when a collection gets corrected - it always
+// returns the ORIGINAL classification, even for a row whose real/final classification (what
+// Bintracker's own export/report calls "Waste Type") has since changed. The correction itself is
+// described separately on `collectionCorrected`. Confirmed 2026-10-15 against real production data
+// (Tower 4 - Collins Square): a row with wasteType:"Organics" and
+// collectionCorrected:"Convert to non-recyclable" is reported by Bintracker's own export as
+// "General waste", not "Organics" - 62 of one building's 1,940 real rows were silently
+// misclassified this way before this fix, understating General Waste and inflating Organics/Mixed
+// Recycling by the same amount. Only this one specific, confirmed string is special-cased here -
+// any other value (including the only other value this codebase has directly observed, "Remain on
+// recyclable stream", a blank string, or an unrecognized future value) is treated as "no change",
+// falling back to the plain wasteType mapping - never guess at a correction's meaning beyond what's
+// been directly confirmed.
+const CONVERT_TO_NON_RECYCLABLE = 'Convert to non-recyclable';
+function mapWasteTypeToStream(wasteType, collectionCorrected) {
+  if (typeof collectionCorrected === 'string' && collectionCorrected.trim() === CONVERT_TO_NON_RECYCLABLE) {
+    return 'gw';
+  }
   if (typeof wasteType !== 'string') return null;
   return WASTE_TYPE_TO_STREAM_LOWER[wasteType.trim().toLowerCase()] || null;
 }

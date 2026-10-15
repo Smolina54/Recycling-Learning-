@@ -991,7 +991,10 @@ async function processOneBuildingRows(db, buildingId, rawRows, fromDate, toDate)
   let rowsSkippedNoId = 0;
   const freshById = new Map(); // docId -> row data (without fetchedAt, for comparing against stored content)
   for (const row of rawRows) {
-    const ourStream = mapWasteTypeToStream(row.wasteType);
+    // collectionCorrected is passed through so a "Convert to non-recyclable" correction overrides
+    // the raw (pre-correction) wasteType - see mapWasteTypeToStream's own comment for why this is
+    // required (the API never updates wasteType itself when a collection gets corrected).
+    const ourStream = mapWasteTypeToStream(row.wasteType, row.collectionCorrected);
     if (!ourStream) { rowsSkippedNoStream++; continue; }
     // Bintracker's own `id` field is a stable, unique GUID per real collection event - required to
     // build a collision-safe docId (see bintrackerRowDocId's own comment for the real bug this
@@ -1002,12 +1005,19 @@ async function processOneBuildingRows(db, buildingId, rawRows, fromDate, toDate)
     const tenantRaw = row.tenant || '';
     const locationRaw = row.primaryLocation || '';
     const docId = bintrackerRowDocId(buildingId, row.id);
+    // wasteTypeRaw stores the EFFECTIVE classification (post-correction), matching what Bintracker's
+    // own export calls "Waste Type" - not the raw, pre-correction row.wasteType value, which would
+    // otherwise mislead anyone reading this field directly (e.g. an admin cross-checking against a
+    // real Bintracker export, as this exact distinction was discovered 2026-10-15).
+    const effectiveWasteTypeRaw = ourStream === 'gw' && row.collectionCorrected === 'Convert to non-recyclable'
+      ? 'General waste'
+      : row.wasteType;
     freshById.set(docId, {
       buildingId,
       bintrackerTenantRaw: tenantRaw,
       bintrackerLocationRaw: locationRaw,
       ourStream,
-      wasteTypeRaw: row.wasteType,
+      wasteTypeRaw: effectiveWasteTypeRaw,
       contaminated: Boolean(row.contaminated),
       externalOnly: Boolean(row.externalOnly),
       // Bintracker's real API exposes externalOnly/internalOnly as two INDEPENDENT booleans, not
