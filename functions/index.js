@@ -740,8 +740,17 @@ exports.deleteBuildingPermanently = onCall({ timeoutSeconds: 300, maxInstances: 
 // feature (Phase C) to read. This is on-demand (an admin clicks "Refresh"), not scheduled -
 // firebase-functions/v2/scheduler is a new pattern this codebase doesn't use anywhere yet, and
 // proving the on-demand path first is the deliberate, lower-risk choice (see the plan).
-function bintrackerRowDocId(buildingId, collectDate, tenantRaw, locationRaw, wasteTypeRaw) {
-  const key = [buildingId, collectDate, tenantRaw, locationRaw, wasteTypeRaw].join('__');
+// Keyed by Bintracker's own `id` field (a stable, unique GUID per real collection event), not by
+// (collectDate, tenant, location, wasteType) - that composite key was the actual docId shape used
+// until 2026-10-15, and is a real bug: `collectDate` here is date-only (the raw API's own
+// collectDate is a full datetime, truncated to its first 10 characters before this function ever
+// sees it), so two distinct real collections on the same day, for the same tenant/location/waste
+// type - common with routine "Bag (All Building)" pickups - silently collapsed into one stored
+// document, with only the last one processed surviving. Confirmed against real production data for
+// one real tenant: 609 of 979 same-day/tenant/location/wasteType groups had 2+ distinct real
+// collections, losing 914 of 1,893 real rows (48%) this way.
+function bintrackerRowDocId(buildingId, rowId) {
+  const key = [buildingId, rowId].join('__');
   return crypto.createHash('sha256').update(key).digest('hex');
 }
 
@@ -917,6 +926,7 @@ async function runPerBuildingPass(db, creds) {
   let totalRowsWritten = 0;
   let totalRowsDeleted = 0;
   let totalRowsSkippedNoStream = 0;
+  let totalRowsSkippedNoId = 0;
   for (const buildingDoc of buildingsSnap.docs) {
     const buildingId = buildingDoc.id;
     const name = buildingDoc.data().bintrackerBuildingName;
@@ -939,8 +949,9 @@ async function runPerBuildingPass(db, creds) {
       totalRowsWritten += result.rowsWritten;
       totalRowsDeleted += result.rowsDeleted;
       totalRowsSkippedNoStream += result.rowsSkippedNoStream;
+      totalRowsSkippedNoId += result.rowsSkippedNoId;
       buildingsTouched++;
-      console.log(`[scheduledBintrackerRefreshNightly] buildingId=${buildingId} name="${name}" OK - rowsFetched=${rawRows.length} rowsWritten=${result.rowsWritten} rowsDeleted=${result.rowsDeleted} rowsSkippedNoStream=${result.rowsSkippedNoStream}`);
+      console.log(`[scheduledBintrackerRefreshNightly] buildingId=${buildingId} name="${name}" OK - rowsFetched=${rawRows.length} rowsWritten=${result.rowsWritten} rowsDeleted=${result.rowsDeleted} rowsSkippedNoStream=${result.rowsSkippedNoStream} rowsSkippedNoId=${result.rowsSkippedNoId}`);
     } catch (err) {
       buildingsFailed++;
       console.error(`[scheduledBintrackerRefreshNightly] buildingId=${buildingId} name="${name}" failed:`, err && err.message);
@@ -949,6 +960,7 @@ async function runPerBuildingPass(db, creds) {
   return {
     buildingsTouched, buildingsFailed,
     rowsWritten: totalRowsWritten, rowsDeleted: totalRowsDeleted, rowsSkippedNoStream: totalRowsSkippedNoStream,
+    rowsSkippedNoId: totalRowsSkippedNoId,
   };
 }
 
@@ -963,21 +975,27 @@ async function runPerBuildingPass(db, creds) {
 // even for rows that haven't changed at all, would mean paying full Firestore write costs for the
 // same unchanged data over and over. Instead: read what's already stored for this building+range
 // FIRST, diff it against the freshly-fetched rows by content (not just doc id, since the id is
-// derived from date/tenant/location/wasteType only - a correction to weight or contaminated for
-// the SAME row keeps the same id and must still be detected as "changed"), and only write docs
+// derived from Bintracker's own row id only - a correction to weight or contaminated for the
+// SAME real collection event keeps the same row id and must still be detected as "changed"), and only write docs
 // that are new or actually different, only delete docs that genuinely vanished from the fresh pull
 // (Bintracker removed them). An unchanged run (the common case) costs only the one read, no writes
 // at all for that building.
 async function processOneBuildingRows(db, buildingId, rawRows, fromDate, toDate) {
   let rowsSkippedNoStream = 0;
+  let rowsSkippedNoId = 0;
   const freshById = new Map(); // docId -> row data (without fetchedAt, for comparing against stored content)
   for (const row of rawRows) {
     const ourStream = mapWasteTypeToStream(row.wasteType);
     if (!ourStream) { rowsSkippedNoStream++; continue; }
+    // Bintracker's own `id` field is a stable, unique GUID per real collection event - required to
+    // build a collision-safe docId (see bintrackerRowDocId's own comment for the real bug this
+    // fixes). A row with no usable id can't be safely deduped against, so it's skipped rather than
+    // risking a fresh collision under some fallback key.
+    if (typeof row.id !== 'string' || !row.id) { rowsSkippedNoId++; continue; }
     const collectDate = String(row.collectDate || '').slice(0, 10);
     const tenantRaw = row.tenant || '';
     const locationRaw = row.primaryLocation || '';
-    const docId = bintrackerRowDocId(buildingId, collectDate, tenantRaw, locationRaw, row.wasteType);
+    const docId = bintrackerRowDocId(buildingId, row.id);
     freshById.set(docId, {
       buildingId,
       bintrackerTenantRaw: tenantRaw,
@@ -988,7 +1006,12 @@ async function processOneBuildingRows(db, buildingId, rawRows, fromDate, toDate)
       externalOnly: Boolean(row.externalOnly),
       wasteOutcome: typeof row.wasteOutcome === 'string' ? row.wasteOutcome : null,
       collectDate,
-      weight: typeof row.weight === 'number' ? row.weight : (typeof row.actualWeight === 'number' ? row.actualWeight : null),
+      // actualWeight is the NET weight of the bin's contents; weight is GROSS (contents + bin) -
+      // confirmed 2026-10-15 against real production data (a known real collection: weight=54.4,
+      // actualWeight=15.9, matching that same event's real Gross kg/Weight kg values from
+      // Bintracker's own export exactly). actualWeight must be preferred over weight, which was
+      // backwards before this fix.
+      weight: typeof row.actualWeight === 'number' ? row.actualWeight : (typeof row.weight === 'number' ? row.weight : null),
     });
   }
 
@@ -1027,7 +1050,7 @@ async function processOneBuildingRows(db, buildingId, rawRows, fromDate, toDate)
   await writeRecyclingLevelAggregates(db, buildingId);
   await db.doc(`buildings/${buildingId}`).update({ lastAutoRefreshAt: FieldValue.serverTimestamp() });
 
-  return { rowsWritten: toWrite.length, rowsDeleted: toDelete.length, rowsSkippedNoStream };
+  return { rowsWritten: toWrite.length, rowsDeleted: toDelete.length, rowsSkippedNoStream, rowsSkippedNoId };
 }
 
 async function runBintrackerNightlySyncHybrid() {

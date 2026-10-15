@@ -87,25 +87,45 @@ async function main() {
   const rowsForA = [
     // 5 rows - MIN_ROWS_FOR_RECYCLING_LEVEL's own floor, so recyclingLevelPct actually gets
     // computed (fewer than 5 real-stream rows is deliberately treated as "not enough sample size").
-    { tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'General Waste', weight: 10, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
-    { tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'Mixed recycling', weight: 20, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
-    { tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'Paper & cardboard', weight: 15, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
-    { tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'Organics', weight: 5, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
-    { tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'e-waste', weight: 5, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
-    { tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'Not A Real Waste Type', weight: 999, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
+    // Each carries its own unique `id` (Bintracker's own real field, confirmed 2026-10-15 against
+    // production data) - required since 2026-10-15's docId fix, which keys off this id instead of
+    // the old (date, tenant, location, wasteType) composite that silently collapsed same-day
+    // same-tenant same-location same-wasteType collections into one document.
+    { id: 'row-a-gw-1', tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'General Waste', weight: 10, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
+    { id: 'row-a-mr-1', tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'Mixed recycling', weight: 20, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
+    { id: 'row-a-pc-1', tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'Paper & cardboard', weight: 15, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
+    { id: 'row-a-og-1', tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'Organics', weight: 5, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
+    { id: 'row-a-ew-1', tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'e-waste', weight: 5, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
+    { id: 'row-a-unmapped-1', tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'Not A Real Waste Type', weight: 999, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
+    // A row with no `id` at all - must be skipped gracefully (rowsSkippedNoId), never stored under
+    // some fallback key that could collide with a different real row.
+    { tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'Organics', weight: 7, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
+    // weight (GROSS) vs actualWeight (NET, correct) deliberately differ by a lot, matching the real
+    // 2026-10-15 production finding (weight=54.4/actualWeight=15.9 for one real collection) - proves
+    // actualWeight is preferred, not just present-and-ignored. Uses Organics (not Paper & cardboard)
+    // so it doesn't interfere with the later "remove the sole Paper & cardboard row" test below.
+    { id: 'row-a-og-gross-vs-net', tenant: 'Tower A Tenant', primaryLocation: 'Level 1', wasteType: 'Organics', weight: 999, actualWeight: 7, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
   ];
   const resultA = await _processOneBuildingRows(db, buildingAId, rowsForA, fromDate, toDate);
   check('rowsSkippedNoStream counts the one unmapped-stream row', resultA.rowsSkippedNoStream === 1, JSON.stringify(resultA));
-  check('the first-ever run for this building writes all 5 real rows (nothing yet stored to compare against)',
-    resultA.rowsWritten === 5 && resultA.rowsDeleted === 0, JSON.stringify(resultA));
+  check('rowsSkippedNoId counts the one row with no id, separately from rowsSkippedNoStream', resultA.rowsSkippedNoId === 1, JSON.stringify(resultA));
+  check('the first-ever run for this building writes all 6 real, id-bearing, mapped-stream rows (nothing yet stored to compare against)',
+    resultA.rowsWritten === 6 && resultA.rowsDeleted === 0, JSON.stringify(resultA));
+
+  const crypto = require('crypto');
+  const grossVsNetDocId = crypto.createHash('sha256').update([buildingAId, 'row-a-og-gross-vs-net'].join('__')).digest('hex');
+  const grossVsNetSnap = await db.doc(`bintrackerRows/${grossVsNetDocId}`).get();
+  check('a row with both weight (gross) and actualWeight (net) stores actualWeight, not weight',
+    grossVsNetSnap.exists && grossVsNetSnap.data().weight === 7, JSON.stringify(grossVsNetSnap.data()));
 
   const rowsASnap = await db.collection('bintrackerRows').where('buildingId', '==', buildingAId).get();
-  check('all 5 of building A\'s rows were stored', rowsASnap.size === 5, String(rowsASnap.size));
+  check('all 6 of building A\'s real, id-bearing rows were stored', rowsASnap.size === 6, String(rowsASnap.size));
 
   const buildingASnap = await db.doc(`buildings/${buildingAId}`).get();
-  // gw 10 + mr 20 + pc 15 + og 5 + ew 5 = generated 55; recovered (everything except gw) = 45 -> 45/55 = 81.8% -> rounds to 82.
-  check('building A\'s recyclingLevelPct was computed from its real rows (5 rows clears the sample-size floor)',
-    buildingASnap.data().recyclingLevelPct === 82, JSON.stringify(buildingASnap.data()));
+  // gw 10 + mr 20 + pc 15 + og 5 + ew 5 + og(gross-vs-net, using actualWeight=7) 7 = generated 62;
+  // recovered (everything except gw) = 52 -> 52/62 = 83.9% -> rounds to 84.
+  check('building A\'s recyclingLevelPct was computed from its real rows (using actualWeight, not weight)',
+    buildingASnap.data().recyclingLevelPct === 84, JSON.stringify(buildingASnap.data()));
   check('building A got a lastAutoRefreshAt timestamp (successful path)',
     Boolean(buildingASnap.data().lastAutoRefreshAt), JSON.stringify(buildingASnap.data()));
 
@@ -113,7 +133,7 @@ async function main() {
   // genuinely throw (not swallow the error), which is what lets the real orchestrator's own
   // try/catch count it as failed without aborting other buildings. ----
   const rowsForB = [
-    { tenant: 'Tower B Tenant', primaryLocation: 'Level 1', wasteType: 'General Waste', weight: 5, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
+    { id: 'row-b-gw-1', tenant: 'Tower B Tenant', primaryLocation: 'Level 1', wasteType: 'General Waste', weight: 5, collectDate, externalOnly: true, contaminated: false, wasteOutcome: 'Recycled' },
   ];
   let buildingBThrew = false;
   try {
@@ -141,10 +161,10 @@ async function main() {
     resultAUnchanged.rowsWritten === 0, JSON.stringify(resultAUnchanged));
   check('...and deletes nothing either (nothing vanished)', resultAUnchanged.rowsDeleted === 0, JSON.stringify(resultAUnchanged));
 
-  // ---- A real correction (same row identity - date/tenant/location/wasteType - different weight)
-  // must still be detected and written, proving the diff compares actual content, not just doc id
-  // presence (the doc id is derived from date/tenant/location/wasteType only, so a weight
-  // correction alone would be invisible to an id-only comparison). ----
+  // ---- A real correction (same row identity - same Bintracker `id` - different weight) must still
+  // be detected and written, proving the diff compares actual content, not just doc id presence
+  // (the doc id is derived from the row's own Bintracker id only, so a weight correction alone -
+  // same id, same real collection event - would be invisible to an id-only comparison). ----
   const correctedRowsForA = rowsForA.map((r) => (r.wasteType === 'Mixed recycling' ? { ...r, weight: 25 } : r));
   const resultACorrected = await _processOneBuildingRows(db, buildingAId, correctedRowsForA, fromDate, toDate);
   check('a real content change (same row identity, different weight) is detected and written as exactly 1 row',
