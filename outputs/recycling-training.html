@@ -65,6 +65,10 @@
   .id-gate-brand .brand-divider{width:1px; align-self:stretch; background:var(--line);}
   .id-card{max-width:440px; width:100%; background:var(--panel); border:1px solid var(--line); padding:44px 36px;}
   .id-card .headline{font-size:clamp(26px,5vw,36px); margin-bottom:16px;}
+  /* The building name itself must never split mid-name across a line break - it can still wrap
+     as a whole unit onto the next line if the sentence around it doesn't fit, but the name stays
+     intact either way. */
+  #idBuildingNameInline{white-space:nowrap; display:inline-block;}
   /* Real Bintracker recycling-level banner (Workstream 7 Point 5 sub-idea) - reuses the same
      forest/gw pass-fail colors as the results gauge (.gauge-fill / .gauge-fill.failed) so "on
      track" vs "needs work" reads consistently across the whole app. */
@@ -170,7 +174,7 @@
   }
   h1.headline em{font-style:normal; color:var(--forest);}
   .hero-sub{
-    font-size:17px; color:var(--ink-soft); max-width:560px; margin:0 0 28px;
+    font-size:17px; color:var(--ink-soft); margin:0 0 28px;
   }
   .btn{
     font-family:var(--body); font-weight:500; font-size:15px;
@@ -638,7 +642,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--gw)" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
         <div class="detail-title-group">
-          <div class="stream-code">Stream 01 - Landfill</div>
+          <div class="stream-code">Stream 01</div>
           <h2>General Waste</h2>
         </div>
       </div>
@@ -678,7 +682,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--mr)" stroke-width="2"><path d="M17 2l4 4-4 4M7 22l-4-4 4-4M21 6H8a5 5 0 00-5 5v1M3 18h13a5 5 0 005-5v-1" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
         <div class="detail-title-group">
-          <div class="stream-code">Stream 02 - Commingled</div>
+          <div class="stream-code">Stream 02</div>
           <h2>Mixed Recycling</h2>
         </div>
       </div>
@@ -714,7 +718,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--pc)" stroke-width="2"><rect x="4" y="6" width="16" height="14" rx="1"/><path d="M4 10h16M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke-linecap="round"/></svg>
         </div>
         <div class="detail-title-group">
-          <div class="stream-code">Stream 03 - Paper & Cardboard</div>
+          <div class="stream-code">Stream 03</div>
           <h2>Paper &amp; Cardboard</h2>
         </div>
       </div>
@@ -750,7 +754,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--og)" stroke-width="2"><path d="M12 22s8-4.5 8-11.5A8 8 0 004 10.5C4 17.5 12 22 12 22z"/><path d="M12 17V9" stroke-linecap="round"/></svg>
         </div>
         <div class="detail-title-group">
-          <div class="stream-code">Stream 04 - Compost</div>
+          <div class="stream-code">Stream 04</div>
           <h2>Organics</h2>
         </div>
       </div>
@@ -787,7 +791,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--ew)" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M9 6h6M9 18h6" stroke-linecap="round"/></svg>
         </div>
         <div class="detail-title-group">
-          <div class="stream-code">Stream 05 - Hazardous / Electronic</div>
+          <div class="stream-code">Stream 05</div>
           <h2>E-Waste</h2>
         </div>
       </div>
@@ -806,13 +810,13 @@
           <h3>✕ Never goes in</h3>
           <ul>
             <li>Batteries - need their own dedicated battery bin, not this one</li>
-            <li>Any general waste or recycling bin</li>
+            <li>Any general waste or other recycling stream</li>
             <li>Bulk furniture or large appliances (arrange separate pickup)</li>
           </ul>
         </div>
       </div>
       <div class="tip"><span class="lb">💡</span><span>A single battery in the wrong bin can start a fire in a waste truck.</span></div>
-      <div class="detail-nav"><span></span><button class="btn" id="toGameBtn">Take the sorting challenge</button></div>
+      <div class="detail-nav"><span></span><button class="btn" id="toGameBtn">Take the sorting challenge below</button></div>
     </div>
 
     <!-- Follow-up fix (2026-09-30): moved inside #detailSection's own .wrap, right after the last
@@ -832,7 +836,7 @@
   <div class="quiz-intro" id="gameIntro" style="display:none;">
     <p class="eyebrow">Knowledge Check</p>
     <h2>Sort it correctly.</h2>
-    <p class="hero-sub">Five rounds, one stream at a time. Each round drops 10 items on the board - only some belong in that round's bin. Drag in the ones that do; leave the rest where they are.</p>
+    <p class="hero-sub">Take the Sorting Challenge - 5 rounds, 1 stream per round. Drag in or click the ones that belong in the stream; leave the rest where they are.</p>
     <div class="quiz-meta"><span><b>5</b> phases</span><span><b>~4 min</b></span><span>Pass mark: <b>75%</b></span></div>
     <p class="game-lock-status" id="gameLockStatus"></p>
     <button class="btn" id="startGameBtn" disabled>Begin the sort</button>
@@ -878,7 +882,7 @@
     <p class="verdict" id="verdict"></p>
     <p class="verdict-sub" id="verdictSub"></p>
     <h3 class="results-section-heading">Accuracy by stream</h3>
-    <p class="results-section-sub">How many of each stream's decoy items you correctly left out of the bin - a lower bar means that stream's rules are worth a second look.</p>
+    <p class="results-section-sub">How many of each stream's own items you correctly identified - a lower bar means that stream's rules are worth a second look.</p>
     <div class="stream-breakdown" id="streamBreakdown"></div>
     <h3 class="results-section-heading">Item by item</h3>
     <p class="results-section-sub">A closer look at each stream: what you sorted correctly, and anything you missed with a quick reminder why.</p>
@@ -1341,7 +1345,14 @@ try {
       btn.disabled = false;
       status.textContent = "All streams reviewed - you're ready for the sorting challenge.";
       status.classList.add('ready');
-      intro.style.display = 'block';
+      // Only reveal the "Begin the sort" intro if the game hasn't started yet. This function runs
+      // every time a trainee reviews a stream (showStream() -> updateGameLock()), including after
+      // the game is already in progress or already finished - without this guard, revisiting a
+      // stream mid-game (or after finishing, via "Review answers") would re-show this intro on top
+      // of the in-progress/completed game, and clicking "Begin the sort" again would restart the
+      // whole game from phase 0, discarding real progress. gameStarted never resets back to false
+      // once set, so this guard correctly stays suppressed for the rest of the session too.
+      if (!gameStarted) intro.style.display = 'block';
       progressNote.style.display = 'none';
     }
   }
@@ -1399,7 +1410,7 @@ try {
         navBtn.textContent = `Next: ${streamNames[streams[i+1]]}`;
         navBtn.onclick = () => showStream(streams[i+1]);
       } else {
-        navBtn.textContent = 'Take the sorting challenge';
+        navBtn.textContent = 'Take the sorting challenge below';
         navBtn.classList.remove('secondary'); // matches the real final panel's primary-button styling
         navBtn.onclick = () => document.getElementById('gameSection').scrollIntoView({behavior:'smooth', block:'start'});
       }
@@ -1407,7 +1418,7 @@ try {
 
     document.querySelector('.hero .eyebrow').textContent = `Waste Stream Training · ${streams.length} Streams · Demo`;
     document.querySelector('.hero .hero-sub').textContent = `A quick walkthrough of ${streams.length} waste streams, followed by a short interactive quiz - just for trying it out.`;
-    document.querySelector('#gameIntro .hero-sub').textContent = `${streams.length} rounds, one stream at a time. Each round drops a few items on the board - only some belong in that round's bin.`;
+    document.querySelector('#gameIntro .hero-sub').textContent = `Take the Sorting Challenge - ${streams.length} rounds, 1 stream per round. Drag in or click the ones that belong in the stream; leave the rest where they are.`;
     document.querySelector('#gameIntro .quiz-meta').innerHTML = `<span><b>${streams.length}</b> phases</span><span><b>~1 min</b></span><span>Pass mark: <b>75%</b></span>`;
   }
 
@@ -1794,7 +1805,18 @@ try {
         html += `<p>This building also sorts these here: ${movedInto[s].map(x => `${x.item.name} (normally ${streamNames[x.from]})`).join(', ')}.</p>`;
       }
       if (acceptableIn[s]){
-        html += `<p>This building also accepts these items here, though it's not the ideal bin for them: ${acceptableIn[s].map(it => `${it.name} (ideally ${streamNames[it.stream]})`).join(', ')}.</p>`;
+        // Grouped by each item's own ideal stream (same pattern as movedOutOf above) so a
+        // shared destination is named once, not once per item - 5 Paper & Cardboard items
+        // accepted here used to repeat "(ideally Paper & Cardboard)" 5 times in a row.
+        const byIdealStream = {};
+        acceptableIn[s].forEach(it => { (byIdealStream[it.stream] = byIdealStream[it.stream] || []).push(it); });
+        const idealStreams = Object.keys(byIdealStream);
+        if (idealStreams.length === 1){
+          html += `<p>This building also accepts these items here, though ${streamNames[idealStreams[0]]} is the ideal bin for them: ${byIdealStream[idealStreams[0]].map(it => it.name).join(', ')}.</p>`;
+        } else {
+          html += `<p>This building also accepts these items here, though they're not the ideal bin for them: ${idealStreams.map(d =>
+            `${byIdealStream[d].map(it => it.name).join(', ')} (ideally ${streamNames[d]})`).join('; ')}.</p>`;
+        }
       }
       notes[s] = html;
     });
@@ -2247,8 +2269,18 @@ try {
 
     const breakdownEl = document.getElementById('streamBreakdown');
     breakdownEl.innerHTML = '';
+    // Grouped by each item's REAL home stream (item.stream), same as the "Item by item" review
+    // below - not by which phase tested it (r.shownInPhase). This is a deliberate correctness fix:
+    // grouping by test-phase used to measure "how well did you avoid OTHER streams' items shown as
+    // decoys here" (confusing, and not what "Accuracy by stream" sounds like it should mean), and
+    // could disagree with "Item by item" whenever a building's "also acceptable in" overrides made
+    // one item a correct target in two different phases at once (allResults can only hold a single
+    // outcome per item, so whichever phase recorded it first "won" the shownInPhase attribution,
+    // silently stealing it from its own true stream's tally). Grouping by item.stream instead means
+    // this always shows real per-stream accuracy, and always exactly matches "Item by item" by
+    // construction, regardless of how many extra "acceptable" items a building configures.
     const breakdownData = streams.map(stream => {
-      const streamResults = allResults.filter(r => r.shownInPhase === stream);
+      const streamResults = allResults.filter(r => itemById(r.itemId).stream === stream);
       const avoided = streamResults.filter(r => r.avoided).length;
       return {stream, avoided, total: streamResults.length};
     });
@@ -2256,7 +2288,8 @@ try {
       const row = document.createElement('div');
       row.className = 'breakdown-row';
       // b.total can be 0 under an unusual admin item-override config that leaves a stream with
-      // no decoys at all — (0/0)*100 is NaN, which would render as a broken-width bar.
+      // no items of its own at all (every catalog item reassigned elsewhere) — (0/0)*100 is NaN,
+      // which would render as a broken-width bar.
       const pct = b.total > 0 ? (b.avoided/b.total)*100 : 0;
       row.innerHTML = `<span class="breakdown-label">${streamNames[b.stream]}</span><div class="breakdown-bar"><div class="breakdown-fill" style="width:${pct}%; background:var(--${b.stream});"></div></div><span class="breakdown-value">${b.avoided}/${b.total}</span>`;
       breakdownEl.appendChild(row);
