@@ -3074,9 +3074,15 @@ try {
     // Test-only sign-in hook (no real Google popup against the emulator) — never runs
     // outside ?emulator=1, so it never exists on the real deployed page.
     window.__testSignIn = async (email, password) => {
+      // Creating a brand-new user ALREADY signs them in (Firebase Auth's own behaviour) - calling
+      // signInWithEmailAndPassword again right after was redundant, and on a fresh emulator (every
+      // real test run starts one) caused a real, reproduced race: two extra onAuthStateChanged
+      // firings (a spurious sign-out, then sign-in again) interleaving with whatever the test
+      // does next, confirmed to intermittently clobber sign-out's own cleanup. Only sign in
+      // explicitly in the fallback path, where creation failed because the user already exists
+      // and so is NOT already signed in.
       try { await createUserWithEmailAndPassword(auth, email, password); }
-      catch (err) { /* user already exists from a previous test run — fine */ }
-      await signInWithEmailAndPassword(auth, email, password);
+      catch (err) { await signInWithEmailAndPassword(auth, email, password); }
     };
     // Local convenience: auto sign in as the owner account so ?emulator=1 never needs the
     // login form typed by hand — never runs outside ?emulator=1, so never on the real page.
@@ -4880,15 +4886,28 @@ function showConfirm(message){
     } catch (err){ return false; }
   }
 
+  // Bumped on every onAuthStateChanged invocation, and captured locally at the top of each one -
+  // a real, reproduced race (not theoretical): signing in kicks off a long await chain
+  // (loadBuildingsMetaById -> refreshProgramSelector) before it's safe to touch
+  // #programSelector; if sign-out fires while that's still in flight, its own (synchronous)
+  // cleanup runs and clears the selector immediately, but the EARLIER sign-in callback is still
+  // alive and, once its own awaits finally resolve, repopulates the selector right after -
+  // clobbering the sign-out. Checking this counter right after each await lets a stale
+  // invocation detect it's been superseded and abort before touching the DOM further, instead of
+  // relying on timing to keep the two invocations from interleaving.
+  let authStateGeneration = 0;
   if (auth){
     onAuthStateChanged(auth, async (user) => {
+      const myAuthStateGeneration = ++authStateGeneration;
       document.getElementById('signInBtn').style.display = user ? 'none' : 'inline-flex';
       document.getElementById('signOutBtn').style.display = user ? 'inline-flex' : 'none';
       if (user){
         const gateEmail = (user.email || '').toLowerCase();
         const { isAdminUser } = await getAccessLevel(gateEmail);
+        if (myAuthStateGeneration !== authStateGeneration) return;
         if (!isAdminUser){
           const hasGrant = await hasAnyBuildingAccessGrant(gateEmail);
+          if (myAuthStateGeneration !== authStateGeneration) return;
           if (!hasGrant){
             await signOut(auth);
             document.getElementById('authStatus').textContent = "This account doesn't have access. Contact your administrator.";
@@ -4917,7 +4936,9 @@ function showConfirm(message){
           // it must be fully populated before any report load can run, not just before whatever
           // low-stakes Bintracker-mapping check used to be its only consumer.
           await loadBuildingsMetaById().catch(err => console.error('Failed to load buildings metadata (Bintracker mapping):', err));
+          if (myAuthStateGeneration !== authStateGeneration) return;
           await refreshProgramSelector();
+          if (myAuthStateGeneration !== authStateGeneration) return;
           // Lets admin-distribution.html's "← Back to reports" link (Workstream 2 Phase 4 of the
           // architecture roadmap) land back on the same induction instead of the neutral "nothing
           // shown yet" state — an explicit, URL-carried choice, not a silent guessed default.
