@@ -2852,8 +2852,21 @@ try {
       catch (err) { /* user already exists from a previous test run — fine */ }
       await signInWithEmailAndPassword(auth, email, password);
     };
-    window.__testSignIn('esgtradeflex@gmail.com', 'test-password-123')
-      .catch(err => console.error('Local auto sign-in failed', err));
+    // Only auto-sign-in when this page is opened standalone. When embedded (&embedded=1, inside
+    // sorting-station-report.html's #adminIframe), the shell has already signed in — Auth
+    // persistence is shared across same-origin documents (indexedDBLocalPersistence), so this
+    // page's own sign-in-as-the-fixed-test-account is both redundant and actively dangerous: it's
+    // a fire-and-forget call with no guarantee of finishing before the iframe is swapped to a
+    // different page or torn down, and if it resolves AFTER the shell's own sign-out (or while the
+    // shell is signed in as someone else entirely), it silently re-authenticates the shared
+    // session as this fixed account out from under the shell — a real, reproduced race (not
+    // theoretical): confirmed via a debug authLog on the shell side, where this exact call landed
+    // ~12ms after the shell's own sign-out fired, re-populating #programSelector right as the test
+    // checked it was cleared.
+    if (!isEmbedded){
+      window.__testSignIn('esgtradeflex@gmail.com', 'test-password-123')
+        .catch(err => console.error('Local auto sign-in failed', err));
+    }
     // Both "back to reports" links are plain hrefs with no query string — without this,
     // clicking either drops out of ?emulator=1 entirely on the next page (real Firebase, no
     // auto sign-in) instead of staying in the local test session.
