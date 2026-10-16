@@ -812,6 +812,12 @@ function renderItemStreamsEditorHtml(){
   const grouped = {};
   streams.forEach(s => { grouped[s] = []; });
   Object.keys(catalog).forEach(id => { grouped[effectiveStreamInDraft(id)].push(id); });
+  // The real in-game correct-item count per stream, including items whose home is elsewhere but
+  // are "also acceptable" here - computeClaimedCounts() already tracks this for validation, but
+  // never surfaced it to the admin, so a stream could end up with far more items than its section
+  // header here implied (a real case: Mixed Recycling showed "(5)" while 5 Paper & Cardboard items
+  // marked "also acceptable" there pushed its real in-game count to 10, with zero warning).
+  const claimedCounts = computeClaimedCounts();
 
   const sectionsHtml = streams.map(s => {
     // Active items first, then inactive ones — each group alphabetical — so the on/off state
@@ -848,11 +854,20 @@ function renderItemStreamsEditorHtml(){
         </details>` : ''}
       </div>`;
     }).join('');
+    // Only call out the real in-game count when "also acceptable" items from other streams push
+    // it above what this section's own active items already account for - the common case (no
+    // such overlap) keeps today's plain "(N)" unchanged, so this never adds noise where it isn't
+    // needed.
+    const ownActiveCount = ids.filter(effectiveActiveInDraft).length;
+    const acceptedFromElsewhere = claimedCounts[s] - ownActiveCount;
+    const countLabel = acceptedFromElsewhere > 0
+      ? `${claimedCounts[s]} in game - ${ownActiveCount} of its own + ${acceptedFromElsewhere} accepted from other streams`
+      : `${ids.length}`;
     return `
       <div class="items-stream-section">
         <div class="items-stream-head">
           <span class="items-stream-swatch" style="background:var(--${s});"></span>
-          <h4>${streamNames[s]} <span class="block-sub" style="font-weight:500;">(${ids.length})</span></h4>
+          <h4>${streamNames[s]} <span class="block-sub" style="font-weight:500;">(${countLabel})</span></h4>
         </div>
         <div class="items-card-grid">${cardsHtml || '<p class="block-sub">Nothing here for this building.</p>'}</div>
       </div>`;

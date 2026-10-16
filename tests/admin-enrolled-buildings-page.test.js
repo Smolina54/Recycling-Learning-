@@ -328,6 +328,17 @@ async function runFlow(page){
   check('an "also acceptable in" checkbox persists after reload without disturbing the item\'s primary stream',
     applePrimaryValue === 'og' && appleAcceptableChecked === true, `primary=${applePrimaryValue} acceptableChecked=${appleAcceptableChecked}`);
 
+  // General Waste's section header must call out the real in-game count once an og-home item
+  // (og-apple) is also acceptable there - 5 of its own + 1 accepted, not a plain "(5)" that would
+  // hide the fact General Waste's board now has 6 correct items, not 5.
+  const gwSectionHeaderText = await page.evaluate((sel) => {
+    const sections = [...document.querySelectorAll(`${sel} .items-stream-section`)];
+    const gwSection = sections.find(s => s.querySelector('h4').textContent.startsWith('General Waste'));
+    return gwSection ? gwSection.querySelector('h4').textContent.trim() : null;
+  }, enrolledSelector);
+  check('General Waste\'s header shows the real in-game count, not just its own 5, once another stream\'s item is also acceptable there',
+    gwSectionHeaderText === 'General Waste (6 in game - 5 of its own + 1 accepted from other streams)', gwSectionHeaderText);
+
   await page.$eval(appleCheckboxSelector, el => el.click());
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
   await page.waitForFunction(
@@ -338,6 +349,20 @@ async function runFlow(page){
   await new Promise(r => setTimeout(r, 200));
   const appleAcceptableAfterUncheck = await page.$eval(appleCheckboxSelector, el => el.checked);
   check('unchecking "also acceptable in" and saving clears it', appleAcceptableAfterUncheck === false);
+
+  // Once the overlap from og-apple specifically is gone, General Waste's header must drop the
+  // "in game - ... accepted from other streams" wording - confirms it's additive, never stuck on
+  // once shown. Not asserting an exact number here: this test building accumulates other state
+  // (backup items, quick-merges) across the whole suite, so the real baseline count isn't fixed -
+  // the behaviour being proven is that the expanded wording only appears when there's a real
+  // surplus, which the earlier check already demonstrated turning on.
+  const gwSectionHeaderAfterUncheck = await page.evaluate((sel) => {
+    const sections = [...document.querySelectorAll(`${sel} .items-stream-section`)];
+    const gwSection = sections.find(s => s.querySelector('h4').textContent.startsWith('General Waste'));
+    return gwSection ? gwSection.querySelector('h4').textContent.trim() : null;
+  }, enrolledSelector);
+  check('General Waste\'s header drops the "accepted from other streams" wording once og-apple is no longer accepted there',
+    gwSectionHeaderAfterUncheck !== null && !gwSectionHeaderAfterUncheck.includes('accepted from other streams'), gwSectionHeaderAfterUncheck);
 
   await page.$eval(`${enrolledSelector} .reset-items-btn`, el => el.click());
   await page.$eval(`${enrolledSelector} .save-items-btn`, el => el.click());
